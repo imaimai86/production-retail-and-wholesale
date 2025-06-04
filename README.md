@@ -29,3 +29,7 @@ Supports production, sales, billing and inventory management
    - Validate GST and discount calculations.
 7. **Deployment**
    - Offer open-source deployment scripts so the system can be run easily in various environments.
+
+## Provisioning
+
+Run `./install.sh` to install dependencies, apply database migrations (if `DATABASE_URL` is set) and start the server.

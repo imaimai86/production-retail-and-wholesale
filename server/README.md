@@ -22,3 +22,6 @@ and sales management system. It uses **Node.js** with **Express**.
    - Validate GST calculations and inventory workflows.
 
 This plan complements the high-level project plan in the repository root and guides development of the server APIs.
+
+## Database Migrations
+Run ./script/migrate.sh after setting the DATABASE_URL environment variable to apply schema updates.
