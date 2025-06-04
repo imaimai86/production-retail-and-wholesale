@@ -1,8 +1,8 @@
 {
-  "name": "production-root",
+  "name": "production-retail-and-wholesale",
   "version": "1.0.0",
   "license": "MIT",
   "scripts": {
-    "test": "cd server && npm test"
+    "test": "npm run test --prefix server"
   }
 }
