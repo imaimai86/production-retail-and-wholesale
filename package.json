@@ -1,0 +1,9 @@
+{
+  "name": "production-retail-and-wholesale",
+  "version": "1.0.0",
+  "description": "Root project",
+  "private": true,
+  "scripts": {
+    "test": "cd server && npm test"
+  }
+}
