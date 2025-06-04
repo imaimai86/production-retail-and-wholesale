@@ -1,14 +1,14 @@
 {
-  "name": "production-retail-server",
+  "name": "production-server",
   "version": "1.0.0",
-  "description": "Minimal REST API server",
   "main": "index.js",
+  "license": "MIT",
   "scripts": {
     "start": "node index.js",
     "test": "jest"
   },
   "dependencies": {
-    "express": "^4.18.2"
+    "express": "^4.18.0"
   },
   "devDependencies": {
     "jest": "^29.7.0",

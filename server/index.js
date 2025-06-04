@@ -6,10 +6,8 @@ app.get('/', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-if (require.main === module) {
-  app.listen(port, () => {
-    console.log(`Server listening on port ${port}`);
-  });
-}
+app.listen(port, () => {
+  console.log(`Server listening on port ${port}`);
+});
 
 module.exports = app;

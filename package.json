@@ -1,8 +1,7 @@
 {
-  "name": "production-retail-and-wholesale",
+  "name": "production-root",
   "version": "1.0.0",
-  "description": "Root project",
-  "private": true,
+  "license": "MIT",
   "scripts": {
     "test": "cd server && npm test"
   }
