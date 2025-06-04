@@ -14,19 +14,19 @@ async function getById(id) {
 }
 
 async function create(product) {
-  const { name, price_retail, price_wholesale } = product;
+  const { name, price_retail, price_wholesale, category_id } = product;
   const { rows } = await db.query(
-    'INSERT INTO products(name, price_retail, price_wholesale) VALUES($1,$2,$3) RETURNING *',
-    [name, price_retail, price_wholesale]
+    'INSERT INTO products(name, price_retail, price_wholesale, category_id) VALUES($1,$2,$3,$4) RETURNING *',
+    [name, price_retail, price_wholesale, category_id]
   );
   return rows[0];
 }
 
 async function update(id, product) {
-  const { name, price_retail, price_wholesale } = product;
+  const { name, price_retail, price_wholesale, category_id } = product;
   const { rows } = await db.query(
-    'UPDATE products SET name=$1, price_retail=$2, price_wholesale=$3 WHERE id=$4 RETURNING *',
-    [name, price_retail, price_wholesale, id]
+    'UPDATE products SET name=$1, price_retail=$2, price_wholesale=$3, category_id=$4 WHERE id=$5 RETURNING *',
+    [name, price_retail, price_wholesale, category_id, id]
   );
   return rows[0];
 }

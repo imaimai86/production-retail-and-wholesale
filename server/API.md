@@ -19,6 +19,10 @@ id. All endpoints require this header.
 - `GET /inventory` – list inventory items (supports `page` and `limit`)
 - `POST /inventory/transfer` – transfer quantity between locations
 
+## Categories
+- `GET /categories` – list categories
+- `POST /categories` – create a category with GST percentage
+
 ## Users
 - `GET /users` – list users *(requires admin token)*
 - `POST /users` – create a user *(requires admin token)*
@@ -26,3 +30,6 @@ id. All endpoints require this header.
 ## Sales
 - `GET /sales` – list invoices/sales (supports `page` and `limit` query params)
 - `POST /sales` – create a sale invoice
+- `PATCH /sales/:id/status` – update order status (`order_created` or `sold`)
+- `DELETE /sales/:id` – revoke a sale and restore inventory
+- `GET /sales/:id/invoice` – generate billing lines for a sale
