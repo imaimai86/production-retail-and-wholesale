@@ -1,0 +1,2 @@
+setup_scripts:
+  - bash ./install.sh
