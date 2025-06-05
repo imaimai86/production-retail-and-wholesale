@@ -1,3 +1,7 @@
+const path = require('path');
+// Load environment variables from .env using dotenv
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+
 const express = require('express');
 const Products = require('./models/products');
 const Batches = require('./models/batches');

@@ -32,4 +32,12 @@ Supports production, sales, billing and inventory management
 
 ## Provisioning
 
+Create a `.env` file in the project root with your configuration values. The server uses the [dotenv](https://www.npmjs.com/package/dotenv) package to load these values automatically:
+
+```
+PORT=3000
+DATABASE_URL=postgres://user:pass@localhost:5432/app
+ADMIN_TOKEN=secret
+```
+
 Run `./install.sh` to install dependencies, apply database migrations (if `DATABASE_URL` is set) and start the server.
