@@ -1,7 +1,9 @@
+jest.mock('../db', () => ({
+  query: jest.fn(),
+  transaction: jest.fn()
+}));
 const db = require('../db');
 const Sales = require('../sales');
-
-jest.mock('../db');
 
 describe('Sales model', () => {
   afterEach(() => jest.clearAllMocks());
@@ -26,8 +28,12 @@ describe('Sales model', () => {
 
   test('create', async () => {
     const sale = { product_id: 1, quantity: 1, price: 10, gst: 1, user_id: 1 };
-    db.query.mockResolvedValue({ rows: [sale] });
+    const mockClient = { query: jest.fn() };
+    mockClient.query.mockResolvedValueOnce({ rows: [sale] });
+    mockClient.query.mockResolvedValueOnce({});
+    db.transaction.mockImplementation(async cb => cb(mockClient));
     await Sales.create(sale);
-    expect(db.query).toHaveBeenCalled();
+    expect(db.transaction).toHaveBeenCalled();
+    expect(mockClient.query).toHaveBeenCalledTimes(2);
   });
 });
