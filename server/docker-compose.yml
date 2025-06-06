@@ -1,0 +1,24 @@
+version: "3.8"
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: app
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./backup:/var/lib/postgresql/backup
+      - ./db-entrypoint.sh:/usr/local/bin/custom-entrypoint.sh
+    entrypoint: ["/usr/local/bin/custom-entrypoint.sh"]
+  server:
+    build: .
+    environment:
+      DATABASE_URL: postgres://postgres:password@db:5432/app
+      PORT: 3000
+    depends_on:
+      - db
+    ports:
+      - "3000:3000"
+volumes:
+  db-data:
