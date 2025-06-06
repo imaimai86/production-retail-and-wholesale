@@ -30,14 +30,15 @@ The following suggestions aim to enhance the sales and inventory APIs, organized
 These enhancements would synchronize sales and inventory accurately, allow temporary order reservations, support GST compliance, and enable robust order and billing workflows.
 
 ## Phase 2
-- Batch tracking with expiry dates.
-- Low stock alerts.
-- Automated reordering.
-
-## Phase 3
 - Role-based access control (RBAC) to define permissions for different user roles (e.g., admin, sales staff, inventory manager).
 - User authentication enhancements, including password complexity rules, multi-factor authentication (MFA) options.
 - Audit logs to track significant user actions for security and compliance.
+
+  
+## Phase 3
+- Batch tracking with expiry dates.
+- Low stock alerts.
+- Automated reordering.
 
 ## Future Enhancements
 - Customer relationship management (CRM) integration.
