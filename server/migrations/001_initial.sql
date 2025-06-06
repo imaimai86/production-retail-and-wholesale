@@ -5,11 +5,18 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS categories (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  gst NUMERIC NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS products (
   id SERIAL PRIMARY KEY,
   name TEXT NOT NULL,
   price_retail NUMERIC NOT NULL,
-  price_wholesale NUMERIC NOT NULL
+  price_wholesale NUMERIC NOT NULL,
+  category_id INTEGER REFERENCES categories(id)
 );
 
 CREATE TABLE IF NOT EXISTS batches (
@@ -33,6 +40,7 @@ CREATE TABLE IF NOT EXISTS sales (
   price NUMERIC NOT NULL,
   discount NUMERIC DEFAULT 0,
   gst NUMERIC NOT NULL,
+  status TEXT DEFAULT 'sold',
   user_id INTEGER REFERENCES users(id),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

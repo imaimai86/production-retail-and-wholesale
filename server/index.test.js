@@ -39,12 +39,30 @@ jest.mock('./models/inventory', () => {
   };
 });
 
+jest.mock('./models/categories', () => {
+  let data = [];
+  return {
+    __reset: () => { data = []; },
+    getAll: ({ limit = 10, offset = 0 } = {}) => Promise.resolve(data.slice(offset, offset + limit)),
+    create: async (c) => { const item = { id: data.length + 1, ...c }; data.push(item); return item; }
+  };
+});
+
 jest.mock('./models/sales', () => {
   let data = [];
   return {
     __reset: () => { data = []; },
     getAll: ({ limit = 10, offset = 0 } = {}) => Promise.resolve(data.slice(offset, offset + limit)),
-    create: async (s) => { const item = { id: data.length + 1, ...s }; data.push(item); return item; }
+    getById: async (id) => data.find(d => d.id === parseInt(id)),
+    create: async (s) => { const item = { id: data.length + 1, ...s }; data.push(item); return item; },
+    updateStatus: async (id, status) => {
+      const sale = data.find(d => d.id === parseInt(id));
+      if (!sale) return null; sale.status = status; return sale; },
+    remove: async (id) => {
+      const i = data.findIndex(d => d.id === parseInt(id));
+      if (i >= 0) return data.splice(i,1)[0];
+      return null;
+    }
   };
 });
 
@@ -62,6 +80,7 @@ const Batches = require('./models/batches');
 const Inventory = require('./models/inventory');
 const Sales = require('./models/sales');
 const Users = require('./models/users');
+const Categories = require('./models/categories');
 
 const app = require('./index');
 
@@ -71,6 +90,7 @@ beforeEach(() => {
   Inventory.__reset();
   Sales.__reset();
   Users.__reset();
+  Categories.__reset && Categories.__reset();
 });
 
 describe('GET /', () => {
@@ -116,6 +136,21 @@ describe('API endpoints using responses', () => {
   test('create sale and list', async () => {
     await request(app).post('/sales').set('x-auth-token', token).send({ product_id: 1, quantity: 1, price: 10, gst: 1 });
     const res = await request(app).get('/sales').set('x-auth-token', token);
+    expect(res.body.length).toBe(1);
+  });
+
+  test('update sale status and invoice', async () => {
+    const create = await request(app).post('/sales').set('x-auth-token', token).send({ product_id: 1, quantity: 1, price: 10, gst: 1, status: 'order_created' });
+    expect(create.statusCode).toBe(201);
+    const updated = await request(app).patch(`/sales/${create.body.id}/status`).set('x-auth-token', token).send({ status: 'sold' });
+    expect(updated.body.status).toBe('sold');
+    const invoice = await request(app).get(`/sales/${create.body.id}/invoice`).set('x-auth-token', token);
+    expect(invoice.statusCode).toBe(200);
+  });
+
+  test('create and list categories', async () => {
+    await request(app).post('/categories').set('x-auth-token', token).send({ name: 'c', gst: 10 });
+    const res = await request(app).get('/categories').set('x-auth-token', token);
     expect(res.body.length).toBe(1);
   });
 });

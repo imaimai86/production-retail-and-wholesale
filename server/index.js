@@ -4,6 +4,7 @@ const Batches = require('./models/batches');
 const Inventory = require('./models/inventory');
 const Sales = require('./models/sales');
 const Users = require('./models/users');
+const Categories = require('./models/categories');
 const Auth = require('./middleware/auth');
 
 const app = express();
@@ -33,6 +34,27 @@ app.get('/users', Auth.requireAdmin, async (req, res, next) => {
   try {
     const users = await Users.getAll({ limit, offset });
     res.json(users);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/categories', async (req, res, next) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const offset = (page - 1) * limit;
+  try {
+    const cats = await Categories.getAll({ limit, offset });
+    res.json(cats);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/categories', async (req, res, next) => {
+  try {
+    const cat = await Categories.create(req.body);
+    res.status(201).json(cat);
   } catch (err) {
     next(err);
   }
@@ -147,6 +169,43 @@ app.post('/sales', async (req, res, next) => {
   try {
     const sale = await Sales.create({ ...req.body, user_id: req.userId });
     res.status(201).json(sale);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.patch('/sales/:id/status', async (req, res, next) => {
+  try {
+    const sale = await Sales.updateStatus(req.params.id, req.body.status);
+    if (!sale) return res.status(404).end();
+    res.json(sale);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete('/sales/:id', async (req, res, next) => {
+  try {
+    const sale = await Sales.remove(req.params.id);
+    if (!sale) return res.status(404).end();
+    res.status(200).json(sale);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/sales/:id/invoice', async (req, res, next) => {
+  try {
+    const sale = await Sales.getById(req.params.id);
+    // naive invoice generation using sale record
+    if (!sale) return res.status(404).end();
+    const lineTotal = sale.price * sale.quantity - (sale.discount || 0);
+    const gstAmount = lineTotal * (sale.gst / 100);
+    res.json({
+      items: [{ product_id: sale.product_id, quantity: sale.quantity, price: sale.price, gst: sale.gst }],
+      total: lineTotal + gstAmount,
+      gst: gstAmount
+    });
   } catch (err) {
     next(err);
   }
