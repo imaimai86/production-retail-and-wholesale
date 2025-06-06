@@ -4,5 +4,8 @@
   "license": "MIT",
   "scripts": {
     "test": "npm run test --prefix server"
+  },
+  "devDependencies": {
+    "eslint": "^8.0.0"
   }
 }

@@ -1,6 +1,8 @@
 # Suggested Improvements for Sales and Inventory APIs
 
-The following suggestions build upon the current repository implementation and address additional workflow requirements.
+The following suggestions aim to enhance the sales and inventory APIs, organized into phased improvements.
+
+## Phase 1
 
 1. **Connect Sales with Inventory Updates**
    - When a sale is created, deduct the quantity from inventory or mark the item as reserved so it cannot be sold twice.
@@ -26,3 +28,19 @@ The following suggestions build upon the current repository implementation and a
    - Wrap inventory transfer operations in a transaction to prevent inconsistent states if one part of the transfer fails.
 
 These enhancements would synchronize sales and inventory accurately, allow temporary order reservations, support GST compliance, and enable robust order and billing workflows.
+
+## Phase 2
+- Role-based access control (RBAC) to define permissions for different user roles (e.g., admin, sales staff, inventory manager).
+- User authentication enhancements, including password complexity rules, multi-factor authentication (MFA) options.
+- Audit logs to track significant user actions for security and compliance.
+
+  
+## Phase 3
+- Batch tracking with expiry dates.
+- Low stock alerts.
+- Automated reordering.
+
+## Future Enhancements
+- Customer relationship management (CRM) integration.
+- Support for multiple currencies.
+- Recurring billing for subscriptions.
