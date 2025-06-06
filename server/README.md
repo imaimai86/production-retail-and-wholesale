@@ -25,3 +25,18 @@ This plan complements the high-level project plan in the repository root and gui
 
 ## Database Migrations
 Run ./script/migrate.sh after setting the DATABASE_URL environment variable to apply schema updates.
+
+## Docker Usage
+
+The `Dockerfile` and `docker-compose.yml` in this folder provide a simple way to run the server with PostgreSQL. Common tasks are wrapped in the repository root `Makefile`:
+
+```bash
+make build    # build images
+make up       # start containers in the background
+make down     # stop the stack
+make migrate  # apply database migrations
+make backup   # dump the database to backup/manual_backup.sql
+make restore  # restore the dump into the running database
+```
+
+The database container automatically imports a previous dump on startup and exports a fresh one on shutdown via `db-entrypoint.sh`.
