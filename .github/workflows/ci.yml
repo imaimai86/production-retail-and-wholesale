@@ -16,5 +16,7 @@ jobs:
         run: |
           chmod +x ./install.sh
           ./install.sh
+      - name: Run linters
+        run: npm run lint --prefix server
       - name: Run tests
         run: npm run test
