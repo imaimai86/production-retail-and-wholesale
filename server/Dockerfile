@@ -1,6 +1,7 @@
 FROM node:18
 WORKDIR /app
-COPY package*.json ./
-RUN npm install --production
+COPY package.json ./
+COPY package-lock.json ./
+RUN npm ci --production
 COPY . .
 CMD ["npm", "run", "start"]
