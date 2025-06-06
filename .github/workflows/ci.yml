@@ -4,17 +4,11 @@ on:
   pull_request:
 
 jobs:
-  build-and-test:
+  docker-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-          cache: 'npm'
-      - name: Run install script
-        run: |
-          chmod +x ./install.sh
-          ./install.sh
-      - name: Run tests
-        run: npm run test
+      - name: Build Docker image
+        run: docker build -t server-test ./server
+      - name: Run tests in container
+        run: docker run --rm server-test npm test

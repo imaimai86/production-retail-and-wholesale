@@ -33,3 +33,29 @@ Supports production, sales, billing and inventory management
 ## Provisioning
 
 Run `./install.sh` to install dependencies, apply database migrations (if `DATABASE_URL` is set) and start the server.
+
+## Docker Deployment
+
+The repository includes a `Dockerfile` for the server and a `docker-compose.yml`
+that starts both the server and a PostgreSQL database. The database persists
+its data in the `db-data` volume and automatically restores from `backup/dump.sql`
+if present. When the database container stops, it exports the data back to this
+file.
+
+Use the provided `Makefile` targets to manage the environment:
+
+```
+make up       # build images and start containers in the background
+make stop     # stop containers
+make backup   # manually backup the database to backup/dump.sql
+make restore  # restore the database from backup/dump.sql
+make logs     # follow container logs
+```
+
+The server will be available on `http://localhost:3000` once started.
+
+## Continuous Integration
+
+GitHub Actions builds the Docker image defined in `server/Dockerfile` and runs
+the test suite inside that container. See `.github/workflows/ci.yml` for the
+workflow configuration.
