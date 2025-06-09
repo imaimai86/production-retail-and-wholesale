@@ -9,7 +9,12 @@ const Inventory = require('./models/inventory');
 const Sales = require('./models/sales');
 const Users = require('./models/users');
 const Categories = require('./models/categories');
-const Auth = require('./middleware/auth');
+// db import might become unused if all routes are simplified
+// const db = require('./models/db');
+const AuthMiddleware = require('./middleware/auth');
+// logAction import will likely become unused
+// const { logAction } = require('./utils/auditLog');
+const logger = require('./utils/logger');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -20,18 +25,24 @@ app.get('/', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-app.use(Auth.verify);
+// app.use(Auth.verify); // Removed global middleware
 
-app.post('/users', Auth.requireAdmin, async (req, res, next) => {
+app.post('/users', AuthMiddleware.loadUserAndAuthenticate, AuthMiddleware.requireAdmin, async (req, res) => {
   try {
-    const user = await Users.create(req.body);
-    res.status(201).json(user);
+    const performingUserId = req.user ? req.user.id : null;
+    // Assuming Users.create now handles its own transaction and audit logging
+    // It requires userData and performingUserId
+    const newUser = await Users.create(req.body, performingUserId);
+    res.status(201).json(newUser);
   } catch (err) {
-    next(err);
+    logger.error(`POST /users - Error: ${err.message}`, { error: err });
+    // Check for specific error types if models start throwing them (e.g., validation errors)
+    // For now, a generic 500, as models re-throw after logging their specific DB error.
+    res.status(500).json({ error: 'Failed to create user.' });
   }
 });
 
-app.get('/users', Auth.requireAdmin, async (req, res, next) => {
+app.get('/users', AuthMiddleware.loadUserAndAuthenticate, AuthMiddleware.requireAdmin, async (req, res, next) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const offset = (page - 1) * limit;
@@ -43,7 +54,7 @@ app.get('/users', Auth.requireAdmin, async (req, res, next) => {
   }
 });
 
-app.get('/categories', async (req, res, next) => {
+app.get('/categories', AuthMiddleware.loadUserAndAuthenticate, async (req, res, next) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const offset = (page - 1) * limit;
@@ -55,16 +66,18 @@ app.get('/categories', async (req, res, next) => {
   }
 });
 
-app.post('/categories', async (req, res, next) => {
+app.post('/categories', AuthMiddleware.loadUserAndAuthenticate, async (req, res) => {
   try {
-    const cat = await Categories.create(req.body);
-    res.status(201).json(cat);
+    const performingUserId = req.user ? req.user.id : null;
+    const newCategory = await Categories.create(req.body, performingUserId);
+    res.status(201).json(newCategory);
   } catch (err) {
-    next(err);
+    logger.error(`POST /categories - Error: ${err.message}`, { error: err });
+    res.status(500).json({ error: 'Failed to create category.' });
   }
 });
 
-app.get('/products', async (req, res, next) => {
+app.get('/products', AuthMiddleware.loadUserAndAuthenticate, async (req, res, next) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const offset = (page - 1) * limit;
@@ -76,16 +89,18 @@ app.get('/products', async (req, res, next) => {
   }
 });
 
-app.post('/products', async (req, res, next) => {
+app.post('/products', AuthMiddleware.loadUserAndAuthenticate, async (req, res) => {
   try {
-    const product = await Products.create(req.body);
-    res.status(201).json(product);
+    const performingUserId = req.user ? req.user.id : null;
+    const newProduct = await Products.create(req.body, performingUserId);
+    res.status(201).json(newProduct);
   } catch (err) {
-    next(err);
+    logger.error(`POST /products - Error: ${err.message}`, { error: err });
+    res.status(500).json({ error: 'Failed to create product.' });
   }
 });
 
-app.get('/products/:id', async (req, res, next) => {
+app.get('/products/:id', AuthMiddleware.loadUserAndAuthenticate, async (req, res, next) => {
   try {
     const product = await Products.getById(req.params.id);
     if (!product) return res.status(404).end();
@@ -95,26 +110,35 @@ app.get('/products/:id', async (req, res, next) => {
   }
 });
 
-app.put('/products/:id', async (req, res, next) => {
+app.put('/products/:id', AuthMiddleware.loadUserAndAuthenticate, async (req, res) => {
   try {
-    const product = await Products.update(req.params.id, req.body);
-    if (!product) return res.status(404).end();
-    res.json(product);
+    const performingUserId = req.user ? req.user.id : null;
+    const updatedProduct = await Products.update(req.params.id, req.body, performingUserId);
+    if (!updatedProduct) {
+      return res.status(404).json({ error: 'Product not found.'});
+    }
+    res.json(updatedProduct);
   } catch (err) {
-    next(err);
+    logger.error(`PUT /products/${req.params.id} - Error: ${err.message}`, { error: err });
+    res.status(500).json({ error: 'Failed to update product.' });
   }
 });
 
-app.delete('/products/:id', async (req, res, next) => {
+app.delete('/products/:id', AuthMiddleware.loadUserAndAuthenticate, async (req, res) => {
   try {
-    await Products.remove(req.params.id);
+    const performingUserId = req.user ? req.user.id : null;
+    const result = await Products.remove(req.params.id, performingUserId);
+    if (!result) { // Assuming model.remove returns null if not found
+        return res.status(404).json({ error: 'Product not found.' });
+    }
     res.status(204).end();
   } catch (err) {
-    next(err);
+    logger.error(`DELETE /products/${req.params.id} - Error: ${err.message}`, { error: err });
+    res.status(500).json({ error: 'Failed to delete product.' });
   }
 });
 
-app.get('/batches', async (req, res, next) => {
+app.get('/batches', AuthMiddleware.loadUserAndAuthenticate, async (req, res, next) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const offset = (page - 1) * limit;
@@ -126,16 +150,18 @@ app.get('/batches', async (req, res, next) => {
   }
 });
 
-app.post('/batches', async (req, res, next) => {
+app.post('/batches', AuthMiddleware.loadUserAndAuthenticate, async (req, res) => {
   try {
-    const batch = await Batches.create(req.body);
-    res.status(201).json(batch);
+    const performingUserId = req.user ? req.user.id : null;
+    const newBatch = await Batches.create(req.body, performingUserId);
+    res.status(201).json(newBatch);
   } catch (err) {
-    next(err);
+    logger.error(`POST /batches - Error: ${err.message}`, { error: err });
+    res.status(500).json({ error: 'Failed to create batch.' });
   }
 });
 
-app.get('/inventory', async (req, res, next) => {
+app.get('/inventory', AuthMiddleware.loadUserAndAuthenticate, async (req, res, next) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const offset = (page - 1) * limit;
@@ -147,17 +173,20 @@ app.get('/inventory', async (req, res, next) => {
   }
 });
 
-app.post('/inventory/transfer', async (req, res, next) => {
-  const { product_id, from, to, quantity } = req.body;
+app.post('/inventory/transfer', AuthMiddleware.loadUserAndAuthenticate, async (req, res) => {
   try {
-    const inventory = await Inventory.transfer(product_id, from, to, quantity);
-    res.json(inventory);
+    const performingUserId = req.user ? req.user.id : null;
+    const { product_id, from_location_id, to_location_id, quantity } = req.body;
+    const inventoryTransferResult = await Inventory.transfer(product_id, from_location_id, to_location_id, quantity, performingUserId);
+    res.json(inventoryTransferResult);
   } catch (err) {
-    next(err);
+    logger.error(`POST /inventory/transfer - Error: ${err.message}`, { error: err });
+    // Consider specific error for insufficient quantity or item not found if model throws custom errors
+    res.status(500).json({ error: 'Failed to transfer inventory.' });
   }
 });
 
-app.get('/sales', async (req, res, next) => {
+app.get('/sales', AuthMiddleware.loadUserAndAuthenticate, async (req, res, next) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const offset = (page - 1) * limit;
@@ -169,36 +198,53 @@ app.get('/sales', async (req, res, next) => {
   }
 });
 
-app.post('/sales', async (req, res, next) => {
+app.post('/sales', AuthMiddleware.loadUserAndAuthenticate, async (req, res) => {
   try {
-    const sale = await Sales.create({ ...req.body, user_id: req.userId });
-    res.status(201).json(sale);
+    // performingUserId for Sales.create is derived from req.user.id, which is also part of saleData.user_id
+    const performingUserId = req.user ? req.user.id : null;
+    if (!performingUserId) {
+        // This case should ideally be prevented by AuthMiddleware.loadUserAndAuthenticate
+        logger.error('POST /sales - Critical: No user ID found after authentication.');
+        return res.status(401).json({ error: 'User authentication issue.' });
+    }
+    const saleData = { ...req.body, user_id: performingUserId };
+    const newSale = await Sales.create(saleData, performingUserId); // Pass performingUserId explicitly for audit log
+    res.status(201).json(newSale);
   } catch (err) {
-    next(err);
+    logger.error(`POST /sales - Error: ${err.message}`, { error: err });
+    res.status(500).json({ error: 'Failed to create sale.' });
   }
 });
 
-app.patch('/sales/:id/status', async (req, res, next) => {
+app.patch('/sales/:id/status', AuthMiddleware.loadUserAndAuthenticate, async (req, res) => {
   try {
-    const sale = await Sales.updateStatus(req.params.id, req.body.status);
-    if (!sale) return res.status(404).end();
-    res.json(sale);
+    const performingUserId = req.user ? req.user.id : null;
+    const updatedSale = await Sales.updateStatus(req.params.id, req.body.status, performingUserId);
+    if (!updatedSale) {
+      return res.status(404).json({ error: 'Sale not found.'});
+    }
+    res.json(updatedSale);
   } catch (err) {
-    next(err);
+    logger.error(`PATCH /sales/${req.params.id}/status - Error: ${err.message}`, { error: err });
+    res.status(500).json({ error: 'Failed to update sale status.' });
   }
 });
 
-app.delete('/sales/:id', async (req, res, next) => {
+app.delete('/sales/:id', AuthMiddleware.loadUserAndAuthenticate, async (req, res) => {
   try {
-    const sale = await Sales.remove(req.params.id);
-    if (!sale) return res.status(404).end();
-    res.status(200).json(sale);
+    const performingUserId = req.user ? req.user.id : null;
+    const deletedSale = await Sales.remove(req.params.id, performingUserId);
+    if (!deletedSale) {
+      return res.status(404).json({ error: 'Sale not found.' });
+    }
+    res.status(200).json(deletedSale);
   } catch (err) {
-    next(err);
+    logger.error(`DELETE /sales/${req.params.id} - Error: ${err.message}`, { error: err });
+    res.status(500).json({ error: 'Failed to delete sale.' });
   }
 });
 
-app.get('/sales/:id/invoice', async (req, res, next) => {
+app.get('/sales/:id/invoice', AuthMiddleware.loadUserAndAuthenticate, async (req, res, next) => {
   try {
     const sale = await Sales.getById(req.params.id);
     // naive invoice generation using sale record
@@ -217,7 +263,7 @@ app.get('/sales/:id/invoice', async (req, res, next) => {
 
 if (require.main === module) {
   app.listen(port, () => {
-    console.log(`Server listening on port ${port}`);
+    logger.info(`Server listening on port ${port}`);
   });
 }
 
