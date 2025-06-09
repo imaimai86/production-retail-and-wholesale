@@ -1,4 +1,4 @@
-const Batches = require('../batches');
+const Categories = require('../categories');
 const db = require('../db'); // Mocked
 const { logAction } = require('../../utils/auditLog');
 const logger = require('../../utils/logger');
@@ -19,7 +19,7 @@ jest.mock('../../utils/logger', () => ({
   debug: jest.fn(),
 }));
 
-describe('Batches Model', () => {
+describe('Categories Model', () => {
   let mockDbClient;
 
   beforeEach(() => {
@@ -29,56 +29,51 @@ describe('Batches Model', () => {
       release: jest.fn(),
     };
     db.getClient.mockReturnValue(mockDbClient);
-    db.query.mockClear();
+    db.query.mockClear(); // Clear for getAll if it uses global db.query
   });
 
   // --- Read-only method ---
   describe('getAll', () => {
-    test('should retrieve all batches with default pagination', async () => {
-      const mockBatches = [{ id: 1, product_id: 1 }];
-      db.query.mockResolvedValue({ rows: mockBatches });
+    test('should retrieve all categories with default pagination', async () => {
+      const mockCategories = [{ id: 1, name: 'Category 1' }];
+      // Assuming getAll might be called without a dbClient, thus using global db.query
+      db.query.mockResolvedValue({ rows: mockCategories });
 
-      const result = await Batches.getAll({});
+      const result = await Categories.getAll({});
 
       expect(db.query).toHaveBeenCalledWith(
-        'SELECT * FROM batches ORDER BY id LIMIT $1 OFFSET $2',
+        'SELECT * FROM categories ORDER BY id LIMIT $1 OFFSET $2',
         [10, 0]
       );
-      expect(result).toEqual(mockBatches);
+      expect(result).toEqual(mockCategories);
     });
   });
 
   // --- Write method ---
-  describe('create(batchData, performingUserId)', () => {
-    const batchData = {
-      product_id: 1,
-      quantity: 100,
-      manufacturing_date: new Date().toISOString(),
-      expiry_date: new Date(new Date().setFullYear(new Date().getFullYear() + 1)).toISOString(),
-      completed_at: null
-    };
+  describe('create(categoryData, performingUserId)', () => {
+    const categoryData = { name: 'New Category', gst_percent: 10 };
     const performingUserId = 1;
-    const createdBatch = { ...batchData, id: 123 };
+    const createdCategory = { ...categoryData, id: 123 };
 
-    test('should create a batch, log action, and commit on success', async () => {
+    test('should create a category, log action, and commit on success', async () => {
       mockDbClient.query
         .mockResolvedValueOnce(undefined) // BEGIN
-        .mockResolvedValueOnce({ rows: [createdBatch] }) // INSERT
+        .mockResolvedValueOnce({ rows: [createdCategory] }) // INSERT
         .mockResolvedValueOnce(undefined); // COMMIT
       logAction.mockResolvedValue(undefined);
 
-      const result = await Batches.create(batchData, performingUserId);
+      const result = await Categories.create(categoryData, performingUserId);
 
       expect(db.getClient).toHaveBeenCalledTimes(1);
       expect(mockDbClient.query).toHaveBeenCalledWith('BEGIN');
       expect(mockDbClient.query).toHaveBeenCalledWith(
-        'INSERT INTO batches(product_id, quantity, manufacturing_date, expiry_date, completed_at) VALUES($1, $2, $3, $4, $5) RETURNING *',
-        [batchData.product_id, batchData.quantity, batchData.manufacturing_date, batchData.expiry_date, batchData.completed_at]
+        'INSERT INTO categories(name, gst_percent) VALUES($1,$2) RETURNING *',
+        [categoryData.name, categoryData.gst_percent]
       );
-      expect(logAction).toHaveBeenCalledWith(mockDbClient, performingUserId, 'CREATE_BATCH', 'BATCH', createdBatch.id);
+      expect(logAction).toHaveBeenCalledWith(mockDbClient, performingUserId, 'CREATE_CATEGORY', 'CATEGORY', createdCategory.id);
       expect(mockDbClient.query).toHaveBeenCalledWith('COMMIT');
       expect(mockDbClient.release).toHaveBeenCalledTimes(1);
-      expect(result).toEqual(createdBatch);
+      expect(result).toEqual(createdCategory);
       expect(logger.error).not.toHaveBeenCalled();
     });
 
@@ -88,11 +83,11 @@ describe('Batches Model', () => {
         .mockResolvedValueOnce(undefined) // BEGIN
         .mockRejectedValueOnce(dbError); // INSERT fails
 
-      await expect(Batches.create(batchData, performingUserId)).rejects.toThrow(dbError);
+      await expect(Categories.create(categoryData, performingUserId)).rejects.toThrow(dbError);
 
       expect(mockDbClient.query).toHaveBeenCalledWith('ROLLBACK');
       expect(logAction).not.toHaveBeenCalled();
-      expect(logger.error).toHaveBeenCalledWith('Failed to create batch in model:', dbError);
+      expect(logger.error).toHaveBeenCalledWith('Failed to create category in model:', dbError);
       expect(mockDbClient.release).toHaveBeenCalledTimes(1);
     });
 
@@ -100,32 +95,32 @@ describe('Batches Model', () => {
       const logActionError = new Error('logAction failed');
       mockDbClient.query
         .mockResolvedValueOnce(undefined) // BEGIN
-        .mockResolvedValueOnce({ rows: [createdBatch] }); // INSERT success
+        .mockResolvedValueOnce({ rows: [createdCategory] }); // INSERT success
       logAction.mockRejectedValue(logActionError);
 
-      await expect(Batches.create(batchData, performingUserId)).rejects.toThrow(logActionError);
+      await expect(Categories.create(categoryData, performingUserId)).rejects.toThrow(logActionError);
 
       expect(mockDbClient.query).toHaveBeenCalledWith('ROLLBACK');
-      expect(logger.error).toHaveBeenCalledWith('Failed to create batch in model:', logActionError);
+      expect(logger.error).toHaveBeenCalledWith('Failed to create category in model:', logActionError);
       expect(mockDbClient.release).toHaveBeenCalledTimes(1);
     });
 
     test('should warn and commit if performingUserId is null', async () => {
       mockDbClient.query
         .mockResolvedValueOnce(undefined) // BEGIN
-        .mockResolvedValueOnce({ rows: [createdBatch] }) // INSERT
+        .mockResolvedValueOnce({ rows: [createdCategory] }) // INSERT
         .mockResolvedValueOnce(undefined); // COMMIT
 
-      const result = await Batches.create(batchData, null);
+      const result = await Categories.create(categoryData, null);
       expect(logAction).not.toHaveBeenCalled();
-      expect(logger.warn).toHaveBeenCalledWith(`CREATE_BATCH action for batch ID ${createdBatch.id} performed without a performingUserId.`);
+      expect(logger.warn).toHaveBeenCalledWith(`CREATE_CATEGORY action for category ID ${createdCategory.id} performed without a performingUserId.`);
       expect(mockDbClient.query).toHaveBeenCalledWith('COMMIT');
-      expect(result).toEqual(createdBatch);
+      expect(result).toEqual(createdCategory);
     });
 
     test('should throw error if required fields are missing', async () => {
-      await expect(Batches.create({ quantity: 100 }, 1)) // product_id missing
-        .rejects.toThrow('Batch creation requires product_id and quantity.');
+      await expect(Categories.create({ name: 'Test' }, 1)) // gst_percent missing
+        .rejects.toThrow('Category creation requires name and gst_percent.');
       expect(db.getClient).not.toHaveBeenCalled();
     });
   });

@@ -1,4 +1,6 @@
-const db = require('./db');
+const db = require('./db'); // db.getClient, db.query (for non-transactional functions if any)
+const { logAction } = require('../utils/auditLog');
+const logger = require('../utils/logger');
 
 async function getAll({ limit = 10, offset = 0 } = {}, dbClient = null) {
   const client = dbClient || db;
@@ -9,32 +11,51 @@ async function getAll({ limit = 10, offset = 0 } = {}, dbClient = null) {
   return rows;
 }
 
-async function create(user, dbClient = null) {
-  const client = dbClient || db;
-  const { name, role, email, password_hash } = user; // Added email and password_hash for completeness
-  let queryText;
-  let queryParams;
-
-  // Ensure all required fields are handled, adjust query based on provided fields
-  // This example prioritizes role being present, but a more robust solution
-  // might involve dynamic query building or separate functions for different creation scenarios.
-  if (role && email && password_hash) {
-    queryText = 'INSERT INTO users(name, email, password_hash, role) VALUES($1, $2, $3, $4) RETURNING *';
-    queryParams = [name, email, password_hash, role];
-  } else if (email && password_hash) { // Create user with default role
-    queryText = 'INSERT INTO users(name, email, password_hash) VALUES($1, $2, $3) RETURNING *';
-    queryParams = [name, email, password_hash];
-  } else if (role) { // Original logic if only name and role are primary concern (might be incomplete for DB constraints)
-    queryText = 'INSERT INTO users(name, role) VALUES($1, $2) RETURNING *';
-    queryParams = [name, role];
-  }
-  else { // Original fallback logic (might be incomplete for DB constraints)
-    queryText = 'INSERT INTO users(name) VALUES($1) RETURNING *';
-    queryParams = [name];
+async function create(userData, performingUserId = null) {
+  const { name, email, password_hash, role } = userData;
+  // Ensure all necessary fields are present
+  if (!name || !email || !password_hash) {
+    // Role can be optional if DB has a default, but name, email, password_hash are typically required.
+    throw new Error('User creation requires name, email, and password_hash.');
   }
 
-  const { rows } = await client.query(queryText, queryParams);
-  return rows[0];
+  let dbClient;
+  try {
+    dbClient = await db.getClient();
+    await dbClient.query('BEGIN');
+
+    let queryText;
+    let queryParams;
+
+    if (role) {
+      queryText = 'INSERT INTO users(name, email, password_hash, role) VALUES($1, $2, $3, $4) RETURNING *';
+      queryParams = [name, email, password_hash, role];
+    } else {
+      // Assumes DB has a default for role or role is nullable
+      queryText = 'INSERT INTO users(name, email, password_hash) VALUES($1, $2, $3) RETURNING *';
+      queryParams = [name, email, password_hash];
+    }
+
+    const { rows } = await dbClient.query(queryText, queryParams);
+    const newUser = rows[0];
+
+    if (newUser && performingUserId) {
+      await logAction(dbClient, performingUserId, 'CREATE_USER', 'USER', newUser.id);
+    }
+
+    await dbClient.query('COMMIT');
+    return newUser;
+  } catch (error) {
+    if (dbClient) {
+      await dbClient.query('ROLLBACK');
+    }
+    logger.error('Failed to create user in model:', error);
+    throw error; // Re-throw for the route handler to catch
+  } finally {
+    if (dbClient) {
+      dbClient.release();
+    }
+  }
 }
 
 async function findById(id, dbClient = null) {
