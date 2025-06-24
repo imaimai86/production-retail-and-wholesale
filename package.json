@@ -4,15 +4,12 @@
   "license": "MIT",
   "scripts": {
     "test": "npm run test --prefix server",
-    "generate-spec": "cross-env NODE_ENV=development node server/scripts/generate-openapi-spec.js",
-    "start:swagger": "node tools/swaggerServer.js"
+    "generate-spec": "npm run generate-spec --prefix server",
+    "start:swagger": "npm run start:swagger --prefix server"
   },
   "devDependencies": {
     "cross-env": "^7.0.3",
     "eslint": "^8.0.0",
-    "express": "^5.1.0",
-    "fs-extra": "^11.3.0",
-    "husky": "^9.1.7",
-    "swagger-ui-express": "^5.0.1"
+    "husky": "^9.1.7"
   }
 }

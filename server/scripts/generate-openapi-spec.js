@@ -14,10 +14,10 @@ const options = {
 
 const openapiSpecification = swaggerJsdoc(options);
 
-const specPath = path.resolve(__dirname, '../../tools/openapi-spec.json'); // Path to tools/openapi-spec.json from server/scripts/
+const specPath = path.resolve(__dirname, '../openapi-spec.json'); // Path to server/openapi-spec.json
 
 try {
-  fs.ensureDirSync(path.dirname(specPath)); // Ensure 'tools' directory exists
+  fs.ensureDirSync(path.dirname(specPath)); // Ensure directory exists
   fs.writeFileSync(specPath, JSON.stringify(openapiSpecification, null, 2));
   console.log(`OpenAPI specification written to ${specPath}`);
 } catch (err) {
