@@ -1,0 +1,1 @@
+npm run generate-spec && git add tools/openapi-spec.json

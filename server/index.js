@@ -22,6 +22,33 @@ app.get('/', (req, res) => {
 
 app.use(Auth.verify);
 
+/**
+ * @swagger
+ * /users:
+ *   post:
+ *     summary: Create a new user. Test update.
+ *     tags: [Users]
+ *     security:
+ *       - xAuthToken: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               username:
+ *                 type: string
+ *               password:
+ *                 type: string
+ *               role:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: User created successfully
+ *       500:
+ *         description: Server error
+ */
 app.post('/users', Auth.requireAdmin, async (req, res, next) => {
   try {
     const user = await Users.create(req.body);
@@ -31,6 +58,44 @@ app.post('/users', Auth.requireAdmin, async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /users:
+ *   get:
+ *     summary: Get all users
+ *     tags: [Users]
+ *     security:
+ *       - xAuthToken: []
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *         description: Page number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *         description: Number of items per page
+ *     responses:
+ *       200:
+ *         description: A list of users
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   id:
+ *                     type: integer
+ *                   username:
+ *                     type: string
+ *                   role:
+ *                     type: string
+ *       500:
+ *         description: Server error
+ */
 app.get('/users', Auth.requireAdmin, async (req, res, next) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
@@ -43,6 +108,42 @@ app.get('/users', Auth.requireAdmin, async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /categories:
+ *   get:
+ *     summary: Get all categories
+ *     tags: [Categories]
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *         description: Page number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *         description: Number of items per page
+ *     responses:
+ *       200:
+ *         description: A list of categories
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   id:
+ *                     type: integer
+ *                   name:
+ *                     type: string
+ *                   gst_percentage:
+ *                     type: number
+ *       500:
+ *         description: Server error
+ */
 app.get('/categories', async (req, res, next) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
@@ -55,6 +156,29 @@ app.get('/categories', async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /categories:
+ *   post:
+ *     summary: Create a new category
+ *     tags: [Categories]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name:
+ *                 type: string
+ *               gst_percentage:
+ *                 type: number
+ *     responses:
+ *       201:
+ *         description: Category created successfully
+ *       500:
+ *         description: Server error
+ */
 app.post('/categories', async (req, res, next) => {
   try {
     const cat = await Categories.create(req.body);
@@ -64,6 +188,44 @@ app.post('/categories', async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /products:
+ *   get:
+ *     summary: Get all products
+ *     tags: [Products]
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *         description: Page number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *         description: Number of items per page
+ *     responses:
+ *       200:
+ *         description: A list of products
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   id:
+ *                     type: integer
+ *                   name:
+ *                     type: string
+ *                   category_id:
+ *                     type: integer
+ *                   unit_price:
+ *                     type: number
+ *       500:
+ *         description: Server error
+ */
 app.get('/products', async (req, res, next) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
@@ -76,6 +238,31 @@ app.get('/products', async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /products:
+ *   post:
+ *     summary: Create a new product
+ *     tags: [Products]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name:
+ *                 type: string
+ *               category_id:
+ *                 type: integer
+ *               unit_price:
+ *                 type: number
+ *     responses:
+ *       201:
+ *         description: Product created successfully
+ *       500:
+ *         description: Server error
+ */
 app.post('/products', async (req, res, next) => {
   try {
     const product = await Products.create(req.body);
@@ -85,6 +272,27 @@ app.post('/products', async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /products/{id}:
+ *   get:
+ *     summary: Get a product by ID
+ *     tags: [Products]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: Product ID
+ *     responses:
+ *       200:
+ *         description: Product details
+ *       404:
+ *         description: Product not found
+ *       500:
+ *         description: Server error
+ */
 app.get('/products/:id', async (req, res, next) => {
   try {
     const product = await Products.getById(req.params.id);
@@ -95,6 +303,40 @@ app.get('/products/:id', async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /products/{id}:
+ *   put:
+ *     summary: Update a product by ID
+ *     tags: [Products]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: Product ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name:
+ *                 type: string
+ *               category_id:
+ *                 type: integer
+ *               unit_price:
+ *                 type: number
+ *     responses:
+ *       200:
+ *         description: Product updated successfully
+ *       404:
+ *         description: Product not found
+ *       500:
+ *         description: Server error
+ */
 app.put('/products/:id', async (req, res, next) => {
   try {
     const product = await Products.update(req.params.id, req.body);
@@ -105,6 +347,25 @@ app.put('/products/:id', async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /products/{id}:
+ *   delete:
+ *     summary: Delete a product by ID
+ *     tags: [Products]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: Product ID
+ *     responses:
+ *       204:
+ *         description: Product deleted successfully
+ *       500:
+ *         description: Server error
+ */
 app.delete('/products/:id', async (req, res, next) => {
   try {
     await Products.remove(req.params.id);
@@ -114,6 +375,45 @@ app.delete('/products/:id', async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /batches:
+ *   get:
+ *     summary: Get all production batches
+ *     tags: [Production Batches]
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *         description: Page number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *         description: Number of items per page
+ *     responses:
+ *       200:
+ *         description: A list of production batches
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   id:
+ *                     type: integer
+ *                   product_id:
+ *                     type: integer
+ *                   quantity:
+ *                     type: number
+ *                   manufacturing_date:
+ *                     type: string
+ *                     format: date
+ *       500:
+ *         description: Server error
+ */
 app.get('/batches', async (req, res, next) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
@@ -126,6 +426,32 @@ app.get('/batches', async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /batches:
+ *   post:
+ *     summary: Create a new production batch
+ *     tags: [Production Batches]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               product_id:
+ *                 type: integer
+ *               quantity:
+ *                 type: number
+ *               manufacturing_date:
+ *                 type: string
+ *                 format: date
+ *     responses:
+ *       201:
+ *         description: Production batch created successfully
+ *       500:
+ *         description: Server error
+ */
 app.post('/batches', async (req, res, next) => {
   try {
     const batch = await Batches.create(req.body);
@@ -135,6 +461,44 @@ app.post('/batches', async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /inventory:
+ *   get:
+ *     summary: Get all inventory items
+ *     tags: [Inventory]
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *         description: Page number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *         description: Number of items per page
+ *     responses:
+ *       200:
+ *         description: A list of inventory items
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   id:
+ *                     type: integer
+ *                   product_id:
+ *                     type: integer
+ *                   quantity:
+ *                     type: number
+ *                   location:
+ *                     type: string
+ *       500:
+ *         description: Server error
+ */
 app.get('/inventory', async (req, res, next) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
@@ -147,6 +511,33 @@ app.get('/inventory', async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /inventory/transfer:
+ *   post:
+ *     summary: Transfer inventory between locations
+ *     tags: [Inventory]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               product_id:
+ *                 type: integer
+ *               from:
+ *                 type: string
+ *               to:
+ *                 type: string
+ *               quantity:
+ *                 type: number
+ *     responses:
+ *       200:
+ *         description: Inventory transferred successfully
+ *       500:
+ *         description: Server error
+ */
 app.post('/inventory/transfer', async (req, res, next) => {
   const { product_id, from, to, quantity } = req.body;
   try {
@@ -157,6 +548,52 @@ app.post('/inventory/transfer', async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /sales:
+ *   get:
+ *     summary: Get all sales
+ *     tags: [Sales]
+ *     parameters:
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *         description: Page number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *         description: Number of items per page
+ *     responses:
+ *       200:
+ *         description: A list of sales
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   id:
+ *                     type: integer
+ *                   product_id:
+ *                     type: integer
+ *                   user_id:
+ *                     type: integer
+ *                   quantity:
+ *                     type: number
+ *                   price:
+ *                     type: number
+ *                   discount:
+ *                     type: number
+ *                   gst:
+ *                     type: number
+ *                   status:
+ *                     type: string
+ *       500:
+ *         description: Server error
+ */
 app.get('/sales', async (req, res, next) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
@@ -169,6 +606,35 @@ app.get('/sales', async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /sales:
+ *   post:
+ *     summary: Create a new sale
+ *     tags: [Sales]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               product_id:
+ *                 type: integer
+ *               quantity:
+ *                 type: number
+ *               price:
+ *                 type: number
+ *               discount:
+ *                 type: number
+ *               gst:
+ *                 type: number
+ *     responses:
+ *       201:
+ *         description: Sale created successfully
+ *       500:
+ *         description: Server error
+ */
 app.post('/sales', async (req, res, next) => {
   try {
     const sale = await Sales.create({ ...req.body, user_id: req.userId });
@@ -178,6 +644,37 @@ app.post('/sales', async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /sales/{id}/status:
+ *   patch:
+ *     summary: Update sale status
+ *     tags: [Sales]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: Sale ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               status:
+ *                 type: string
+ *                 enum: [order_created, sold]
+ *     responses:
+ *       200:
+ *         description: Sale status updated successfully
+ *       404:
+ *         description: Sale not found
+ *       500:
+ *         description: Server error
+ */
 app.patch('/sales/:id/status', async (req, res, next) => {
   try {
     const sale = await Sales.updateStatus(req.params.id, req.body.status);
@@ -188,6 +685,27 @@ app.patch('/sales/:id/status', async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /sales/{id}:
+ *   delete:
+ *     summary: Delete a sale by ID
+ *     tags: [Sales]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: Sale ID
+ *     responses:
+ *       200:
+ *         description: Sale deleted successfully
+ *       404:
+ *         description: Sale not found
+ *       500:
+ *         description: Server error
+ */
 app.delete('/sales/:id', async (req, res, next) => {
   try {
     const sale = await Sales.remove(req.params.id);
@@ -198,6 +716,49 @@ app.delete('/sales/:id', async (req, res, next) => {
   }
 });
 
+/**
+ * @swagger
+ * /sales/{id}/invoice:
+ *   get:
+ *     summary: Get invoice for a sale
+ *     tags: [Sales]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *         description: Sale ID
+ *     responses:
+ *       200:
+ *         description: Invoice details
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 items:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       product_id:
+ *                         type: integer
+ *                       quantity:
+ *                         type: number
+ *                       price:
+ *                         type: number
+ *                       gst:
+ *                         type: number
+ *                 total:
+ *                   type: number
+ *                 gst:
+ *                   type: number
+ *       404:
+ *         description: Sale not found
+ *       500:
+ *         description: Server error
+ */
 app.get('/sales/:id/invoice', async (req, res, next) => {
   try {
     const sale = await Sales.getById(req.params.id);
