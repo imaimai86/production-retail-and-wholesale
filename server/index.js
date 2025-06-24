@@ -1,6 +1,9 @@
-const path = require('path');
-// Load environment variables from .env using dotenv
-require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+// Load environment variables from .env.
+// In Docker, WORKDIR is /usr/src/app and .env is copied there. CMD node index.js runs from /usr/src/app.
+// So, process.cwd() is /usr/src/app, and .config() will find /usr/src/app/.env.
+// For local dev, if you run `node server/index.js` from project root, it finds .env in root.
+// If you `cd server` and run `node index.js`, it finds `server/.env` (less ideal but common).
+require('dotenv').config();
 
 const express = require('express');
 const Products = require('./models/products');
