@@ -3,9 +3,13 @@
   "version": "1.0.0",
   "license": "MIT",
   "scripts": {
-    "test": "npm run test --prefix server"
+    "test": "npm run test --prefix server",
+    "generate-spec": "npm run generate-spec --prefix server",
+    "start:swagger": "npm run start:swagger --prefix server"
   },
   "devDependencies": {
-    "eslint": "^8.0.0"
+    "cross-env": "^7.0.3",
+    "eslint": "^8.0.0",
+    "husky": "^9.1.7"
   }
 }
