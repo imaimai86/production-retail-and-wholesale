@@ -8,6 +8,7 @@ DB_PASSWORD := testpassword
 DB_NAME := inventorydb
 DATABASE_URL := postgres://${DB_USER}:${DB_PASSWORD}@${DB_CONTAINER_NAME}:5432/${DB_NAME}
 PORT := 3000
+ENV_FILE ?= .env.local # Default to .env.local, can be overridden from command line or env
 
 # Default target
 .PHONY: all
@@ -64,7 +65,7 @@ run: build run-db init-db
 	fi
 	@docker run -d --name $(CONTAINER_NAME) \
 		-p $(PORT):3000 \
-		--env-file .env \
+		--env-file $(ENV_FILE) \
 		-e DATABASE_URL=$(DATABASE_URL) \
 		-e PORT=$(PORT) \
 		--link $(DB_CONTAINER_NAME):db \
@@ -124,18 +125,19 @@ clean: stop
 	fi
 	@echo "Docker environment cleaned."
 
-# Add a .env file if it doesn't exist for local development convenience
+# Add a .env.local file if it doesn't exist for local development convenience
 .PHONY: setup-env
 setup-env:
-	@if [ ! -f .env ]; then \
-		echo "Creating a default .env file..."; \
-		echo "PORT=3000" > .env; \
-		echo "DATABASE_URL=postgres://testuser:testpassword@localhost:5432/inventorydb" >> .env; \
-		echo "X_AUTH_TOKEN=secrettoken" >> .env; \
-		echo "ADMIN_TOKEN=secrettoken" >> .env; \
-		echo ".env file created. Please review and update it as necessary. Ensure X_AUTH_TOKEN and ADMIN_TOKEN are secure if this is for production."; \
+	@if [ ! -f .env.local ]; then \
+		echo "Creating a default .env.local file..."; \
+		echo "PORT=3000" > .env.local; \
+		echo "DATABASE_URL=postgres://testuser:testpassword@localhost:5432/inventorydb" >> .env.local; \
+		echo "X_AUTH_TOKEN=secrettoken" >> .env.local; \
+		echo "ADMIN_TOKEN=secrettoken" >> .env.local; \
+		echo "NODE_ENV=development" >> .env.local; \
+		echo ".env.local file created. Please review and update it as necessary."; \
 	else \
-		echo ".env file already exists."; \
+		echo ".env.local file already exists."; \
 	fi
 
 # Lint the server code

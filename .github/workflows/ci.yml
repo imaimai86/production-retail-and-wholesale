@@ -4,7 +4,7 @@ on:
   pull_request:
 
 jobs:
-  build-and-test:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -12,11 +12,51 @@ jobs:
         with:
           node-version: '18'
           cache: 'npm'
-      - name: Run install script
-        run: |
-          chmod +x ./install.sh
-          ./install.sh
+      - name: Install root dependencies
+        run: npm install
+      - name: Install server dependencies
+        run: npm install --prefix server
       - name: Run linters
         run: npm run lint --prefix server
-      - name: Run tests
-        run: npm run test
+
+  test-dockerized:
+    runs-on: ubuntu-latest
+    needs: lint # Run linting first
+    steps:
+      - uses: actions/checkout@v3
+
+      # .env.ci file is already part of the repository
+      # Ensure it's available for the Makefile
+
+      - name: Verify Docker is available
+        run: docker --version
+
+      - name: Build Docker images
+        # No ENV_FILE needed for build itself, unless build ARGs depend on it, which they don't currently
+        run: make build
+        # May need sudo if runner doesn't have docker group permissions, e.g., run: sudo make build
+
+      - name: Run server and database containers
+        run: make ENV_FILE=.env.ci run
+        # May need sudo, e.g., run: sudo make ENV_FILE=.env.ci run
+
+      - name: Wait for server to be healthy
+        run: |
+          echo "Waiting for server to start..."
+          timeout 60s bash -c ' \
+            until curl -sf http://localhost:3000/; do \
+              echo -n "."; \
+              sleep 2; \
+            done; \
+            echo "Server is up!"' \
+          || (echo "Server did not start in time. Dumping logs:" && (sudo docker logs inventory-server-container || docker logs inventory-server-container) && exit 1)
+
+
+      - name: Run tests against Dockerized server
+        run: make ENV_FILE=.env.ci test
+        # May need sudo, e.g., run: sudo make ENV_FILE=.env.ci test
+
+      - name: Stop containers
+        if: always() # Ensure cleanup even if previous steps fail
+        run: make ENV_FILE=.env.ci stop # Pass ENV_FILE if make stop potentially uses it, though current stop doesn't
+        # May need sudo, e.g., run: sudo make ENV_FILE=.env.ci stop
