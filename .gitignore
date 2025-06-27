@@ -1,1 +1,11 @@
 node_modules/
+
+# Environment files
+.env
+.env.local
+# .env.production (if used, should also be ignored)
+# .env.development (if used, should also be ignored)
+
+# Do not ignore .env.ci as it's needed for CI configuration
+# and should contain non-sensitive CI-specific values.
+# !.env.ci
