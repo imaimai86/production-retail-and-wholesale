@@ -13,8 +13,8 @@ RUN npm install
 # Copy the rest of the application code to the working directory
 COPY . .
 
-# Copy the .env file from the root to the server directory in the container
-COPY ../.env ./.env
+# Environment variables will be injected by Docker run command (e.g., using --env-file)
+# So, removing: COPY ../.env ./.env
 
 # Make port 3000 available to the world outside this container
 EXPOSE 3000

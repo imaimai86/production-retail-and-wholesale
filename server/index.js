@@ -1,9 +1,12 @@
-// Load environment variables from .env.
-// In Docker, WORKDIR is /usr/src/app and .env is copied there. CMD node index.js runs from /usr/src/app.
-// So, process.cwd() is /usr/src/app, and .config() will find /usr/src/app/.env.
-// For local dev, if you run `node server/index.js` from project root, it finds .env in root.
-// If you `cd server` and run `node index.js`, it finds `server/.env` (less ideal but common).
-require('dotenv').config();
+// Environment variables are expected to be injected by the Docker runtime (e.g., via --env-file in Makefile)
+// Thus, require('dotenv').config() is removed.
+// For local development outside Docker, ensure environment variables are set (e.g. through .env and `dotenv` or manually).
+
+// Startup logging for critical environment variables
+console.log('[SERVER STARTUP] ADMIN_TOKEN:', process.env.ADMIN_TOKEN);
+console.log('[SERVER STARTUP] X_AUTH_TOKEN:', process.env.X_AUTH_TOKEN);
+console.log('[SERVER STARTUP] DATABASE_URL:', process.env.DATABASE_URL);
+console.log('[SERVER STARTUP] PORT:', process.env.PORT);
 
 const express = require('express');
 const Products = require('./models/products');
@@ -53,10 +56,12 @@ app.use(Auth.verify);
  *         description: Server error
  */
 app.post('/users', Auth.requireAdmin, async (req, res, next) => {
+  console.log(`POST /users - Body: ${JSON.stringify(req.body)}, Headers: ${JSON.stringify(req.headers)}`);
   try {
     const user = await Users.create(req.body);
     res.status(201).json(user);
   } catch (err) {
+    console.error(`Error in POST /users: ${err.message}`, err.stack);
     next(err);
   }
 });
@@ -267,10 +272,12 @@ app.get('/products', async (req, res, next) => {
  *         description: Server error
  */
 app.post('/products', async (req, res, next) => {
+  console.log(`POST /products - Body: ${JSON.stringify(req.body)}, Headers: ${JSON.stringify(req.headers)}`);
   try {
     const product = await Products.create(req.body);
     res.status(201).json(product);
   } catch (err) {
+    console.error(`Error in POST /products: ${err.message}`, err.stack);
     next(err);
   }
 });
@@ -456,10 +463,12 @@ app.get('/batches', async (req, res, next) => {
  *         description: Server error
  */
 app.post('/batches', async (req, res, next) => {
+  console.log(`POST /batches - Body: ${JSON.stringify(req.body)}, Headers: ${JSON.stringify(req.headers)}`);
   try {
     const batch = await Batches.create(req.body);
     res.status(201).json(batch);
   } catch (err) {
+    console.error(`Error in POST /batches: ${err.message}`, err.stack);
     next(err);
   }
 });

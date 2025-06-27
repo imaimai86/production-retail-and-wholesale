@@ -10,9 +10,13 @@ class AuthMiddleware {
 
   static requireAdmin(req, res, next) {
     const token = req.header('x-auth-token');
+    console.log('[AuthMiddleware.requireAdmin] Checking admin access. Received token:', token);
+    console.log('[AuthMiddleware.requireAdmin] Expected ADMIN_TOKEN:', process.env.ADMIN_TOKEN);
     if (token !== process.env.ADMIN_TOKEN) {
+      console.log('[AuthMiddleware.requireAdmin] Admin access denied.');
       return res.status(403).json({ error: 'Forbidden' });
     }
+    console.log('[AuthMiddleware.requireAdmin] Admin access granted.');
     next();
   }
 }
