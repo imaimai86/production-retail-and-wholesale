@@ -36,3 +36,27 @@ To view the Swagger UI locally:
 
 4.  **Access the UI:**
     Open your browser and navigate to `http://localhost:3001/docs`.
+
+## Graft setup (required for the SDLC workflow)
+
+The Plan stage of `scripts/sdlc.sh` and the `/plan` command use [graft](https://www.npmjs.com/package/@nanonets/graft), a prebuilt code graph, to find the files a change touches. Each developer needs it installed and built once. If graft is missing, the Claude hooks do nothing silently and the Plan stage loses its code graph.
+
+1. **Install** (needs Node.js and npm):
+   ```bash
+   npm install -g @nanonets/graft
+   graft --version        # confirm it is on your PATH
+   ```
+   Update later with `graft upgrade`.
+2. **Build the graph** from the repo root (free, no API key). The `graft/` folder is git-ignored, so everyone builds their own:
+   ```bash
+   graft build
+   graft check            # exits non-zero if the graph is stale; rerun `graft build` to refresh
+   ```
+3. **Start Claude Code** in the repo. `.mcp.json` registers the graft MCP server (`graft mcp`). On first use Claude Code asks you to approve project MCP servers; approve `graft`.
+4. **Try it:** `graft ask "where is the sales invoice calculated" --source`.
+
+### Two ways Claude uses graft
+- **Hooks (default).** `.claude/settings.json` runs `.claude/helpers/graft-hooks.cjs` at session start, after edits and at stop. This injects a repo map into the session and keeps the graph in sync. The helper looks for graft in several places (a machine-specific path first, then local and global `node_modules`), so the path baked into it is harmless on other machines.
+- **MCP tools.** Claude can call `graft_find_code`, `graft_find_all`, `graft_trace_calls`, `graft_file_api` and `graft_repo_map` through the server in `.mcp.json`.
+
+To stop the inline context injected by the hooks, remove the graft entries under `hooks` in `.claude/settings.json` on your machine (do not commit that change). The MCP server stays available through `.mcp.json`. To turn graft off completely, also remove `graft` from `.mcp.json` locally.

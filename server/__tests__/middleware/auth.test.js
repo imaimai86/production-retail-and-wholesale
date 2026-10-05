@@ -1,4 +1,4 @@
-const Auth = require('../auth');
+const Auth = require('../../middleware/auth');
 
 describe('Auth middleware', () => {
   test('missing token', () => {

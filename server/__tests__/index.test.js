@@ -2,7 +2,7 @@ const request = require('supertest');
 
 process.env.ADMIN_TOKEN = 'secret';
 
-jest.mock('./models/products', () => {
+jest.mock('../models/products', () => {
   let data = [];
   return {
     __reset: () => { data = []; },
@@ -14,7 +14,7 @@ jest.mock('./models/products', () => {
   };
 });
 
-jest.mock('./models/batches', () => {
+jest.mock('../models/batches', () => {
   let data = [];
   return {
     __reset: () => { data = []; },
@@ -23,7 +23,7 @@ jest.mock('./models/batches', () => {
   };
 });
 
-jest.mock('./models/inventory', () => {
+jest.mock('../models/inventory', () => {
   let data = [];
   return {
     __reset: () => { data = []; },
@@ -39,7 +39,7 @@ jest.mock('./models/inventory', () => {
   };
 });
 
-jest.mock('./models/categories', () => {
+jest.mock('../models/categories', () => {
   let data = [];
   return {
     __reset: () => { data = []; },
@@ -48,7 +48,7 @@ jest.mock('./models/categories', () => {
   };
 });
 
-jest.mock('./models/sales', () => {
+jest.mock('../models/sales', () => {
   let data = [];
   return {
     __reset: () => { data = []; },
@@ -66,7 +66,7 @@ jest.mock('./models/sales', () => {
   };
 });
 
-jest.mock('./models/users', () => {
+jest.mock('../models/users', () => {
   let data = [];
   return {
     __reset: () => { data = []; },
@@ -75,14 +75,14 @@ jest.mock('./models/users', () => {
   };
 });
 
-const Products = require('./models/products');
-const Batches = require('./models/batches');
-const Inventory = require('./models/inventory');
-const Sales = require('./models/sales');
-const Users = require('./models/users');
-const Categories = require('./models/categories');
+const Products = require('../models/products');
+const Batches = require('../models/batches');
+const Inventory = require('../models/inventory');
+const Sales = require('../models/sales');
+const Users = require('../models/users');
+const Categories = require('../models/categories');
 
-const app = require('./index');
+const app = require('../index');
 
 beforeEach(() => {
   Products.__reset();

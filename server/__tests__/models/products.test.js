@@ -1,7 +1,7 @@
-const db = require('../db');
-const Products = require('../products');
+const db = require('../../models/db');
+const Products = require('../../models/products');
 
-jest.mock('../db');
+jest.mock('../../models/db');
 
 describe('Products model', () => {
   afterEach(() => jest.clearAllMocks());
