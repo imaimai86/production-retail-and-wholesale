@@ -1,7 +1,7 @@
-const db = require('../db');
-const Users = require('../users');
+const db = require('../../models/db');
+const Users = require('../../models/users');
 
-jest.mock('../db');
+jest.mock('../../models/db');
 
 describe('Users model', () => {
   afterEach(() => jest.clearAllMocks());

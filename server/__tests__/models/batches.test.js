@@ -1,7 +1,7 @@
-const db = require('../db');
-const Batches = require('../batches');
+const db = require('../../models/db');
+const Batches = require('../../models/batches');
 
-jest.mock('../db');
+jest.mock('../../models/db');
 
 describe('Batches model', () => {
   afterEach(() => jest.clearAllMocks());

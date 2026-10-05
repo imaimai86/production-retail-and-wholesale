@@ -1,9 +1,9 @@
-jest.mock('../db', () => ({
+jest.mock('../../models/db', () => ({
   query: jest.fn(),
   transaction: jest.fn()
 }));
-const db = require('../db');
-const Inventory = require('../inventory');
+const db = require('../../models/db');
+const Inventory = require('../../models/inventory');
 
 describe('Inventory model', () => {
   afterEach(() => jest.clearAllMocks());
