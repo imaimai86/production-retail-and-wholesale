@@ -289,6 +289,9 @@ describe('POST /sales validation and errors', () => {
     const res = await post({ ...valid, location: '' });
     expect(res.statusCode).toBe(400);
     expect(Sales.create).not.toHaveBeenCalled();
+    // jest.clearAllMocks() does not drop queued once-values; consume the unused
+    // rejection so it cannot leak into the next test.
+    await expect(Sales.create(valid)).rejects.toMatchObject({ code: 'INVENTORY_NOT_FOUND' });
   });
 
   test('S-R10 an unexpected error returns 500', async () => {
