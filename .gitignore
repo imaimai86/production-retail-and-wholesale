@@ -1,1 +1,7 @@
 node_modules/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
+Docs/backlog/*/logs/
+.claude/sdlc-state.jsonnode $G set implement demo abc123
+echo "$T" | node $G pre-tool; echo "exit $?"
