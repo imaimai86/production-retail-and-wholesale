@@ -24,7 +24,8 @@ CREATE TABLE inventory (
   id SERIAL PRIMARY KEY,
   product_id INTEGER REFERENCES products(id),
   location TEXT NOT NULL,
-  quantity INTEGER NOT NULL
+  quantity INTEGER NOT NULL,
+  UNIQUE (product_id, location)
 );
 
 CREATE TABLE sales (
@@ -34,6 +35,8 @@ CREATE TABLE sales (
   price NUMERIC NOT NULL,
   discount NUMERIC DEFAULT 0,
   gst NUMERIC NOT NULL,
+  status TEXT DEFAULT 'sold',
+  location TEXT,
   user_id INTEGER REFERENCES users(id),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

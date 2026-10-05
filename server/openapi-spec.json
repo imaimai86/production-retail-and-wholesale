@@ -596,6 +596,12 @@
           "200": {
             "description": "Inventory transferred successfully"
           },
+          "400": {
+            "description": "Invalid request body"
+          },
+          "409": {
+            "description": "Insufficient stock at the source location"
+          },
           "500": {
             "description": "Server error"
           }
@@ -645,6 +651,9 @@
                       "user_id": {
                         "type": "integer"
                       },
+                      "location": {
+                        "type": "string"
+                      },
                       "quantity": {
                         "type": "number"
                       },
@@ -682,12 +691,20 @@
             "application/json": {
               "schema": {
                 "type": "object",
+                "required": [
+                  "product_id",
+                  "location",
+                  "quantity"
+                ],
                 "properties": {
                   "product_id": {
                     "type": "integer"
                   },
+                  "location": {
+                    "type": "string"
+                  },
                   "quantity": {
-                    "type": "number"
+                    "type": "integer"
                   },
                   "price": {
                     "type": "number"
@@ -697,6 +714,13 @@
                   },
                   "gst": {
                     "type": "number"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "order_created",
+                      "sold"
+                    ]
                   }
                 }
               }
@@ -706,6 +730,15 @@
         "responses": {
           "201": {
             "description": "Sale created successfully"
+          },
+          "400": {
+            "description": "Invalid request body"
+          },
+          "404": {
+            "description": "No inventory row for the product at the location"
+          },
+          "409": {
+            "description": "Insufficient stock"
           },
           "500": {
             "description": "Server error"
@@ -753,8 +786,14 @@
           "200": {
             "description": "Sale status updated successfully"
           },
+          "400": {
+            "description": "Invalid status"
+          },
           "404": {
             "description": "Sale not found"
+          },
+          "409": {
+            "description": "Insufficient stock"
           },
           "500": {
             "description": "Server error"

@@ -10,6 +10,13 @@ const Sales = require('./models/sales');
 const Users = require('./models/users');
 const Categories = require('./models/categories');
 const Auth = require('./middleware/auth');
+const { isPresent, isNonEmptyString, isPositiveInt, isValidStatus } = require('./validation');
+
+function handleStockError(err, res, next) {
+  if (err.code === 'INSUFFICIENT_STOCK') return res.status(409).json({ error: 'Insufficient stock' });
+  if (err.code === 'INVENTORY_NOT_FOUND') return res.status(404).json({ error: err.message });
+  next(err);
+}
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -535,16 +542,25 @@ app.get('/inventory', async (req, res, next) => {
  *     responses:
  *       200:
  *         description: Inventory transferred successfully
+ *       400:
+ *         description: Invalid request body
+ *       409:
+ *         description: Insufficient stock at the source location
  *       500:
  *         description: Server error
  */
 app.post('/inventory/transfer', async (req, res, next) => {
   const { product_id, from, to, quantity } = req.body;
+  if (!isPresent(product_id)) return res.status(400).json({ error: 'product_id is required' });
+  if (!isNonEmptyString(from)) return res.status(400).json({ error: 'from is required' });
+  if (!isNonEmptyString(to)) return res.status(400).json({ error: 'to is required' });
+  if (from === to) return res.status(400).json({ error: 'from and to must differ' });
+  if (!isPositiveInt(quantity)) return res.status(400).json({ error: 'quantity must be a positive integer' });
   try {
     const inventory = await Inventory.transfer(product_id, from, to, quantity);
     res.json(inventory);
   } catch (err) {
-    next(err);
+    handleStockError(err, res, next);
   }
 });
 
@@ -581,6 +597,8 @@ app.post('/inventory/transfer', async (req, res, next) => {
  *                     type: integer
  *                   user_id:
  *                     type: integer
+ *                   location:
+ *                     type: string
  *                   quantity:
  *                     type: number
  *                   price:
@@ -618,29 +636,48 @@ app.get('/sales', async (req, res, next) => {
  *         application/json:
  *           schema:
  *             type: object
+ *             required: [product_id, location, quantity]
  *             properties:
  *               product_id:
  *                 type: integer
+ *               location:
+ *                 type: string
  *               quantity:
- *                 type: number
+ *                 type: integer
  *               price:
  *                 type: number
  *               discount:
  *                 type: number
  *               gst:
  *                 type: number
+ *               status:
+ *                 type: string
+ *                 enum: [order_created, sold]
  *     responses:
  *       201:
  *         description: Sale created successfully
+ *       400:
+ *         description: Invalid request body
+ *       404:
+ *         description: No inventory row for the product at the location
+ *       409:
+ *         description: Insufficient stock
  *       500:
  *         description: Server error
  */
 app.post('/sales', async (req, res, next) => {
+  const { product_id, location, quantity, status } = req.body;
+  if (!isPresent(product_id)) return res.status(400).json({ error: 'product_id is required' });
+  if (!isNonEmptyString(location)) return res.status(400).json({ error: 'location is required' });
+  if (!isPositiveInt(quantity)) return res.status(400).json({ error: 'quantity must be a positive integer' });
+  if (status !== undefined && !isValidStatus(status)) {
+    return res.status(400).json({ error: 'status must be order_created or sold' });
+  }
   try {
     const sale = await Sales.create({ ...req.body, user_id: req.userId });
     res.status(201).json(sale);
   } catch (err) {
-    next(err);
+    handleStockError(err, res, next);
   }
 });
 
@@ -670,18 +707,25 @@ app.post('/sales', async (req, res, next) => {
  *     responses:
  *       200:
  *         description: Sale status updated successfully
+ *       400:
+ *         description: Invalid status
  *       404:
  *         description: Sale not found
+ *       409:
+ *         description: Insufficient stock
  *       500:
  *         description: Server error
  */
 app.patch('/sales/:id/status', async (req, res, next) => {
+  if (!isValidStatus(req.body.status)) {
+    return res.status(400).json({ error: 'status must be order_created or sold' });
+  }
   try {
     const sale = await Sales.updateStatus(req.params.id, req.body.status);
     if (!sale) return res.status(404).end();
     res.json(sale);
   } catch (err) {
-    next(err);
+    handleStockError(err, res, next);
   }
 });
 
@@ -712,7 +756,7 @@ app.delete('/sales/:id', async (req, res, next) => {
     if (!sale) return res.status(404).end();
     res.status(200).json(sale);
   } catch (err) {
-    next(err);
+    handleStockError(err, res, next);
   }
 });
 
