@@ -17,7 +17,7 @@ id. All endpoints require this header.
 
 ## Inventory
 - `GET /inventory` – list inventory items (supports `page` and `limit`)
-- `POST /inventory/transfer` – transfer quantity between locations
+- `POST /inventory/transfer` – transfer quantity between locations. Body: `product_id`, `from`, `to` (different, case-sensitive), `quantity` (positive integer). `400` on invalid input, `409` `{"error":"Insufficient stock"}` if the source location lacks the quantity.
 
 ## Categories
 - `GET /categories` – list categories
@@ -29,7 +29,7 @@ id. All endpoints require this header.
 
 ## Sales
 - `GET /sales` – list invoices/sales (supports `page` and `limit` query params)
-- `POST /sales` – create a sale invoice
-- `PATCH /sales/:id/status` – update order status (`order_created` or `sold`)
-- `DELETE /sales/:id` – revoke a sale and restore inventory
+- `POST /sales` – create a sale invoice. `location` is required and stock is taken from that location only. `status` is optional (`order_created` or `sold`, default `sold`). `400` on invalid input, `404` if there is no inventory row for the product at the location, `409` `{"error":"Insufficient stock"}` if a `sold` sale exceeds stock.
+- `PATCH /sales/:id/status` – update order status (`order_created` or `sold`). `400` on invalid status, `404` if the sale is missing, `409` `{"error":"Insufficient stock"}` when moving to `sold` without enough stock. Setting the current status is a no-op.
+- `DELETE /sales/:id` – revoke a sale; a `sold` sale's quantity is restored to its location (the row is re-created if missing), an `order_created` sale restores nothing
 - `GET /sales/:id/invoice` – generate billing lines for a sale
