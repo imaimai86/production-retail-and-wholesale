@@ -1,11 +1,13 @@
 const db = require('./db');
+const { insufficientStock } = require('./errors');
 
 async function transfer(product_id, from, to, quantity) {
   return db.transaction(async client => {
-    await client.query(
-      'UPDATE inventory SET quantity = quantity - $1 WHERE product_id=$2 AND location=$3',
+    const source = await client.query(
+      'UPDATE inventory SET quantity = quantity - $1 WHERE product_id=$2 AND location=$3 AND quantity >= $1 RETURNING id',
       [quantity, product_id, from]
     );
+    if (source.rowCount === 0) throw insufficientStock();
     const { rows } = await client.query(
       'INSERT INTO inventory(product_id, location, quantity) VALUES($1,$2,$3) ON CONFLICT (product_id, location) DO UPDATE SET quantity = inventory.quantity + EXCLUDED.quantity RETURNING *',
       [product_id, to, quantity]
