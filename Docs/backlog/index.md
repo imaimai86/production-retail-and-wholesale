@@ -13,6 +13,7 @@ Markers: [ ] pending, [x] completed, [!] blocked, [~] parked (skipped by `script
 - [ ] `fix-user-validation` - Bug: POST /users returns 500 when name is missing; validate and fix the docs
 - [ ] `warn-missing-env-config` - Feature: warn at startup when the repo-root .env is missing or ADMIN_TOKEN is not set
 - [ ] `add-base-branch-dropdown` - Feature: choose the base branch for each SDLC task from a dropdown, default main
+- [ ] `add-test-repair-resume` - Feature: FROM=test-repair resume point that checks Test repair preconditions (claim file, red commit, tests unchanged) first
 - [x] `add-backlog-list` - Feature: /backlog-list command that lists backlog items with a status filter (pending, in-progress, blocked, completed)
 - [x] `add-integration-success-check` - Feature: integration tests are a required local sdlc check; temporary skip in CI only (SDLC_INTEGRATION_CI=run to enable)
 - [~] `sdlc-bg-agents` - Feature: run the SDLC agents as `claude --bg` background sessions so they can ask questions and be monitored (parked: the orchestrator AskUserQuestion rule and stream-json monitoring cover it for now)
