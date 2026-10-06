@@ -4,3 +4,9 @@ Pending items are picked top-down by `scripts/sdlc.sh`. Format: `- [ ] \`slug\` 
 Each item needs `Docs/backlog/<slug>/brief.md`.
 
 - [x] `fix-stock-checks` - Block inventory transfers and sales when stock is insufficient
+- [x] `hide-internal-errors` - Return JSON instead of HTML stack traces for unhandled errors
+- [ ] `add-db-health-check` - Feature: GET /health that checks the database connection
+- [ ] `add-db-integration-tests` - Feature: integration tests against real Postgres, plus GitLab CI
+- [ ] `add-json-logging` - Feature: Logs all errors and warnings: readable console locally, Google Cloud Logging JSON in Kubernetes
+- [ ] `fix-user-validation` - Bug: POST /users returns 500 when name is missing; validate and fix the docs
+- [ ] `add-integration-success-check` - Feature: run integration tests in the local sdlc success checks, not in CI

@@ -10,6 +10,7 @@ const Sales = require('./models/sales');
 const Users = require('./models/users');
 const Categories = require('./models/categories');
 const Auth = require('./middleware/auth');
+const errorHandler = require('./middleware/errorHandler');
 const { isPresent, isNonEmptyString, isPositiveInt, isValidStatus } = require('./validation');
 
 function handleStockError(err, res, next) {
@@ -819,6 +820,8 @@ app.get('/sales/:id/invoice', async (req, res, next) => {
     next(err);
   }
 });
+
+app.use(errorHandler);
 
 if (require.main === module) {
   app.listen(port, () => {
