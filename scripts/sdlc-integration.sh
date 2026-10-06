@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run the integration suite (npm run test:integration) the way the SDLC pipeline does.
-# Uses DATABASE_URL if set, otherwise starts a throwaway Postgres container with Docker.
-# Run from the repo root. Env: CI, SDLC_INTEGRATION_CI (see README.md "SDLC pipeline: integration tests").
+# Database: DATABASE_URL from the shell, else from the repo-root .env (local host only), else a throwaway Docker Postgres.
+# Run from the repo root. Env: CI, SDLC_INTEGRATION_CI, SDLC_DB, SDLC_ALLOW_REMOTE_DB (see README.md "SDLC pipeline: integration tests").
 set -euo pipefail
 
 # TODO(temporary): remove this skip once CI provides a database
@@ -13,6 +13,36 @@ fi
 if ! node -e 'const s=require("./server/package.json").scripts||{}; process.exit(s["test:integration"]?0:1)'; then
   echo "ERROR: no test:integration script in server/package.json (see add-db-integration-tests)"
   exit 1
+fi
+
+# Database, first match wins:
+#   1. DATABASE_URL already set in the shell
+#   2. DATABASE_URL in the repo-root .env (the file the server reads); local hosts only, and only if it answers
+#   3. a throwaway Postgres container (Docker)
+# SDLC_DB=docker skips 1 and 2. SDLC_ALLOW_REMOTE_DB=1 allows a non-local host in .env.
+# The suite creates and drops its own prw_test_* databases, so parallel runs can share one server.
+[ "${SDLC_DB:-}" = docker ] && unset DATABASE_URL
+if [ -z "${DATABASE_URL:-}" ] && [ "${SDLC_DB:-}" != docker ] && [ -f .env ]; then
+  DB_FROM_ENV="$(node -e '
+    const raw = (require("./server/node_modules/dotenv").parse(require("fs").readFileSync(".env")).DATABASE_URL || "").trim();
+    if (!raw) process.exit(0);
+    let u;
+    try { u = new URL(raw); } catch (e) { console.error("WARNING: DATABASE_URL in .env is not a valid URL; ignoring it."); process.exit(0); }
+    const host = u.hostname.replace(/^\[|\]$/g, "");
+    if (!["localhost", "127.0.0.1", "::1"].includes(host) && process.env.SDLC_ALLOW_REMOTE_DB !== "1") {
+      console.error("WARNING: DATABASE_URL in .env points at " + host + ", not this machine; ignoring it (SDLC_ALLOW_REMOTE_DB=1 allows it).");
+      process.exit(0);
+    }
+    const port = Number(u.port || 5432);
+    const s = require("net").connect({ host, port, timeout: 2000 });
+    s.on("connect", () => { process.stdout.write(raw); s.end(); });
+    const down = () => { console.error("WARNING: nothing is listening on " + host + ":" + port + " (DATABASE_URL in .env); ignoring it."); process.exit(0); };
+    s.on("timeout", down); s.on("error", down);
+  ' || true)"
+  if [ -n "$DB_FROM_ENV" ]; then
+    export DATABASE_URL="$DB_FROM_ENV"
+    echo "Using DATABASE_URL from .env"
+  fi
 fi
 
 if [ -n "${DATABASE_URL:-}" ]; then

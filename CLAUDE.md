@@ -12,7 +12,7 @@ Node.js/Express backend for production, sales and inventory management, used by 
 | `npm test` | Run the Jest tests (in `server/`). Run it from the repo root before committing. |
 | `./install.sh` | Install dependencies, apply database migrations (if `DATABASE_URL` is set) and start the server. |
 | `./scripts/sdlc.sh [slug]` | Run the automated SDLC pipeline for a backlog item. |
-| `bash scripts/sdlc-integration.sh` | Run the integration suite as the SDLC does (Docker or `DATABASE_URL`). |
+| `bash scripts/sdlc-integration.sh` | Run the integration suite as the SDLC does (`DATABASE_URL` from the shell or repo-root `.env`, else Docker). |
 | `/backlog-list [status]` or `npm run backlog -- [status]` | List the backlog, optionally filtered by status. |
 
 ## Setup
@@ -39,10 +39,11 @@ ADMIN_TOKEN=secret
   ```
   `status.json` is the single-line live status. The run output is `Docs/backlog/<slug>/logs/run*.out`.
 - Before sending any reply, check whether a run is still active (the background task has not reported completion). If it is, the reply is incomplete without the monitor command.
-- **MANDATORY: show the answers before asking for confirmation.** When a run pauses on Spec questions (exit code 2, `Docs/backlog/<slug>/questions.md`), do these in order:
+- **MANDATORY: show the answers, then confirm with AskUserQuestion.** When a run pauses on Spec questions (exit code 2, `Docs/backlog/<slug>/questions.md`), or a Plan agent reports open questions, do these in order:
   1. Print EVERY question in the reply with its full, verbatim `**Suggested:**` answer and why it matters. A summary, a shortened table, or "accept all three suggested answers?" without the answers on screen is not allowed.
   2. Give your own answer for each: say whether you agree with the suggestion and why, check any factual claim against the code, and if you disagree propose a different answer.
-  3. Only then ask the user to confirm (accept all, answer themselves, or do nothing). When they accept, write `accept` on each `**Answer:**` line, or their own text, and rerun.
+  3. Only then confirm with the AskUserQuestion tool, never with a free-text "accept?" line (headless agents cannot ask: you ask for them). One AskUserQuestion question per agent question, up to 4 per call (batch the rest into further calls), with the question's title as the header and these options: **Accept suggested** (put the suggested answer in the description), **Use my alternative** (only when your answer differs; put it in the description), and the automatic Other for the user's own text. This is in addition to steps 1 and 2, never a replacement: the full text must already be printed in the same reply.
+  4. Write each choice on its `**Answer:**` line (`accept` for the suggestion, otherwise the chosen or typed text) and rerun.
 
 ## Graft
 Graft must be installed for the SDLC workflow (the Plan stage and `/plan` use it).

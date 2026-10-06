@@ -32,6 +32,7 @@ describe('criterion 8: wiring', () => {
       '# Backlog',
       '',
       '- [!] `blocked-one` - Feature: stuck (blocked: waiting)',
+      '- [~] `parked-one` - Feature: later (parked: not now)',
       '- [x] `done-one` - Bug: done',
       '- [ ] `next-one` - Feature: next',
       '',
@@ -41,7 +42,7 @@ describe('criterion 8: wiring', () => {
     beforeAll(() => fs.writeFileSync(file, sample));
     afterAll(() => fs.rmSync(file, { force: true }));
 
-    test('grep -m1 selects the first [ ] line, not the [!] line', () => {
+    test('grep -m1 selects the first [ ] line, not the [!] or [~] lines', () => {
       const r = spawnSync('grep', ['-m1', '^- \\[ \\]', file], { encoding: 'utf8' });
       expect(r.stdout.trim()).toBe('- [ ] `next-one` - Feature: next');
     });

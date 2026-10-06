@@ -8,7 +8,7 @@ const repoRoot = path.resolve(__dirname, '../../..');
 const script = path.join(repoRoot, 'scripts', 'backlog-list.cjs');
 
 const USAGE = 'Usage: backlog-list [status[,status...]] [--status <list>] [--json]';
-const unknown = v => `Unknown status "${v}". Valid: pending, in-progress, blocked, completed, all`;
+const unknown = v => `Unknown status "${v}". Valid: pending, in-progress, blocked, parked, completed, all`;
 
 const tmpRoots = [];
 function mkRoot(indexText, briefs = {}) {
@@ -93,9 +93,9 @@ describe('require()', () => {
 describe('parseIndex', () => {
   const { parseIndex } = require(script);
 
-  test('accepts markers space, x, X and !', () => {
-    const items = parseIndex('- [ ] `a` - t\n- [x] `b` - t\n- [X] `c` - t\n- [!] `d` - t\n');
-    expect(items.map(i => [i.marker, i.slug])).toEqual([[' ', 'a'], ['x', 'b'], ['X', 'c'], ['!', 'd']]);
+  test('accepts markers space, x, X, ! and ~', () => {
+    const items = parseIndex('- [ ] `a` - t\n- [x] `b` - t\n- [X] `c` - t\n- [!] `d` - t\n- [~] `e` - t\n');
+    expect(items.map(i => [i.marker, i.slug])).toEqual([[' ', 'a'], ['x', 'b'], ['X', 'c'], ['!', 'd'], ['~', 'e']]);
   });
 
   test('ignores header, blank lines, other markers and lines without a slug', () => {
@@ -275,7 +275,7 @@ describe('criterion 2: in-progress detection', () => {
     git(root, 'branch', 'sdlc/loc');
     const out = run(root).out;
     expect(out).toMatch(/^in-progress {2}loc/m);
-    expect(out).toContain('pending 2 · in-progress 1 · blocked 1 · completed 1 · total 5');
+    expect(out).toContain('pending 2 · in-progress 1 · blocked 1 · parked 0 · completed 1 · total 5');
   });
 });
 
@@ -417,7 +417,7 @@ describe('criterion 5: footer, Not in index, no brief, empty result', () => {
 
   test('footer counts ignore the filter', () => {
     const out = run(root, ['blocked']).out;
-    expect(out).toContain('pending 1 · in-progress 0 · blocked 1 · completed 1 · total 3');
+    expect(out).toContain('pending 1 · in-progress 0 · blocked 1 · parked 0 · completed 1 · total 3');
   });
 
   test('Not in index lists brief folders without an index line, sorted', () => {
@@ -435,7 +435,7 @@ describe('criterion 5: footer, Not in index, no brief, empty result', () => {
     const lines = run(root).out.replace(/\n$/, '').split('\n');
     const blank = lines.indexOf('');
     expect(blank).toBeGreaterThan(0);
-    expect(lines[blank + 1]).toMatch(/^pending \d+ · in-progress \d+ · blocked \d+ · completed \d+ · total \d+$/);
+    expect(lines[blank + 1]).toMatch(/^pending \d+ · in-progress \d+ · blocked \d+ · parked \d+ · completed \d+ · total \d+$/);
     expect(lines[blank + 2]).toBe('Not in index: alpha, zeta');
     expect(lines).toHaveLength(blank + 3);
   });
@@ -455,7 +455,7 @@ describe('criterion 5: footer, Not in index, no brief, empty result', () => {
     const r = run(mkRoot('- [ ] `a` - Bug: x\n', { a: brief('bug', 'P1') }), ['blocked']);
     expect(r.code).toBe(0);
     expect(r.out).toBe(
-      'No items with status: blocked\n\npending 1 · in-progress 0 · blocked 0 · completed 0 · total 1\n'
+      'No items with status: blocked\n\npending 1 · in-progress 0 · blocked 0 · parked 0 · completed 0 · total 1\n'
     );
   });
 
@@ -610,5 +610,43 @@ describe('criterion 7: read-only', () => {
     const src = fs.readFileSync(script, 'utf8');
     expect(src).not.toMatch(/writeFile|appendFile|mkdirSync|unlinkSync|rmSync|renameSync|copyFile/);
     expect(src).not.toMatch(/require\(['"](https?|net|dns)['"]\)|fetch\(/);
+  });
+});
+
+describe('parked status', () => {
+  const index = [
+    '- [ ] `p` - Bug: pending',
+    '- [~] `k` - Feature: Parked one (parked: not needed yet)',
+    '- [~] `k2` - Feature: Parked without reason',
+    '- [x] `c` - Bug: done',
+    '- [!] `b` - Bug: stuck (blocked: waiting)',
+    '',
+  ].join('\n');
+  const mk = () => mkRoot(index, { p: brief('bug', 'P1'), k: brief('feature', 'P3'), k2: brief('feature', 'P3'), c: brief('bug', 'P2'), b: brief('bug', 'P2') });
+  const by = (root, slug) => json(root).find(i => i.slug === slug);
+
+  test('[~] is parked, and the parked reason goes to the note, not the title', () => {
+    const r = mk();
+    expect(by(r, 'k')).toMatchObject({ status: 'parked', title: 'Parked one', note: 'not needed yet' });
+    expect(by(r, 'k2')).toMatchObject({ status: 'parked', note: '' });
+  });
+
+  test('a parked item with an sdlc/<slug> branch stays parked, not in-progress', () => {
+    const r = mk();
+    gitInit(r);
+    git(r, 'branch', 'sdlc/k');
+    expect(by(r, 'k').status).toBe('parked');
+  });
+
+  test('parked is a filter value, listed by all, and counted in the footer', () => {
+    const r = mk();
+    expect(json(r, ['parked']).map(i => i.slug)).toEqual(['k', 'k2']);
+    expect(json(r, ['pending,parked']).map(i => i.slug)).toEqual(['p', 'k', 'k2']);
+    expect(json(r, ['all'])).toHaveLength(5);
+    expect(run(r, ['blocked']).out).toContain('pending 1 · in-progress 0 · blocked 1 · parked 2 · completed 1 · total 5');
+  });
+
+  test('the table prints parked in lowercase', () => {
+    expect(run(mk(), ['parked']).out).toMatch(/^parked +k /m);
   });
 });
