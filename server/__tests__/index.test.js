@@ -74,7 +74,7 @@ jest.mock('../models/users', () => {
   return {
     __reset: () => { data = []; },
     getAll: ({ limit = 10, offset = 0 } = {}) => Promise.resolve(data.slice(offset, offset + limit)),
-    create: async (u) => { const item = { id: data.length + 1, ...u }; data.push(item); return item; }
+    create: jest.fn(async (u) => { const item = { id: data.length + 1, ...u }; data.push(item); return item; })
   };
 });
 
@@ -160,6 +160,96 @@ describe('API endpoints using responses', () => {
     await request(app).post('/categories').set('x-auth-token', token).send({ name: 'c', gst: 10 });
     const res = await request(app).get('/categories').set('x-auth-token', token);
     expect(res.body.length).toBe(1);
+  });
+});
+
+describe('POST /users validation', () => {
+  const admin = process.env.ADMIN_TOKEN;
+  const post = body => {
+    const r = request(app).post('/users').set('x-auth-token', admin);
+    return body === undefined ? r : r.send(body);
+  };
+
+  test('T-U1 valid name returns 201 and calls create once', async () => {
+    const res = await post({ name: 'Bob' });
+    expect(res.statusCode).toBe(201);
+    expect(res.body).toMatchObject({ name: 'Bob' });
+    expect(typeof res.body.id).toBe('number');
+    expect(Users.create).toHaveBeenCalledTimes(1);
+  });
+
+  test('T-U2 name is trimmed before storing and in the response', async () => {
+    const res = await post({ name: '  Bob ' });
+    expect(res.statusCode).toBe(201);
+    expect(Users.create).toHaveBeenCalledWith({ name: 'Bob' });
+    expect(res.body.name).toBe('Bob');
+  });
+
+  test('T-U3 unknown fields are ignored, not stored or returned', async () => {
+    const res = await post({ name: 'Bob', username: 'u', password: 'p', role: 'admin' });
+    expect(res.statusCode).toBe(201);
+    expect(Users.create).toHaveBeenCalledWith({ name: 'Bob' });
+    expect(res.body).not.toHaveProperty('username');
+    expect(res.body).not.toHaveProperty('password');
+    expect(res.body).not.toHaveProperty('role');
+  });
+
+  const required = {
+    'empty object': {},
+    'no body': undefined,
+    'null name': { name: null },
+    'empty name': { name: '' },
+    'whitespace name': { name: '   ' },
+    'tab/newline name': { name: '\t\n ' },
+    'legacy fields only': { username: 'a', password: 'b', role: 'c' }
+  };
+  test.each(Object.entries(required))('T-U4 400 name is required for %s', async (_n, body) => {
+    const res = await post(body);
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toEqual({ error: 'name is required' });
+    expect(Users.create).not.toHaveBeenCalled();
+  });
+
+  const notString = {
+    number: { name: 5 },
+    zero: { name: 0 },
+    boolean: { name: true },
+    false: { name: false },
+    object: { name: {} },
+    array: { name: ['Bob'] }
+  };
+  test.each(Object.entries(notString))('T-U5 400 name must be a string for %s', async (_n, body) => {
+    const res = await post(body);
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toEqual({ error: 'name must be a string' });
+    expect(Users.create).not.toHaveBeenCalled();
+  });
+
+  test('T-U6 a 10,000 character name is accepted', async () => {
+    const name = 'a'.repeat(10000);
+    const res = await post({ name });
+    expect(res.statusCode).toBe(201);
+    expect(res.body.name).toBe(name);
+  });
+
+  test('T-U7a no token with an invalid body returns the auth error, not 400', async () => {
+    const res = await request(app).post('/users').send({});
+    expect(res.statusCode).toBe(401);
+    expect(res.body).toEqual({ error: 'Unauthorized' });
+    expect(Users.create).not.toHaveBeenCalled();
+  });
+
+  test('T-U7b non-admin token with an invalid body returns 403, not 400', async () => {
+    const res = await request(app).post('/users').set('x-auth-token', 'not-admin').send({ name: 5 });
+    expect(res.statusCode).toBe(403);
+    expect(res.body).toEqual({ error: 'Forbidden' });
+    expect(Users.create).not.toHaveBeenCalled();
+  });
+
+  test('T-U8 database failure still goes to the error handler (500)', async () => {
+    Users.create.mockRejectedValueOnce(new Error('db down'));
+    const res = await post({ name: 'Bob' });
+    expect(res.statusCode).toBe(500);
   });
 });
 
