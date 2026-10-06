@@ -34,7 +34,7 @@ app.use(Auth.verify);
  * @swagger
  * /users:
  *   post:
- *     summary: Create a new user. Test update.
+ *     summary: Create a new user
  *     tags: [Users]
  *     security:
  *       - xAuthToken: []
@@ -44,22 +44,47 @@ app.use(Auth.verify);
  *         application/json:
  *           schema:
  *             type: object
+ *             required: [name]
  *             properties:
- *               username:
- *                 type: string
- *               password:
- *                 type: string
- *               role:
+ *               name:
  *                 type: string
  *     responses:
  *       201:
  *         description: User created successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 id:
+ *                   type: integer
+ *                 name:
+ *                   type: string
+ *       400:
+ *         description: Invalid name
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 error:
+ *                   type: string
  *       500:
  *         description: Server error
  */
 app.post('/users', Auth.requireAdmin, async (req, res, next) => {
   try {
-    const user = await Users.create(req.body);
+    const { name } = req.body || {};
+    if (name == null) {
+      return res.status(400).json({ error: 'name is required' });
+    }
+    if (typeof name !== 'string') {
+      return res.status(400).json({ error: 'name must be a string' });
+    }
+    if (!isNonEmptyString(name)) {
+      return res.status(400).json({ error: 'name is required' });
+    }
+    const user = await Users.create({ name: name.trim() });
     res.status(201).json(user);
   } catch (err) {
     next(err);
@@ -97,9 +122,7 @@ app.post('/users', Auth.requireAdmin, async (req, res, next) => {
  *                 properties:
  *                   id:
  *                     type: integer
- *                   username:
- *                     type: string
- *                   role:
+ *                   name:
  *                     type: string
  *       500:
  *         description: Server error
