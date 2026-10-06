@@ -10,15 +10,19 @@ const CAP = 2
 const WRAPPER = 'scripts/sdlc-mod.sh'
 // The stage names status.json carries (scripts/sdlc.sh strips the numbering).
 const STAGES = ['Spec', 'Plan', 'Red tests', 'Implement', 'Test repair', 'Review', 'Commit']
+// How long the Start button stays a "Starting…" note while the wrapper creates the worktree.
+const LAUNCH_GRACE_MS = 20000
 const RESUME_AT_IMPLEMENT = ['Implement', 'Test repair', 'Review', 'Commit']
 
-const EMPTY: Snapshot = { now: 0, runs: [], pending: [] }
+const EMPTY: Snapshot = { now: 0, runs: [], pending: [], discarded: {} }
 const snapshot = atom({ plugin: 'sdlc-monitor', key: 'snapshot' } as const, EMPTY)
 const agents = atom({ plugin: 'sdlc-monitor', key: 'agents' } as const, {} as Record<string, AgentRow>)
 const view = atom({ plugin: 'sdlc-monitor', key: 'view' } as const, '')
 const selected = atom({ plugin: 'sdlc-monitor', key: 'selected' } as const, {} as Record<string, boolean>)
 const queue = atom({ plugin: 'sdlc-monitor', key: 'queue' } as const, [] as string[])
 const confirmStop = atom({ plugin: 'sdlc-monitor', key: 'confirmStop' } as const, '')
+const confirmDiscard = atom({ plugin: 'sdlc-monitor', key: 'confirmDiscard' } as const, '')
+const launching = atom({ plugin: 'sdlc-monitor', key: 'launching' } as const, {} as Record<string, number>)
 const draft = atom({ plugin: 'sdlc-monitor', key: 'draft' } as const, {} as Record<string, string>)
 const notice = atom({ plugin: 'sdlc-monitor', key: 'notice' } as const, '')
 
@@ -207,7 +211,12 @@ async function collect($: EngineInterface): Promise<Snapshot> {
   const runs: Run[] = []
   const seen = new Set<string>()
 
+  const discarded: Record<string, string> = {}
   for (const f of await names($, dir)) {
+    if (f.kind === 'file' && f.name.endsWith('.discarded')) {
+      discarded[f.name.replace(/\.discarded$/, '')] = ((await readText($, `${dir}/${f.name}`)) ?? '').trim()
+      continue
+    }
     if (f.kind !== 'file' || !f.name.endsWith('.json')) continue
     const reg = parse(await readText($, `${dir}/${f.name}`))
     if (!reg || typeof reg.slug !== 'string') continue
@@ -222,7 +231,7 @@ async function collect($: EngineInterface): Promise<Snapshot> {
   }
   runs.sort((a, b) => ORDER[a.state] - ORDER[b.state] || b.updated.localeCompare(a.updated))
 
-  return { now, runs, pending: await loadPending($, now) }
+  return { now, runs, pending: await loadPending($, now), discarded }
 }
 
 // Starts (or resumes) a pipeline in the background: it outlives this pane and this session.
@@ -236,11 +245,25 @@ async function stopRun($: EngineInterface, slug: string) {
   await $.process.run(['bash', WRAPPER, 'stop', slug])
 }
 
+// Stops the pipeline if it runs, then deletes its worktree, branch and run record (the branch tip is saved).
+async function discardRun($: EngineInterface, slug: string) {
+  await $.process.run(['bash', WRAPPER, 'discard', slug, '--yes', '--stop'])
+}
+
+async function startRun($: EngineInterface, slug: string) {
+  const now = await $.clock.now()
+  await update($, launching, l => ({ ...l, [slug]: now }))
+  await launch($, slug, '')
+}
+
 const resumeFrom = (run: Run) => (RESUME_AT_IMPLEMENT.includes(run.stage) ? 'implement' : '')
 
 async function refresh($: EngineInterface) {
   const s = await collect($)
   await update($, snapshot, () => s)
+  const pressed = await read($, launching)
+  const left = Object.fromEntries(Object.entries(pressed).filter(([k]) => !s.runs.some(r => r.slug === k)))
+  if (Object.keys(left).length !== Object.keys(pressed).length) await update($, launching, () => left)
 
   return s
 }
@@ -432,7 +455,7 @@ export const register: Register = on => {
     const current = await read($, view)
     const run = s.runs.find(r => r.slug === current)
 
-    if (!run) {
+    if (!run && !current) {
       const pick = await read($, selected)
       const waiting = await read($, queue)
       const message = await read($, notice)
@@ -510,9 +533,40 @@ export const register: Register = on => {
       )
     }
 
+    // An item with no pipeline: never started, or just discarded.
+    if (!run) {
+      const item = s.pending.find(p => p.slug === current)
+      const saved = s.discarded[current] ?? ''
+      const pressedAt = (await read($, launching))[current]
+      const isStarting = pressedAt !== undefined && s.now - pressedAt < LAUNCH_GRACE_MS
+
+      return (
+        <Box flexDirection="column" paddingX={1} gap={1}>
+          <Box gap={1} flexWrap="wrap">
+            <Button key="back" label="← All pipelines" onPress={() => update($, view, () => '')} />
+            {isStarting ? (
+              <Text color="cyan">◌ Starting…</Text>
+            ) : (
+              <Button key="start" label="Start" variant="primary" onPress={() => startRun($, current)} />
+            )}
+          </Box>
+          <Text bold>
+            {current}  <Text dimColor>not started</Text>
+          </Text>
+          {item && (
+            <Text dimColor>
+              {item.type} {item.priority} · {cut(item.title, 80)}
+            </Text>
+          )}
+          {saved && <Text dimColor>Discarded. To get the old branch back: {saved}</Text>}
+        </Box>
+      )
+    }
+
     // One pipeline in detail.
     const drafts = await read($, draft)
     const stopping = (await read($, confirmStop)) === run.slug
+    const discarding = (await read($, confirmDiscard)) === run.slug
     const stages = stageStates(run)
     const done = stages.filter(x => x.state === 'done').length
     const since = run.agentStarted ? s.now - Date.parse(run.agentStarted) : 0
@@ -520,6 +574,7 @@ export const register: Register = on => {
     const impls = run.files.filter(f => /^impl-\d+\.log$/.test(f)).length
     const answered = run.questions.filter(q => drafts[`${run.slug}:${q.n}`]).length
     const canStop = run.managed && (run.state === 'running' || run.state === 'starting')
+    const canDiscard = run.managed
     const canResume = run.managed && (run.state === 'failed' || run.state === 'interrupted' || run.state === 'stopped')
 
     return (
@@ -554,8 +609,33 @@ export const register: Register = on => {
               }}
             />
           )}
+          {canDiscard && (
+            <Button
+              key="discard"
+              label={discarding ? 'Confirm discard' : 'Discard'}
+              variant={discarding ? 'primary' : undefined}
+              onPress={async () => {
+                if (discarding) {
+                  await update($, confirmDiscard, () => '')
+                  await update($, confirmStop, () => '')
+                  await update($, draft, d => Object.fromEntries(Object.entries(d).filter(([k]) => !k.startsWith(`${run.slug}:`))))
+                  await discardRun($, run.slug)
+                  await update($, notice, () => `Discarded ${run.slug}.`)
+                  await refresh($)
+                } else {
+                  await update($, confirmDiscard, () => run.slug)
+                }
+              }}
+            />
+          )}
+          {discarding && <Button key="cancel-discard" label="Keep it" onPress={() => update($, confirmDiscard, () => '')} />}
         </Box>
 
+        {discarding && (
+          <Text color="yellow">
+            This deletes the worktree and branch sdlc/{run.slug} (unpushed work is lost; the branch tip is saved so it can be recovered). A running pipeline is stopped first.
+          </Text>
+        )}
         {!run.managed && (
           <Text color="yellow">Started outside the wrapper, so Stop and Resume are not available here. Resume it in the main working tree with ./scripts/sdlc.sh {run.slug}.</Text>
         )}

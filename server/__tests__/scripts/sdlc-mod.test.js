@@ -76,7 +76,12 @@ async function until(fn, ms = 8000) {
   }
 }
 
-const alive = pid => { try { process.kill(pid, 0); return true; } catch (e) { return false; } };
+// process.kill(pid, 0) also succeeds on a zombie (exited, not yet collected by its parent): that is not alive.
+const alive = pid => {
+  try { process.kill(pid, 0); } catch (e) { return false; }
+
+  return !spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).stdout.trim().startsWith('Z');
+};
 
 beforeEach(mkRepo);
 afterEach(() => {
@@ -245,5 +250,138 @@ describe('sdlc-mod.sh stop and status', () => {
 
   test('prints usage with no arguments (exit 2)', () => {
     expect(mod([]).status).toBe(2);
+  });
+});
+
+describe('sdlc-mod.sh discard and restart', () => {
+  // A finished run with a commit and an uncommitted file on its branch: work that a discard would lose.
+  function finishedRunWithWork(slug = 'alpha') {
+    expect(mod(['run', slug]).status).toBe(0);
+    const wt = path.join(fs.realpathSync(wts), slug);
+    fs.writeFileSync(path.join(wt, 'stray.txt'), 'work\n');
+    git(wt, 'add', 'stray.txt');
+    git(wt, 'commit', '-q', '-m', 'stray work');
+    fs.writeFileSync(path.join(wt, 'uncommitted.txt'), 'wip\n');
+
+    return { wt, tip: git(repo, 'rev-parse', `sdlc/${slug}`) };
+  }
+
+  test('discard without --yes shows what would go, deletes nothing, exits 6', () => {
+    const { wt } = finishedRunWithWork();
+    const r = mod(['discard', 'alpha']);
+    expect(r.status).toBe(6);
+    expect(r.stdout).toMatch(/1 commit\(s\) not in main, 1 uncommitted file\(s\)/);
+    expect(fs.existsSync(wt)).toBe(true);
+    expect(git(repo, 'branch', '--list', 'sdlc/alpha')).not.toBe('');
+    expect(registry('alpha').state).toBe('exited');
+  });
+
+  test('discard --yes deletes the worktree, the branch and the run record, and saves the branch tip', () => {
+    const { wt, tip } = finishedRunWithWork();
+    const r = mod(['discard', 'alpha', '--yes']);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain(`git branch sdlc/alpha ${tip}`);
+    expect(fs.existsSync(wt)).toBe(false);
+    expect(git(repo, 'branch', '--list', 'sdlc/alpha')).toBe('');
+    expect(fs.existsSync(path.join(repo, '.git/sdlc-runs/alpha.json'))).toBe(false);
+    expect(fs.readFileSync(path.join(repo, '.git/sdlc-runs/alpha.discarded'), 'utf8').trim()).toBe(`git branch sdlc/alpha ${tip}`);
+    expect(git(repo, 'worktree', 'list').split('\n')).toHaveLength(1);
+    expect(git(repo, 'status', '--porcelain')).toBe('');
+  });
+
+  test('the saved branch tip really brings the work back', () => {
+    const { tip } = finishedRunWithWork();
+    mod(['discard', 'alpha', '--yes']);
+    git(repo, 'branch', 'sdlc/alpha', tip);
+    expect(git(repo, 'log', '-1', '--format=%s', 'sdlc/alpha')).toBe('stray work');
+  });
+
+  test('discard still works when the worktree folder was already deleted by hand', () => {
+    const { wt } = finishedRunWithWork();
+    fs.rmSync(wt, { recursive: true, force: true });
+    expect(mod(['discard', 'alpha', '--yes']).status).toBe(0);
+    expect(git(repo, 'branch', '--list', 'sdlc/alpha')).toBe('');
+    expect(git(repo, 'worktree', 'list').split('\n')).toHaveLength(1);
+  });
+
+  test('discard refuses a running pipeline (exit 4) and an unknown slug (exit 1)', async () => {
+    modAsync(['run', 'slow-one']);
+    await until(() => registry('slow-one').state === 'running');
+    expect(mod(['discard', 'slow-one', '--yes']).status).toBe(4);
+    expect(registry('slow-one').state).toBe('running');
+    expect(mod(['discard', 'ghost', '--yes']).status).toBe(1);
+  });
+
+  test('discard --yes --stop stops a running pipeline and everything it started, then deletes it', async () => {
+    modAsync(['run', 'slow-one']);
+    const sleepFile = path.join(wts, 'slow-one/sleep.pid');
+    await until(() => registry('slow-one').state === 'running' && fs.existsSync(sleepFile) && fs.readFileSync(sleepFile, 'utf8').trim());
+    const pid = registry('slow-one').pid;
+    const sleepPid = Number(fs.readFileSync(sleepFile, 'utf8'));
+    const r = mod(['discard', 'slow-one', '--yes', '--stop']);
+    expect(r.status).toBe(0);
+    expect(alive(pid)).toBe(false);
+    await until(() => !alive(sleepPid));
+    expect(fs.existsSync(path.join(wts, 'slow-one'))).toBe(false);
+    expect(git(repo, 'branch', '--list', 'sdlc/slow-one')).toBe('');
+    expect(fs.existsSync(path.join(repo, '.git/sdlc-runs/slow-one.json'))).toBe(false);
+  });
+
+  test('discard --stop without --yes stops nothing and deletes nothing (exit 6)', async () => {
+    modAsync(['run', 'slow-one']);
+    await until(() => registry('slow-one').state === 'running');
+    expect(mod(['discard', 'slow-one', '--stop']).status).toBe(6);
+    expect(alive(registry('slow-one').pid)).toBe(true);
+    expect(registry('slow-one').state).toBe('running');
+  });
+
+  test('discard rejects an unknown flag (exit 2)', () => {
+    expect(mod(['discard', 'alpha', '--nope']).status).toBe(2);
+  });
+
+  test('restart without --yes shows what would go and changes nothing (exit 6)', () => {
+    const { wt } = finishedRunWithWork();
+    expect(mod(['restart', 'alpha']).status).toBe(6);
+    expect(fs.existsSync(path.join(wt, 'stray.txt'))).toBe(true);
+    expect(fs.readFileSync(path.join(wt, 'ran.txt'), 'utf8').trim().split('\n')).toHaveLength(1);
+  });
+
+  test('restart --yes starts again from scratch: a fresh worktree on a fresh branch, the old work gone', () => {
+    const { wt, tip } = finishedRunWithWork();
+    expect(mod(['restart', 'alpha', '--yes']).status).toBe(0);
+    expect(fs.existsSync(path.join(wt, 'stray.txt'))).toBe(false);
+    expect(fs.existsSync(path.join(wt, 'uncommitted.txt'))).toBe(false);
+    expect(fs.readFileSync(path.join(wt, 'ran.txt'), 'utf8').trim().split('\n')).toHaveLength(1);
+    expect(git(repo, 'rev-parse', 'sdlc/alpha')).toBe(git(repo, 'rev-parse', 'main'));
+    expect(registry('alpha')).toMatchObject({ state: 'exited', exit_code: '0', interrupted: false });
+    expect(fs.readFileSync(path.join(repo, '.git/sdlc-runs/alpha.discarded'), 'utf8')).toContain(tip);
+  });
+
+  test('restart of a slug that never ran simply runs it', () => {
+    expect(mod(['restart', 'alpha', '--yes']).status).toBe(0);
+    expect(registry('alpha').state).toBe('exited');
+  });
+
+  test('restart stops a running pipeline first, then starts a new one', async () => {
+    modAsync(['run', 'slow-one']);
+    await until(() => registry('slow-one').state === 'running' && fs.existsSync(path.join(wts, 'slow-one/sleep.pid')));
+    const oldPid = registry('slow-one').pid;
+    modAsync(['restart', 'slow-one', '--yes']);
+    await until(() => { const r = registry('slow-one'); return r.state === 'running' && r.pid !== oldPid; });
+    expect(alive(oldPid)).toBe(false);
+    expect(registry('slow-one').interrupted).toBe(false);
+  });
+
+  test('restart refuses an item that is already merged, and deletes nothing (exit 5)', () => {
+    const { wt } = finishedRunWithWork();
+    git(repo, 'commit', '--allow-empty', '-q', '-m', 'test(alpha): add failing tests and spec/plan docs');
+    expect(mod(['restart', 'alpha', '--yes']).status).toBe(5);
+    expect(fs.existsSync(path.join(wt, 'stray.txt'))).toBe(true);
+    expect(git(repo, 'branch', '--list', 'sdlc/alpha')).not.toBe('');
+  });
+
+  test('usage is printed for a missing slug (exit 2)', () => {
+    expect(mod(['discard']).status).toBe(2);
+    expect(mod(['restart']).status).toBe(2);
   });
 });
