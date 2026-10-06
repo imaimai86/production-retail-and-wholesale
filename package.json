@@ -5,6 +5,7 @@
   "scripts": {
     "test": "npm run test --prefix server",
     "test:integration": "npm run test:integration --prefix server",
+    "backlog": "node scripts/backlog-list.cjs",
     "generate-spec": "npm run generate-spec --prefix server",
     "start:swagger": "npm run start:swagger --prefix server"
   },

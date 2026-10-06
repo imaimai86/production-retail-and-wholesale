@@ -76,4 +76,18 @@ Integration tests (`npm run test:integration`) are a required part of the pipeli
 
 CI skips them temporarily, with a visible warning. To enable them in CI, set the CI/CD variable `SDLC_INTEGRATION_CI=run` and provide `DATABASE_URL` (for example from a `postgres:16` service). No code change is needed.
 
+## Backlog
+
+`Docs/backlog/index.md` lists the work items. List them with a status filter:
+
+```bash
+npm run backlog
+npm run backlog -- pending,in-progress
+npm run backlog -- blocked --json
+```
+
+In Claude Code: `/backlog-list blocked`.
+
+Markers in `index.md`: `[ ]` pending, `[x]` completed, `[!]` blocked. A `[ ]` item whose `sdlc/<slug>` branch exists (local or `origin`) is shown as in-progress. Statuses are `pending`, `in-progress`, `blocked`, `completed` (aliases `open` and `done`, or `all`). The command only reads, it never changes files.
+
 To stop the inline context injected by the hooks, remove the graft entries under `hooks` in `.claude/settings.json` on your machine (do not commit that change). The MCP server stays available through `.mcp.json`. To turn graft off completely, also remove `graft` from `.mcp.json` locally.

@@ -13,6 +13,7 @@ Node.js/Express backend for production, sales and inventory management, used by 
 | `./install.sh` | Install dependencies, apply database migrations (if `DATABASE_URL` is set) and start the server. |
 | `./scripts/sdlc.sh [slug]` | Run the automated SDLC pipeline for a backlog item. |
 | `bash scripts/sdlc-integration.sh` | Run the integration suite as the SDLC does (Docker or `DATABASE_URL`). |
+| `/backlog-list [status]` or `npm run backlog -- [status]` | List the backlog, optionally filtered by status. |
 
 ## Setup
 Create a `.env` file in the project root with these keys:
