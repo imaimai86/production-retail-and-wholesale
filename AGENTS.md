@@ -39,6 +39,8 @@ DATABASE_URL=postgres://user:pass@localhost:5432/app
 ADMIN_TOKEN=secret
 ```
 
+The server reads `DATABASE_URL` to connect. If it is unset or empty, it falls back to the `PG*` variables (`PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`).
+
 Run `./install.sh` to install dependencies, apply database migrations (if `DATABASE_URL` is set) and start the server.
 
 ## Development Guidelines

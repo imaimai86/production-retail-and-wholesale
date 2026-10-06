@@ -25,3 +25,5 @@ This plan complements the high-level project plan in the repository root and gui
 
 ## Database Migrations
 Run ./script/migrate.sh after setting the DATABASE_URL environment variable to apply schema updates.
+
+The server connects using `DATABASE_URL`. If it is unset or empty, it falls back to the standard `PG*` variables (`PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`).
