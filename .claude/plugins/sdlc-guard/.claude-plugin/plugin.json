@@ -1,0 +1,1 @@
+{ "name": "sdlc-guard", "version": "0.1.0", "description": "Enforces the SDLC stage write rules for every agent, taking the stage from the pipeline's status.json" }

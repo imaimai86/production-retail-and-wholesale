@@ -82,6 +82,27 @@ Integration tests (`npm run test:integration`) are a required part of the pipeli
 
 CI skips them temporarily, with a visible warning. To enable them in CI, set the CI/CD variable `SDLC_INTEGRATION_CI=run` and provide `DATABASE_URL` (for example from a `postgres:16` service). No code change is needed.
 
+## Interactive SDLC: control pane and parallel pipelines
+
+`scripts/sdlc-mod.sh` runs the normal pipeline (`scripts/sdlc.sh`, unchanged) for one backlog item in its **own git worktree**, so several items can run at once. Two Claude Code plugins in `.claude/plugins/` add the interface and the guard rails.
+
+```bash
+bash scripts/sdlc-mod.sh run <slug>     # start or resume; worktree at ../<repo>-sdlc/<slug>, branch sdlc/<slug>
+bash scripts/sdlc-mod.sh stop <slug>    # interrupt the pipeline and everything it started
+bash scripts/sdlc-mod.sh status         # one line per run
+```
+
+At most 2 pipelines run at once (`SDLC_MAX_PARALLEL`, exit code 3 when full). Run records live in `.git/sdlc-runs/`. The wrapper links `server/node_modules`, `graft` and `.env` into each worktree.
+
+**Control pane (`sdlc-monitor` plugin).** Start Claude with `claude --plugin-dir .claude/plugins/sdlc-monitor`, then press the **SDLC** button above the prompt or type `/sdlc-monitor`.
+
+- **Overview:** the pending backlog items with checkboxes, a **Run selected** button (extra items wait in a queue until a slot frees), and one row per pipeline with its state: running, paused, done, failed, interrupted.
+- **Open a pipeline:** stage chips, progress bar, the current agent with elapsed time and attempt, test progress, artifacts and recent output.
+- **Paused for answers:** a toast appears, the row shows **Answer**, and the pipeline view lists each Spec question with its suggested answer. Press **Use suggested** or type your own, then **Submit answers and resume**.
+- **Interrupt:** **Stop** (press twice to confirm). A failed or interrupted pipeline offers **Resume** (from Implement if it got past Red tests).
+
+**Guard (`sdlc-guard` plugin).** Loaded into every pipeline agent by the wrapper. It reads the current stage from `status.json` and refuses writes the stage does not allow: Spec and Plan write only that item's docs, Red tests write no source, Implement and Review never touch `server/__tests__`. It also refuses a doc written before the one it builds on.
+
 ## Backlog
 
 `Docs/backlog/index.md` lists the work items. List them with a status filter:

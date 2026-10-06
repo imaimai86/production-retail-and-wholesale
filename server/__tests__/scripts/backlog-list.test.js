@@ -497,7 +497,7 @@ describe('table layout', () => {
 
   test('no trailing whitespace, no colours, no border lines', () => {
     for (const l of lines) expect(l).toBe(l.trimEnd());
-    expect(out).not.toMatch(/\u001b\[/);
+    expect(out).not.toContain(`${String.fromCharCode(27)}[`);
     expect(out).not.toMatch(/^[-=+|]{3,}/m);
   });
 

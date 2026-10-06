@@ -1,0 +1,1 @@
+{ "name": "sdlc-monitor", "version": "0.2.0", "description": "SDLC control pane: start, watch, answer and stop pipelines (/sdlc-monitor)", "types": "./types/index.d.ts" }
