@@ -72,7 +72,13 @@ The suite creates and drops its own `prw_test_*` database, so it never touches t
 
 ## SDLC pipeline: integration tests
 
-Integration tests (`npm run test:integration`) are a required part of the pipeline locally. `scripts/sdlc.sh` runs them through `scripts/sdlc-integration.sh` after the unit tests, at the Implement, Test repair and Review checks. They need Docker (a throwaway `postgres:16` container is started and removed) or a `DATABASE_URL` pointing at a database.
+Integration tests (`npm run test:integration`) are a required part of the pipeline locally. `scripts/sdlc.sh` runs them through `scripts/sdlc-integration.sh` after the unit tests, at the Implement, Test repair and Review checks. The database is chosen in this order, first match wins:
+
+1. `DATABASE_URL` set in your shell.
+2. `DATABASE_URL` in the repo-root `.env` (the file the server reads), if its host is this machine and it answers. This is the fast path: no container to start.
+3. A throwaway `postgres:16` container started with Docker and removed afterwards.
+
+`SDLC_DB=docker` skips 1 and 2. A non-local host in `.env` is ignored with a warning unless `SDLC_ALLOW_REMOTE_DB=1`. The suite creates and drops its own `prw_test_*` databases, so several runs can share one server (the database user needs `CREATEDB`). `server/.env` is not read by anything; use the repo-root `.env`.
 
 CI skips them temporarily, with a visible warning. To enable them in CI, set the CI/CD variable `SDLC_INTEGRATION_CI=run` and provide `DATABASE_URL` (for example from a `postgres:16` service). No code change is needed.
 
@@ -88,6 +94,6 @@ npm run backlog -- blocked --json
 
 In Claude Code: `/backlog-list blocked`.
 
-Markers in `index.md`: `[ ]` pending, `[x]` completed, `[!]` blocked. A `[ ]` item whose `sdlc/<slug>` branch exists (local or `origin`) is shown as in-progress. Statuses are `pending`, `in-progress`, `blocked`, `completed` (aliases `open` and `done`, or `all`). The command only reads, it never changes files.
+Markers in `index.md`: `[ ]` pending, `[x]` completed, `[!]` blocked, `[~]` parked (kept for later; `scripts/sdlc.sh` skips it, and a trailing `(parked: reason)` shows in the NOTE column). A `[ ]` item whose `sdlc/<slug>` branch exists (local or `origin`) is shown as in-progress. Statuses are `pending`, `in-progress`, `blocked`, `parked`, `completed` (aliases `open` and `done`, or `all`). The command only reads, it never changes files.
 
 To stop the inline context injected by the hooks, remove the graft entries under `hooks` in `.claude/settings.json` on your machine (do not commit that change). The MCP server stays available through `.mcp.json`. To turn graft off completely, also remove `graft` from `.mcp.json` locally.

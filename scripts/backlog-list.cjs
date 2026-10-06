@@ -7,7 +7,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 
 const USAGE = 'Usage: backlog-list [status[,status...]] [--status <list>] [--json]';
-const STATUSES = ['pending', 'in-progress', 'blocked', 'completed'];
+const STATUSES = ['pending', 'in-progress', 'blocked', 'parked', 'completed'];
 const ALIASES = { open: 'pending', done: 'completed' };
 
 const usageError = message => Object.assign(new Error(message), { code: 2 });
@@ -16,7 +16,7 @@ const resolveRoot = env => env.BACKLOG_ROOT || path.join(__dirname, '..');
 function parseIndex(text) {
   const items = [];
   for (const line of text.split(/\r?\n/)) {
-    const m = line.match(/^- \[( |x|X|!)\] `([^`]+)`(?: - (.*))?$/);
+    const m = line.match(/^- \[( |x|X|!|~)\] `([^`]+)`(?: - (.*))?$/);
     if (m) items.push({ marker: m[1], slug: m[2], rest: m[3] || '' });
   }
   return items;
@@ -31,12 +31,14 @@ function parseTitle(rest) {
     title = title.slice(prefix[0].length);
   }
   let blockedReason = '';
-  const blocked = title.match(/\s*\(blocked:\s*(.*)\)\s*$/);
-  if (blocked) {
-    blockedReason = blocked[1].trim();
-    title = title.slice(0, blocked.index);
+  let parkedReason = '';
+  const note = title.match(/\s*\((blocked|parked):\s*(.*)\)\s*$/);
+  if (note) {
+    if (note[1] === 'blocked') blockedReason = note[2].trim();
+    else parkedReason = note[2].trim();
+    title = title.slice(0, note.index);
   }
-  return { type, title: title.trim(), blockedReason };
+  return { type, title: title.trim(), blockedReason, parkedReason };
 }
 
 // A slug is used as a folder name and in a git ref pattern: reject separators, "..", and glob characters.
@@ -74,11 +76,12 @@ function branchExists(root, slug) {
 }
 
 function deriveItem(entry, root) {
-  const { type, title, blockedReason } = parseTitle(entry.rest);
+  const { type, title, blockedReason, parkedReason } = parseTitle(entry.rest);
   const brief = parseBrief(root, entry.slug);
   let status;
   if (entry.marker === 'x' || entry.marker === 'X') status = 'completed';
   else if (entry.marker === '!') status = 'blocked';
+  else if (entry.marker === '~') status = 'parked';
   else status = branchExists(root, entry.slug) ? 'in-progress' : 'pending';
   return {
     status,
@@ -86,7 +89,7 @@ function deriveItem(entry, root) {
     type: type || brief.type,
     priority: brief.priority,
     title,
-    note: [blockedReason, brief.hasBrief ? null : 'no brief'].filter(Boolean).join('; '),
+    note: [blockedReason || parkedReason, brief.hasBrief ? null : 'no brief'].filter(Boolean).join('; '),
     hasBrief: brief.hasBrief,
   };
 }
@@ -135,7 +138,7 @@ function parseArgs(argv) {
 
 function formatTable(items, all, extras, rawFilter) {
   const count = s => all.filter(i => i.status === s).length;
-  const footer = `pending ${count('pending')} · in-progress ${count('in-progress')} · blocked ${count('blocked')} · completed ${count('completed')} · total ${all.length}`;
+  const footer = `pending ${count('pending')} · in-progress ${count('in-progress')} · blocked ${count('blocked')} · parked ${count('parked')} · completed ${count('completed')} · total ${all.length}`;
   const lines = [];
   if (!items.length) {
     lines.push(`No items with status: ${rawFilter}`);
