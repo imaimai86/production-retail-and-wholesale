@@ -5,9 +5,16 @@
   "scripts": {
     "start": "node index.js",
     "test": "jest",
+    "test:integration": "jest --runInBand --testPathIgnorePatterns=/node_modules/ --testPathPattern=__tests__/integration/",
     "lint": "eslint .",
     "generate-spec": "cross-env NODE_ENV=development node scripts/generate-openapi-spec.js",
     "start:swagger": "node swaggerServer.js"
+  },
+  "jest": {
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/__tests__/integration/"
+    ]
   },
   "dependencies": {
     "dotenv": "^16.4.1",
