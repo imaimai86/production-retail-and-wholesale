@@ -7,7 +7,7 @@ Each item needs `Docs/backlog/<slug>/brief.md`.
 - [x] `hide-internal-errors` - Return JSON instead of HTML stack traces for unhandled errors
 - [ ] `fix-ship-commit-scope` - Bug: Ship stage commits only server/ and docs; commit every relevant file the cycle changed
 - [ ] `add-db-health-check` - Feature: GET /health that checks the database connection
-- [ ] `add-db-integration-tests` - Feature: integration tests against real Postgres, plus GitLab CI
+- [x] `add-db-integration-tests` - Feature: integration tests against real Postgres, plus GitLab CI
 - [ ] `add-json-logging` - Feature: Logs all errors and warnings: readable console locally, Google Cloud Logging JSON in Kubernetes
 - [ ] `fix-user-validation` - Bug: POST /users returns 500 when name is missing; validate and fix the docs
 - [ ] `warn-missing-env-config` - Feature: warn at startup when the repo-root .env is missing or ADMIN_TOKEN is not set
