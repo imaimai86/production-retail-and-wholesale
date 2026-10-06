@@ -5,3 +5,4 @@ node_modules/
 Docs/backlog/*/logs/
 .claude/sdlc-state.json
 .env
+server/.env
