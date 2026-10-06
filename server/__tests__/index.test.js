@@ -362,3 +362,95 @@ describe('DELETE /sales/:id', () => {
     expect(res.body).toMatchObject({ id: created.id });
   });
 });
+
+describe('global error handler', () => {
+  const token = '1';
+  let errorSpy;
+
+  beforeEach(() => {
+    errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    errorSpy.mockRestore();
+  });
+
+  const failProducts = err => jest.spyOn(Products, 'getAll').mockRejectedValueOnce(err);
+  const getProducts = () => request(app).get('/products').set('x-auth-token', token);
+
+  test('E-R1 an unexpected model error returns 500 JSON with the generic message', async () => {
+    const spy = failProducts(new Error('secret db detail'));
+    const res = await getProducts();
+    spy.mockRestore();
+    expect(res.statusCode).toBe(500);
+    expect(res.headers['content-type']).toMatch(/application\/json/);
+    expect(res.body).toEqual({ error: 'Internal server error' });
+    expect(res.text).not.toContain('secret db detail');
+    expect(res.text).not.toMatch(/<html|<pre|\.js/i);
+  });
+
+  test('E-R2 the error is logged server-side', async () => {
+    const err = new Error('secret db detail');
+    const spy = failProducts(err);
+    await getProducts();
+    spy.mockRestore();
+    expect(errorSpy).toHaveBeenCalledWith(err);
+  });
+
+  test('E-R3 driver error code and SQL detail never reach the client', async () => {
+    const err = Object.assign(new Error('insert into products failed'), { code: '23505', detail: 'Key (id)=(1) exists' });
+    const spy = failProducts(err);
+    const res = await getProducts();
+    spy.mockRestore();
+    expect(res.statusCode).toBe(500);
+    expect(res.text).not.toContain('23505');
+    expect(res.text).not.toContain('insert into');
+    expect(res.text).not.toContain('Key (id)');
+  });
+
+  test('E-R4 a model error carrying status 404 returns 404 Not Found JSON', async () => {
+    const spy = failProducts(Object.assign(new Error('hidden'), { status: 404 }));
+    const res = await getProducts();
+    spy.mockRestore();
+    expect(res.statusCode).toBe(404);
+    expect(res.body).toEqual({ error: 'Not Found' });
+    expect(res.text).not.toContain('hidden');
+  });
+
+  test('E-R5 a malformed JSON body returns 400 Bad Request without a stack', async () => {
+    const res = await request(app).post('/products')
+      .set('x-auth-token', token)
+      .set('Content-Type', 'application/json')
+      .send('{"name": ');
+    expect(res.statusCode).toBe(400);
+    expect(res.headers['content-type']).toMatch(/application\/json/);
+    expect(res.body).toEqual({ error: 'Bad Request' });
+    expect(res.text).not.toMatch(/SyntaxError|stack|node_modules|\.js/);
+  });
+
+  test('E-R6 a malformed JSON body without an auth header still returns 400', async () => {
+    const res = await request(app).post('/products')
+      .set('Content-Type', 'application/json')
+      .send('{bad json');
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toEqual({ error: 'Bad Request' });
+  });
+
+  test('E-R7 existing 401 response is unchanged', async () => {
+    const res = await request(app).get('/products');
+    expect(res.statusCode).toBe(401);
+  });
+
+  test('E-R8 existing stock 409 response is unchanged', async () => {
+    const res = await request(app).post('/inventory/transfer').set('x-auth-token', token)
+      .send({ product_id: 1, from: 'A', to: 'B', quantity: 5 });
+    expect(res.statusCode).toBe(409);
+    expect(res.body).toEqual({ error: 'Insufficient stock' });
+  });
+
+  test('E-R9 the error handler is the last layer registered on the app', () => {
+    const router = app._router || app.router;
+    const last = router.stack[router.stack.length - 1];
+    expect(last.handle.length).toBe(4);
+  });
+});
