@@ -15,4 +15,5 @@ Markers: [ ] pending, [x] completed, [!] blocked, [~] parked (skipped by `script
 - [ ] `add-base-branch-dropdown` - Feature: choose the base branch for each SDLC task from a dropdown, default main
 - [x] `add-backlog-list` - Feature: /backlog-list command that lists backlog items with a status filter (pending, in-progress, blocked, completed)
 - [x] `add-integration-success-check` - Feature: integration tests are a required local sdlc check; temporary skip in CI only (SDLC_INTEGRATION_CI=run to enable)
+- [ ] `require-integration-tests` - Feature: every DB or API change must come with integration tests that fail first; enforced by pipeline gates
 - [~] `sdlc-bg-agents` - Feature: run the SDLC agents as `claude --bg` background sessions so they can ask questions and be monitored (parked: the orchestrator AskUserQuestion rule and stream-json monitoring cover it for now)
