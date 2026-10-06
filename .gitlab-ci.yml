@@ -1,0 +1,36 @@
+image: node:22
+
+stages:
+  - test
+
+cache:
+  key:
+    files:
+      - package-lock.json
+      - server/package-lock.json
+  paths:
+    - node_modules/
+    - server/node_modules/
+
+unit:
+  stage: test
+  script:
+    - npm ci
+    - npm ci --prefix server
+    - npm test
+
+integration:
+  stage: test
+  services:
+    - name: postgres:16
+      alias: postgres
+  # Throwaway values for this job's own postgres container. Real secrets must
+  # be masked CI/CD variables, never committed here.
+  variables:
+    POSTGRES_DB: app
+    POSTGRES_USER: app
+    POSTGRES_PASSWORD: app
+    DATABASE_URL: "postgres://app:app@postgres:5432/app"
+  script:
+    - npm ci --prefix server
+    - npm run test:integration

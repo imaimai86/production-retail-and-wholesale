@@ -38,6 +38,10 @@ ADMIN_TOKEN=secret
   ```
   `status.json` is the single-line live status. The run output is `Docs/backlog/<slug>/logs/run*.out`.
 - Before sending any reply, check whether a run is still active (the background task has not reported completion). If it is, the reply is incomplete without the monitor command.
+- **MANDATORY: show the answers before asking for confirmation.** When a run pauses on Spec questions (exit code 2, `Docs/backlog/<slug>/questions.md`), do these in order:
+  1. Print EVERY question in the reply with its full, verbatim `**Suggested:**` answer and why it matters. A summary, a shortened table, or "accept all three suggested answers?" without the answers on screen is not allowed.
+  2. Give your own answer for each: say whether you agree with the suggestion and why, check any factual claim against the code, and if you disagree propose a different answer.
+  3. Only then ask the user to confirm (accept all, answer themselves, or do nothing). When they accept, write `accept` on each `**Answer:**` line, or their own text, and rerun.
 
 ## Graft
 Graft must be installed for the SDLC workflow (the Plan stage and `/plan` use it).

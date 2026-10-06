@@ -9,4 +9,9 @@ MANDATORY: show the monitor command.
 ```bash
 watch -n3 'cat Docs/backlog/<slug>/logs/status.json; git status --short | head -15'
 ```
+MANDATORY: show the answers before asking for confirmation. If /spec (or `./scripts/sdlc.sh`) pauses with open questions in `Docs/backlog/<slug>/questions.md`:
+1. Print every question in your reply with its full, verbatim `**Suggested:**` answer and why it matters. Never ask "accept the suggested answers?" without the answers shown first, and never replace them with a summary.
+2. Give your own answer to each: say whether you agree and why (check factual claims against the code), or propose a different one.
+3. Only then ask the user to confirm. On acceptance write `accept` (or their text) on each `**Answer:**` line and rerun.
+
 `status.json` is the single-line live status; the run output is `Docs/backlog/<slug>/logs/run*.out`. Refer to SDLC stages by name (Spec, Plan, Red tests, Implement, Review, Ship), never by number.
