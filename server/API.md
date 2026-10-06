@@ -33,3 +33,6 @@ id. All endpoints require this header.
 - `PATCH /sales/:id/status` – update order status (`order_created` or `sold`). `400` on invalid status, `404` if the sale is missing, `409` `{"error":"Insufficient stock"}` when moving to `sold` without enough stock. Setting the current status is a no-op.
 - `DELETE /sales/:id` – revoke a sale; a `sold` sale's quantity is restored to its location (the row is re-created if missing), an `order_created` sale restores nothing
 - `GET /sales/:id/invoice` – generate billing lines for a sale
+
+## Errors
+Unexpected errors return `500` with `{"error":"Internal server error"}`; details are logged server-side only. Malformed JSON bodies return `400` with `{"error":"Bad Request"}`.
