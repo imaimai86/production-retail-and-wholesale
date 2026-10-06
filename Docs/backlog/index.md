@@ -12,7 +12,7 @@ Markers: [ ] pending, [x] completed, [!] blocked, [~] parked (skipped by `script
 - [ ] `add-json-logging` - Feature: Logs all errors and warnings: readable console locally, Google Cloud Logging JSON in Kubernetes
 - [ ] `fix-user-validation` - Bug: POST /users returns 500 when name is missing; validate and fix the docs
 - [ ] `warn-missing-env-config` - Feature: warn at startup when the repo-root .env is missing or ADMIN_TOKEN is not set
-- [ ] `add-base-branch-dropdown` - Feature: choose the base branch for each SDLC task from a dropdown, default main
+- [ ] `add-base-branch-dropdown` - Feature: choose the base branch for each SDLC task from a dropdown (default main); direct ./scripts/sdlc.sh runs, the pane and the plugins always use a dedicated worktree
 - [ ] `retry-unclaimed-failing-test` - Feature: Test repair re-runs unclaimed failing tests once before rejecting, to filter flaky tests
 - [ ] `add-test-repair-resume` - Feature: FROM=test-repair resume point that checks Test repair preconditions (claim file, red commit, tests unchanged) first
 - [x] `add-backlog-list` - Feature: /backlog-list command that lists backlog items with a status filter (pending, in-progress, blocked, completed)
