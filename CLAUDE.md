@@ -12,6 +12,7 @@ Node.js/Express backend for production, sales and inventory management, used by 
 | `npm test` | Run the Jest tests (in `server/`). Run it from the repo root before committing. |
 | `./install.sh` | Install dependencies, apply database migrations (if `DATABASE_URL` is set) and start the server. |
 | `./scripts/sdlc.sh [slug]` | Run the automated SDLC pipeline for a backlog item. |
+| `bash scripts/sdlc-integration.sh` | Run the integration suite as the SDLC does (Docker or `DATABASE_URL`). |
 
 ## Setup
 Create a `.env` file in the project root with these keys:
@@ -30,11 +31,13 @@ ADMIN_TOKEN=secret
 
 ## SDLC pipeline
 - Refer to SDLC stages by name (Spec, Plan, Red tests, Implement, Review, Ship), never by number.
-- Whenever you start the pipeline or hand a task to a background agent, immediately show the user the command to monitor it, for example:
+- The pipeline runs the integration suite after the unit tests. CI skips it temporarily with a warning; set the CI/CD variable `SDLC_INTEGRATION_CI=run` and provide `DATABASE_URL` to enable it. There is no opt-out switch for local runs.
+- **MANDATORY, never optional: show the monitor command.** A run is active from the moment you start or resume `./scripts/sdlc.sh` (or hand work to a background agent or task) until its completion notice arrives. During that whole time, EVERY reply to the user must contain the monitor command in a code block: when you start or resume it, when you report progress, and in any other reply (answers to unrelated questions, other edits, questions to the user). Do not wait to be asked. Put it at the end of the reply, with the slug filled in:
   ```bash
   watch -n3 'cat Docs/backlog/<slug>/logs/status.json; git status --short | head -15'
   ```
   `status.json` is the single-line live status. The run output is `Docs/backlog/<slug>/logs/run*.out`.
+- Before sending any reply, check whether a run is still active (the background task has not reported completion). If it is, the reply is incomplete without the monitor command.
 
 ## Graft
 Graft must be installed for the SDLC workflow (the Plan stage and `/plan` use it).
