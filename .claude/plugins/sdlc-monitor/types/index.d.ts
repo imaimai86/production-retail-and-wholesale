@@ -25,7 +25,8 @@ export type Run = {
 
 export type PendingItem = { slug: string; type: string; priority: string; title: string }
 
-export type Snapshot = { now: number; runs: Run[]; pending: PendingItem[] }
+// discarded: slug -> the command that brings its discarded branch back (kept by sdlc-mod.sh discard)
+export type Snapshot = { now: number; runs: Run[]; pending: PendingItem[]; discarded: Record<string, string> }
 
 export type AgentRow = {
   id: string
@@ -47,6 +48,10 @@ declare module 'claude-code' {
       queue: string[]
       // the slug whose Stop button is waiting for a second press
       confirmStop: string
+      // the slug whose Discard and restart button is waiting for a second press
+      confirmDiscard: string
+      // slug -> when Start was pressed, so a second press does not start it twice
+      launching: Record<string, number>
       // answers typed for a paused run, keyed `<slug>:<question number>`
       draft: Record<string, string>
       notice: string

@@ -90,7 +90,11 @@ CI skips them temporarily, with a visible warning. To enable them in CI, set the
 bash scripts/sdlc-mod.sh run <slug>     # start or resume; worktree at ../<repo>-sdlc/<slug>, branch sdlc/<slug>
 bash scripts/sdlc-mod.sh stop <slug>    # interrupt the pipeline and everything it started
 bash scripts/sdlc-mod.sh status         # one line per run
+bash scripts/sdlc-mod.sh discard <slug> [--yes] [--stop]   # delete its worktree, branch and run record (without --yes: show what would go, exit 6)
+bash scripts/sdlc-mod.sh restart <slug> [--yes]   # stop it if running, discard it, start again from Spec
 ```
+
+`discard` and `restart` throw away the item's worktree, its local branch `sdlc/<slug>` (including unpushed commits and uncommitted files) and its run record, but first save the branch tip in `.git/sdlc-runs/<slug>.discarded`; the command it prints, `git branch sdlc/<slug> <sha>`, brings the work back. `discard` refuses a running pipeline unless `--stop` is given, which stops it first (after `--yes`); `restart` stops it itself. `restart` refuses an item already merged into the base branch (exit 5).
 
 At most 2 pipelines run at once (`SDLC_MAX_PARALLEL`, exit code 3 when full). Run records live in `.git/sdlc-runs/`. The wrapper links `server/node_modules`, `graft` and `.env` into each worktree.
 
@@ -100,6 +104,7 @@ At most 2 pipelines run at once (`SDLC_MAX_PARALLEL`, exit code 3 when full). Ru
 - **Open a pipeline:** stage chips, progress bar, the current agent with elapsed time and attempt, test progress, artifacts and recent output.
 - **Paused for answers:** a toast appears, the row shows **Answer**, and the pipeline view lists each Spec question with its suggested answer. Press **Use suggested** or type your own, then **Submit answers and resume**.
 - **Interrupt:** **Stop** (press twice to confirm). A failed or interrupted pipeline offers **Resume** (from Implement if it got past Red tests).
+- **Discard and start over:** **Discard** (press twice to confirm) stops the pipeline if it is running and deletes its worktree and branch. The pane stays on the item and shows **Start** (and the command that brings the old branch back). **Start** runs it again from Spec, and the running pipeline shows **Stop** and **Discard** again. Discard is offered for any pipeline the wrapper started.
 
 **Guard (`sdlc-guard` plugin).** Loaded into every pipeline agent by the wrapper. It reads the current stage from `status.json` and refuses writes the stage does not allow: Spec and Plan write only that item's docs, Red tests write no source, Implement and Review never touch `server/__tests__`. It also refuses a doc written before the one it builds on.
 

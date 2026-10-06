@@ -3,6 +3,9 @@
 # so several pipelines can run at the same time. sdlc.sh itself is not modified.
 #   scripts/sdlc-mod.sh run <slug>     start (or resume) the pipeline for <slug>
 #   scripts/sdlc-mod.sh stop <slug>    interrupt the running pipeline for <slug>
+#   scripts/sdlc-mod.sh discard <slug> [--yes] [--stop]   delete its worktree, branch and run record (without --yes: show what would go,
+#                                                         exit 6; a running pipeline is refused unless --stop stops it first)
+#   scripts/sdlc-mod.sh restart <slug> [--yes]   stop it if running, discard it, and start again from Spec
 #   scripts/sdlc-mod.sh status         one line per known run
 # Env: SDLC_MAX_PARALLEL   most pipelines running at once (default 2; exit 3 when full)
 #      SDLC_BASE           ref a new branch starts from (default origin/main, else main, else HEAD)
@@ -21,10 +24,11 @@ MAX_PARALLEL="${SDLC_MAX_PARALLEL:-2}"
 WT_BASE="${SDLC_WT_BASE:-$(dirname "$ROOT")/$(basename "$ROOT")-sdlc}"
 
 now() { date +%Y-%m-%dT%H:%M:%S; }
-usage() { echo "Usage: $0 run <slug> | stop <slug> | status" >&2; exit 2; }
+usage() { echo "Usage: $0 run <slug> | stop <slug> | discard <slug> [--yes] [--stop] | restart <slug> [--yes] | status" >&2; exit 2; }
 check_slug() { [[ "${1:-}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "Invalid slug '${1:-}': lowercase letters, digits and dashes only" >&2; exit 2; }; }
 json_get() { node -e 'try{const v=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))[process.argv[2]];process.stdout.write(v===undefined||v===null?"":String(v))}catch(e){}' "$1" "$2"; }
-alive() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null; }
+# kill -0 also succeeds on a zombie (a process that has exited but whose parent has not collected it): that is not alive.
+alive() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null && [ "$(ps -o stat= -p "$1" 2>/dev/null | cut -c1)" != Z ]; }
 killtree() { local p="$1" c; for c in $(pgrep -P "$p" 2>/dev/null); do killtree "$c"; done; kill -TERM "$p" 2>/dev/null || true; }
 
 # write_reg <slug> <worktree> <pid> <started> <state> <exit_code> <interrupted> <finished> [message]
@@ -56,6 +60,30 @@ running_count() {
   echo "$n"
 }
 
+# The ref a new branch starts from.
+pick_base() {
+  local p base="${SDLC_BASE:-}"
+  if [ -z "$base" ]; then
+    for p in origin/main main HEAD; do git -C "$ROOT" rev-parse --verify -q "$p" >/dev/null && { base="$p"; break; }; done
+  fi
+  echo "$base"
+}
+
+# True when the item's red-tests commit is already in the base branch: it was merged.
+is_merged() { [ -n "$(git -C "$ROOT" log "$2" -1 --format=%h --grep="^test($1): add failing tests" 2>/dev/null)" ]; }
+
+# Stops a running pipeline and waits until its process has gone, so it cannot write its record afterwards.
+stop_if_running() {
+  local slug="$1" f="$REG/$1.json" pid i
+  [ -f "$f" ] || return 0
+  pid="$(json_get "$f" pid)"
+  alive "$pid" || return 0
+  : > "$REG/$slug.interrupt"
+  killtree "$pid"
+  for i in $(seq 1 100); do alive "$pid" || return 0; sleep 0.2; done
+  echo "could not stop $slug (pid $pid)" >&2; exit 1
+}
+
 cmd_run() {
   local slug="$1" docs wt branch base started rc f p
   check_slug "$slug"
@@ -74,14 +102,11 @@ cmd_run() {
   docs="Docs/backlog/$slug"
   wt="$WT_BASE/$slug"
   branch="sdlc/$slug"
-  base="${SDLC_BASE:-}"
-  if [ -z "$base" ]; then
-    for p in origin/main main HEAD; do git -C "$ROOT" rev-parse --verify -q "$p" >/dev/null && { base="$p"; break; }; done
-  fi
+  base="$(pick_base)"
   if [ ! -e "$wt/.git" ]; then
     # Fail before creating anything. An item whose red-tests commit is already in the base branch was merged: its
     # branch is stale, and running it again would redo finished work on old code.
-    if [ -z "${SDLC_ALLOW_MERGED:-}" ] && [ -n "$(git -C "$ROOT" log "$base" -1 --format=%h --grep="^test($slug): add failing tests" 2>/dev/null)" ]; then
+    if [ -z "${SDLC_ALLOW_MERGED:-}" ] && is_merged "$slug" "$base"; then
       fail_start "$slug" 5 "$slug is already merged into $base. Delete branch $branch and its backlog entry, or set SDLC_ALLOW_MERGED=1 to run it again."
     fi
     # The brief must be in the main working tree or already committed on the branch.
@@ -150,6 +175,53 @@ cmd_stop() {
   echo "stopped $slug"
 }
 
+# Deletes everything a pipeline left behind: worktree, local branch, run record. The branch tip is saved first.
+cmd_discard() {
+  local slug="$1" yes="" stop="" a f wt branch base tip="" ahead=0 dirty=0
+  shift
+  for a in "$@"; do
+    case "$a" in --yes) yes=--yes ;; --stop) stop=1 ;; "") ;; *) usage ;; esac
+  done
+  check_slug "$slug"
+  f="$REG/$slug.json"; wt="$WT_BASE/$slug"; branch="sdlc/$slug"
+  if [ -z "$stop" ] && [ -f "$f" ] && [ "$(json_get "$f" state)" = running ] && alive "$(json_get "$f" pid)"; then
+    echo "$slug is running: stop it first, or pass --stop" >&2; exit 4
+  fi
+  if git -C "$ROOT" show-ref --verify --quiet "refs/heads/$branch"; then tip="$(git -C "$ROOT" rev-parse "$branch")"; fi
+  if [ ! -e "$wt/.git" ] && [ -z "$tip" ] && [ ! -f "$f" ]; then echo "Nothing to discard for $slug" >&2; exit 1; fi
+  base="$(pick_base)"
+  if [ -n "$tip" ]; then ahead="$(git -C "$ROOT" rev-list --count "$base..$branch")"; fi
+  if [ -e "$wt/.git" ]; then dirty="$(git -C "$wt" status --porcelain --untracked-files=all | wc -l | tr -d ' ')"; fi
+  echo "Discard $slug: worktree $wt, branch $branch ($ahead commit(s) not in $base, $dirty uncommitted file(s)), run record"
+  if [ "$yes" != --yes ]; then echo "Nothing deleted. Run again with --yes to discard it."; exit 6; fi
+  if [ -n "$stop" ]; then stop_if_running "$slug"; fi
+  if [ -e "$wt" ]; then git -C "$ROOT" worktree remove --force "$wt" 2>/dev/null || rm -rf "$wt"; fi
+  git -C "$ROOT" worktree prune
+  if [ -n "$tip" ]; then git -C "$ROOT" branch -D "$branch" >/dev/null; fi
+  rm -f "$REG/$slug.json" "$REG/$slug.interrupt" "$REG/$slug.wrapper.log"
+  if [ -n "$tip" ]; then
+    echo "git branch $branch $tip" > "$REG/$slug.discarded"
+    echo "Discarded $slug. To get the branch back: git branch $branch $tip"
+  else
+    echo "Discarded $slug."
+  fi
+}
+
+# Starts an item again from scratch: stop, discard, run.
+cmd_restart() {
+  local slug="$1" yes="${2:-}" base rc=0
+  check_slug "$slug"
+  base="$(pick_base)"
+  if [ -z "${SDLC_ALLOW_MERGED:-}" ] && is_merged "$slug" "$base"; then
+    echo "$slug is already merged into $base: a restart would be refused (SDLC_ALLOW_MERGED=1 overrides)" >&2; exit 5
+  fi
+  if [ "$yes" != --yes ]; then cmd_discard "$slug" ""; fi
+  stop_if_running "$slug"
+  (cmd_discard "$slug" --yes) || rc=$?
+  [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ] || exit "$rc"
+  cmd_run "$slug"
+}
+
 cmd_status() {
   local f slug state pid
   for f in "$REG"/*.json; do
@@ -164,6 +236,8 @@ cmd_status() {
 case "${1:-}" in
   run)    [ $# -eq 2 ] || usage; cmd_run "$2" ;;
   stop)   [ $# -eq 2 ] || usage; cmd_stop "$2" ;;
+  discard) [ $# -ge 2 ] || usage; slug="$2"; shift 2; cmd_discard "$slug" "$@" ;;
+  restart) { [ $# -eq 2 ] || [ $# -eq 3 ]; } || usage; cmd_restart "$2" "${3:-}" ;;
   status) cmd_status ;;
   *)      usage ;;
 esac

@@ -46,10 +46,14 @@ function world(on: any, runs: RunSpec[] = []) {
   const writes: { path: string; text: string }[] = []
   const file = (name: string) => ({ name, kind: 'file', size: 1 })
   const pidOf = (r: RunSpec) => (r.alive === false ? 999 : 100)
+  // slugs whose run record the wrapper has deleted (discard); revive() brings one back, as a new start would
+  const gone = new Set<string>()
 
-  mock.clock(on, { now: NOW })
+  const clock = mock.clock(on, { now: NOW })
   on('fs.list', (_: unknown, e: { path: string }) => {
-    if (e.path.endsWith('.git/sdlc-runs')) return { value: runs.filter(r => !r.legacy).map(r => file(`${r.slug}.json`)) }
+    if (e.path.endsWith('.git/sdlc-runs')) {
+      return { value: [...runs.filter(r => !r.legacy && !gone.has(r.slug)).map(r => file(`${r.slug}.json`)), ...[...gone].map(g => file(`${g}.discarded`))] }
+    }
     if (/(^|\/)Docs\/backlog$/.test(e.path)) return { value: runs.filter(r => r.legacy).map(r => ({ name: r.slug, kind: 'dir', size: 0 })) }
     for (const r of runs) {
       if (e.path.endsWith(`${r.slug}/logs`)) return { value: (r.files ?? []).filter(f => f.endsWith('.log')).map(file) }
@@ -59,7 +63,9 @@ function world(on: any, runs: RunSpec[] = []) {
     return { value: [] }
   })
   on('fs.read', (_: unknown, e: { path: string }) => {
+    for (const g of gone) if (e.path.endsWith(`sdlc-runs/${g}.discarded`)) return { value: `git branch sdlc/${g} abc123\n` }
     for (const r of runs) {
+      if (gone.has(r.slug)) continue
       if (e.path.endsWith(`sdlc-runs/${r.slug}.json`)) {
         return {
           value: JSON.stringify({
@@ -90,6 +96,7 @@ function world(on: any, runs: RunSpec[] = []) {
   })
   on('process.run', (_: unknown, e: { argv: string[]; init?: { env?: Record<string, string> } }) => {
     calls.push([...e.argv])
+    if (e.argv[2] === 'discard') gone.add(e.argv[3])
     envs.push(e.init?.env ?? {})
     const out = (stdout: string, exitCode = 0) => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false } })
     if (e.argv[0] === 'git') return out('.git\n')
@@ -103,7 +110,7 @@ function world(on: any, runs: RunSpec[] = []) {
   on('ui.open', () => ({ value: { isPlaced: true } }) as never)
   on('ui.status', () => ({ value: undefined }) as never)
 
-  return { calls, envs, writes }
+  return { calls, envs, writes, clock, revive: (slug: string) => gone.delete(slug) }
 }
 
 async function open($: any) {
@@ -288,6 +295,100 @@ test('a pipeline started by hand shows its progress but offers no Stop or Resume
   await ui.press({ key: 'back' })
   await ui.press({ key: 'open-hand-failed' })
   expect(await ui.find({ key: 'resume' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('Discard needs a second press; the pane then offers Start, and a started pipeline shows its record again', async ($, on) => {
+  const w = world(on, [{ slug: 'alpha', state: 'failed', stage: 'Implement' }])
+  const ui = await open($)
+  await ui.press({ key: 'open-alpha' })
+  const discards = () => w.calls.filter(c => c[2] === 'discard')
+  const launches = () => w.calls.filter(c => c[1] === '-c')
+
+  expect((await ui.find({ key: 'discard' }))?.props.label).toBe('Discard')
+  expect(await ui.find({ key: 'restart' })).toBeUndefined()
+  await ui.press({ key: 'discard' })
+  expect((await ui.find({ key: 'discard' }))?.props.label).toBe('Confirm discard')
+  expect(await text(ui, /deletes the worktree and branch sdlc\/alpha/)).toBeDefined()
+  expect(discards()).toHaveLength(0)
+
+  await ui.press({ key: 'cancel-discard' })
+  expect((await ui.find({ key: 'discard' }))?.props.label).toBe('Discard')
+  expect(discards()).toHaveLength(0)
+
+  await ui.press({ key: 'discard' })
+  await ui.press({ key: 'discard' })
+  expect(discards()).toEqual([['bash', 'scripts/sdlc-mod.sh', 'discard', 'alpha', '--yes', '--stop']])
+
+  // The pipeline is gone: the pane stays on the item and offers Start (and tells how to get the branch back).
+  expect(await text(ui, /^alpha\s+not started/)).toBeDefined()
+  expect(await text(ui, /git branch sdlc\/alpha abc123/)).toBeDefined()
+  expect((await ui.find({ key: 'start' }))?.props.label).toBe('Start')
+  expect(await ui.find({ key: 'discard' })).toBeUndefined()
+  expect(await ui.find({ key: 'resume' })).toBeUndefined()
+  expect(await ui.find({ key: 'stop' })).toBeUndefined()
+
+  await ui.press({ key: 'start' })
+  expect(launches()).toHaveLength(1)
+  expect(launches()[0][2]).toContain('nohup bash scripts/sdlc-mod.sh run "$0"')
+  expect(launches()[0][launches()[0].length - 1]).toBe('alpha')
+  expect(await ui.find({ key: 'start' })).toBeUndefined()
+  expect(await text(ui, /Starting/)).toBeDefined()
+
+  // Once the wrapper has written its record, the pane shows the pipeline again, with its Discard button.
+  w.revive('alpha')
+  await $.command.run({ command: 'sdlc-monitor', args: '' })
+  expect(await ui.find({ key: 'start' })).toBeUndefined()
+  expect(await ui.find({ key: 'discard' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('Start comes back if the launch left no record within 20 seconds', async ($, on) => {
+  const w = world(on, [{ slug: 'alpha', state: 'failed', stage: 'Plan' }])
+  const ui = await open($)
+  await ui.press({ key: 'open-alpha' })
+  await ui.press({ key: 'discard' })
+  await ui.press({ key: 'discard' })
+  await ui.press({ key: 'start' })
+  expect(await ui.find({ key: 'start' })).toBeUndefined()
+
+  await w.clock.advance(21000)
+  await $.command.run({ command: 'sdlc-monitor', args: '' })
+  expect((await ui.find({ key: 'start' }))?.props.label).toBe('Start')
+  await ui.unmount()
+})
+
+test('a running or starting pipeline offers both Stop and Discard', async ($, on) => {
+  world(on, [
+    { slug: 'going', state: 'running', stage: 'Plan', agent: 'plan' },
+    { slug: 'fresh' },
+  ])
+  const ui = await open($)
+  for (const slug of ['going', 'fresh']) {
+    await ui.press({ key: `open-${slug}` })
+    expect(await ui.find({ key: 'stop' })).toBeDefined()
+    expect(await ui.find({ key: 'discard' })).toBeDefined()
+    await ui.press({ key: 'back' })
+  }
+  await ui.unmount()
+})
+
+test('Discard is offered for paused, failed, interrupted and finished pipelines, not for ones started by hand', async ($, on) => {
+  world(on, [
+    { slug: 'waiting', state: 'paused', stage: 'Spec', questions: QUESTIONS },
+    { slug: 'broke', state: 'failed', stage: 'Implement' },
+    { slug: 'halted', state: 'running', stage: 'Review', interrupted: true, alive: false },
+    { slug: 'finished', state: 'done', stage: 'Commit' },
+    { slug: 'hand', legacy: true, state: 'failed', stage: 'Implement' },
+  ])
+  const ui = await open($)
+  for (const slug of ['waiting', 'broke', 'halted', 'finished']) {
+    await ui.press({ key: `open-${slug}` })
+    expect(await ui.find({ key: 'discard' })).toBeDefined()
+    await ui.press({ key: 'back' })
+  }
+  await ui.press({ key: 'open-hand' })
+  expect(await ui.find({ key: 'discard' })).toBeUndefined()
   await ui.unmount()
 })
 
