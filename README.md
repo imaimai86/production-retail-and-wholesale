@@ -82,6 +82,18 @@ Integration tests (`npm run test:integration`) are a required part of the pipeli
 
 CI skips them temporarily, with a visible warning. To enable them in CI, set the CI/CD variable `SDLC_INTEGRATION_CI=run` and provide `DATABASE_URL` (for example from a `postgres:16` service). No code change is needed.
 
+## SDLC pipeline: Ship stage
+
+The pipeline snapshots the working tree into `Docs/backlog/<slug>/logs/baseline.json` before the Spec stage. Ship (`scripts/sdlc-ship.sh`) then commits only the files changed during the cycle, anywhere in the repo, and ticks the backlog item. Files left out are listed, one reason each, in `Docs/backlog/<slug>/logs/ship-skipped.md`:
+
+- `sensitive file`: `.env*` (except `.env.example`), `*.pem`, `*.key`, `*.p12`, `*.keystore`, `id_rsa*`.
+- `local or agent configuration`: anything under `.vscode`, `.idea` or `.claude`.
+- `generated`: `node_modules` and `.DS_Store`.
+- `pre-existing local changes`: files that were already modified before the run and changed again since.
+- `too large`: files over 1 MiB.
+
+Files that were already dirty at the start and are unchanged since are never committed or listed.
+
 ## Interactive SDLC: control pane and parallel pipelines
 
 `scripts/sdlc-mod.sh` runs the normal pipeline (`scripts/sdlc.sh`, unchanged) for one backlog item in its **own git worktree**, so several items can run at once. Two Claude Code plugins in `.claude/plugins/` add the interface and the guard rails.
