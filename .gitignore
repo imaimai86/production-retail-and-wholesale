@@ -4,3 +4,4 @@ node_modules/
 /graft/
 Docs/backlog/*/logs/
 .claude/sdlc-state.json
+.env
