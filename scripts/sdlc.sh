@@ -124,7 +124,8 @@ Write a step-by-step technical plan to $DOCS/plan-1.md (files, functions, order)
 # 3. RED TESTS ------------------------------------------------------------
 stage "3/6 Red tests (red gate)"
 agent tests "You are a QA Engineer. Read $DOCS/specs-1.md and $DOCS/plan-1.md.
-Write a test matrix to $DOCS/test-cases-1.md and the matching Jest tests under $TEST_DIR/ (mirror the source layout). Do NOT change source code outside $TEST_DIR/."
+Write a test matrix to $DOCS/test-cases-1.md and the matching Jest tests under $TEST_DIR/ (mirror the source layout). Do NOT change source code outside $TEST_DIR/.
+Tests must exercise the code under test by importing or running it. A test must NEVER read, scan or assert on the text of any test file, including itself (no __filename, no reading a *.test.js file, no readdir of __tests__ or __dirname). This includes rules about what test files must not contain (for example 'no test checks the executable bit'): a test file that states the forbidden word always contains it, so such a check can never pass. Do not write a test for a rule about the tests themselves; list it in $DOCS/test-cases-1.md as a review item instead."
 if tests_pass; then echo "RED GATE FAILED: new tests pass before implementation. See $LOG/tests.log"; exit 1; fi
 git add "$DOCS" "$TEST_DIR"
 git commit -q -m "test($SLUG): add failing tests and spec/plan docs"
