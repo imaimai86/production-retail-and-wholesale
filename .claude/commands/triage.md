@@ -74,16 +74,20 @@ The pipeline works top-down, so put P0 and P1 items above P2 and P3, and keep it
 ## 6. Report back
 Reply with a short table: slug, type, priority, one-line summary, and any open questions. Then give the command to run it: `./scripts/sdlc.sh <slug>`. Refer to SDLC stages by name (Spec, Plan, Red tests, Implement, Review, Ship), never by number.
 
-## 7. Suggest publishing the triaged items (MANDATORY, never skip)
-Triage only writes files; it never commits or pushes by itself. But a brief that is not in git is easy to lose, and the pipeline then starts from whatever branch and working tree happen to be checked out (a backlog line without its brief, or a brief on a dirty branch, breaks `./scripts/sdlc.sh`). So every triage reply MUST end with an explicit offer to publish, listing exactly what would go in:
-- The files: each new or changed `Docs/backlog/<slug>/brief.md` and `Docs/backlog/index.md`. Nothing else. Name any other uncommitted file you see (`git status --short`) and say it would be left out.
-- A suggested branch off the latest `main`, for example `backlog/<slug>` (or `backlog/<slug-1>-and-<n>-more` for several items).
-- The exact commands, using explicit paths (never `git add -A` or `git add .`), for example:
-  ```bash
-  git fetch origin && git switch -c backlog/<slug> origin/main
-  git add Docs/backlog/index.md Docs/backlog/<slug>/brief.md
-  git commit -m "docs(backlog): triage <slug>"
-  git push -u origin backlog/<slug>
-  ```
-- Ask whether to do it. Only run these commands after the user says yes. If the user says to push or publish, create the branch, commit only those files, push, and report the branch name and the PR link (offer to open the PR with `gh pr create`).
-If the working tree has unrelated uncommitted changes that would be carried into a branch switch, say so before running anything.
+## 7. Publish the triaged items to `triage/<slug>` (MANDATORY offer, only with the user's confirmation)
+Triage writes files and never commits or pushes on its own. A brief that is not in git is easy to lose, and the pipeline starts from whatever branch and working tree happen to be checked out (a backlog line without its brief, or a brief on a dirty branch, breaks `./scripts/sdlc.sh`). So every triage run ends by asking the user to confirm publishing, and only publishes after an explicit yes.
+
+1. Work out exactly what would be published and show it first:
+   - The files: each new or changed `Docs/backlog/<slug>/brief.md` and `Docs/backlog/index.md`. Nothing else. Run `git status --short`, name every other uncommitted file, and say it will be left out (never `git add -A` or `git add .`).
+   - The branch, created from the latest `main`: `triage/<slug>`, where `<slug>` is the feature-or-bug slug. For several items in one run use `triage/<slug-of-the-first-item>-and-<n>-more`. If a local or remote branch with that name already exists, do not reuse, reset or overwrite it: tell the user and propose `triage/<slug>-2`.
+   - The exact commands:
+     ```bash
+     git fetch origin && git switch -c triage/<slug> origin/main
+     git add Docs/backlog/index.md Docs/backlog/<slug>/brief.md
+     git commit -m "docs(backlog): triage <slug>"
+     git push -u origin triage/<slug>
+     ```
+2. Ask for confirmation with AskUserQuestion, with these options: "Commit and push to triage/<slug> (Recommended)", "Commit locally only, do not push", "Do nothing". Do not run any git write command (switch, add, commit, push) before the answer. A reply that is not an explicit choice means "Do nothing".
+3. If the answer is to push: run the commands above, in that order, and stop at the first failure. Never use `--force`. Then report the branch name, the commit hash and the list of files committed, and offer to open the PR with `gh pr create` (do not open it unless the user says yes).
+4. If the working tree has unrelated uncommitted changes, check that `git switch -c` carries them without conflict, and tell the user they stay uncommitted on the new branch. If the switch would fail or overwrite something, stop and ask instead of stashing, resetting or discarding anything.
+5. After publishing, remind the user that `./scripts/sdlc.sh <slug>` will start from the branch that is checked out, and suggest `git switch main && git pull` (or merging the triage branch) first.
