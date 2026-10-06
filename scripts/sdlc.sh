@@ -3,6 +3,8 @@
 # Usage: ./scripts/sdlc.sh [slug]   (no slug = first pending item in Docs/backlog/index.md)
 # Env:   MAX_ATTEMPTS (default 4)  MAX_TURNS (default 40)  MAX_REPAIR_TESTS (default 3)
 #        FROM=implement  resume after Spec/Plan/Red tests (uses the existing red-tests commit)
+#        SDLC_INTEGRATION_CI=run  when CI is set the integration suite is skipped with a warning
+#        unless this is "run" (which also needs DATABASE_URL)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -26,6 +28,7 @@ DOCS="Docs/backlog/$SLUG"
 [ -f "$DOCS/brief.md" ] || { echo "Missing $DOCS/brief.md"; exit 1; }
 BRANCH="sdlc/$SLUG"
 LOG="$DOCS/logs"; mkdir -p "$LOG"
+FAIL_LOG="$LOG/tests.log"
 
 ALLOWED=(Read Write Edit Glob Grep mcp__graft
   "Bash(npm test:*)" "Bash(npm run lint:*)" "Bash(npm run generate-spec:*)" "Bash(graft:*)"
@@ -53,6 +56,12 @@ agent() {
     || { echo "   !! agent '$stage' failed, see $LOG/$stage.log"; exit 1; }
 }
 tests_pass() { $TEST_CMD > "$LOG/tests.log" 2>&1; }
+integration_check() { bash scripts/sdlc-integration.sh > "$LOG/integration.log" 2>&1; }
+# Unit tests, then the integration suite; FAIL_LOG names the log of the check that failed.
+success_check() {
+  if ! tests_pass; then FAIL_LOG="$LOG/tests.log"; return 1; fi
+  if ! integration_check; then FAIL_LOG="$LOG/integration.log"; return 1; fi
+}
 stage() { echo; echo "== $1"; CUR_STAGE="$(echo "$1" | sed -E 's/^[0-9a-z]+(\/[0-9]+)? //; s/ \(.*//')"; CUR_AGENT=""; CUR_ATTEMPT=""; set_status; }
 # jest_json_at <sha> <out> [files...]: run the suite on <sha>'s source, optionally overlaying test files from the working tree.
 jest_json_at() {
@@ -135,17 +144,17 @@ GREEN=0
 for i in $(seq 1 "$MAX_ATTEMPTS"); do
   echo " attempt $i"; CUR_ATTEMPT="$i/$MAX_ATTEMPTS"
   agent "impl-$i" "You are a Senior TDD Developer. Read $DOCS/plan-1.md and $DOCS/test-cases-1.md.
-Latest test output is in $LOG/tests.log (run '$TEST_CMD' yourself to refresh). Edit source files so the failing tests pass.
+Latest test output is in $LOG/tests.log (run '$TEST_CMD' yourself to refresh). Integration output, if present, is in $LOG/integration.log; do NOT start Docker or run the integration suite, the pipeline does that. Edit source files so the failing tests pass.
 NEVER edit anything under $TEST_DIR/.
 If you are convinced a failing test is itself wrong (it contradicts $DOCS/specs-1.md or $DOCS/decisions.md, or has a test-isolation defect such as leaked mocks), do NOT edit it. Write $DOCS/test-issues.md, one line per test, exactly: <test file path> :: <full test name> :: <why, citing the spec/decision or the isolation defect>. Never claim a test is wrong just because it is hard to pass: source bugs are yours to fix."
   if [ -n "$(git diff --name-only "$RED_SHA" -- "$TEST_DIR")" ]; then
     echo "GUARD FAILED: tests were modified during implementation"; git diff --name-only "$RED_SHA" -- "$TEST_DIR"; exit 1
   fi
-  if tests_pass; then echo " tests green"; GREEN=1; break; fi
+  if success_check; then echo " tests and integration green"; GREEN=1; break; fi
 done
 if [ "$GREEN" -ne 1 ]; then
   if [ ! -f "$DOCS/test-issues.md" ]; then
-    echo "GREEN GATE FAILED after $MAX_ATTEMPTS attempts and no test defect was claimed. See $LOG/tests.log"; exit 1
+    echo "GREEN GATE FAILED after $MAX_ATTEMPTS attempts and no test defect was claimed. See $FAIL_LOG"; exit 1
   fi
   # 4b. TEST REPAIR (conditional) --------------------------------------------
   stage "4b Test repair (only because the Implement agent claimed test defects)"
@@ -183,7 +192,7 @@ Reply with your reasoning, then a final line that is exactly 'VERDICT: VALID' or
     --allowedTools Read Glob Grep --max-turns 15 > "$LOG/test-audit.log" 2>&1 || reject "auditor failed to run"
   cp "$LOG/test-audit.log" "$DOCS/test-audit.md"
   [ "$(grep -E '^VERDICT: (VALID|INVALID)$' "$LOG/test-audit.log" | tail -1)" = "VERDICT: VALID" ] || reject "independent auditor did not return VERDICT: VALID"
-  tests_pass || reject "tests still fail after an audited repair; the source needs more work"
+  success_check || reject "checks still fail after an audited repair; see $FAIL_LOG"
   git add "$DOCS" "$TEST_DIR"
   git commit -q -m "test($SLUG): repair invalid tests (mechanically checked and audited)"
   RED_SHA=$(git rev-parse HEAD)
@@ -195,7 +204,7 @@ stage "5/6 Review"
 agent review "You are a code reviewer. Review 'git diff $RED_SHA' against $DOCS/specs-1.md for correctness bugs, missed edge cases and security issues.
 Fix real problems in source files (never under $TEST_DIR/). Write a short summary to $DOCS/review-1.md."
 if [ -n "$(git diff --name-only "$RED_SHA" -- "$TEST_DIR")" ]; then echo "GUARD FAILED: review modified tests"; exit 1; fi
-tests_pass || { echo "Tests broke after review. See $LOG/tests.log"; exit 1; }
+success_check || { echo "Checks broke after review. See $FAIL_LOG"; exit 1; }
 
 # 6. SHIP -----------------------------------------------------------------
 stage "6/6 Commit"
