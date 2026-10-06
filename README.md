@@ -82,6 +82,16 @@ Integration tests (`npm run test:integration`) are a required part of the pipeli
 
 CI skips them temporarily, with a visible warning. To enable them in CI, set the CI/CD variable `SDLC_INTEGRATION_CI=run` and provide `DATABASE_URL` (for example from a `postgres:16` service). No code change is needed.
 
+## SDLC pipeline: what the Ship stage commits
+
+Before the Spec stage, `scripts/sdlc.sh` records which files were already modified (`Docs/backlog/<slug>/logs/baseline.json`, via `scripts/sdlc-changes.cjs`). The Ship stage (`scripts/sdlc-ship.sh`) then commits exactly the files the run created, changed or deleted, anywhere in the repo (`scripts/`, `README.md`, `CLAUDE.md`, `Engineering/`, `server/`, `Docs/`, ...) in one `feat(<slug>)` commit whose body lists them, and ticks the backlog item in a second commit. Only those paths are committed, so anything else you had staged stays staged. It skips, and lists with the reason in `Docs/backlog/<slug>/logs/ship-skipped.md`:
+
+- files that were already modified before the run and changed again by it (`pre-existing local changes`; your own work is never mixed in);
+- secrets: `.env`, `.env.*` (not `.env.example`), `*.pem`, `*.key`, `*.p12`, `id_rsa*`, `*.keystore` (`sensitive file`);
+- `.vscode/`, `.idea/`, `.claude/` (`local or agent configuration`), `node_modules/` and `.DS_Store` (`generated`), and files over 1 MiB (`too large`).
+
+If nothing changed, Ship prints `WARNING: nothing to commit` and still succeeds. With `FROM=implement` or later and no baseline from the original run, a new baseline is taken with a warning, and earlier changes are treated as pre-existing.
+
 ## Interactive SDLC: control pane and parallel pipelines
 
 `scripts/sdlc-mod.sh` runs the normal pipeline (`scripts/sdlc.sh`, unchanged) for one backlog item in its **own git worktree**, so several items can run at once. Two Claude Code plugins in `.claude/plugins/` add the interface and the guard rails.
