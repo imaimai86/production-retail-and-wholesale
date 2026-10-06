@@ -45,4 +45,5 @@ Run `./install.sh` to install dependencies, apply database migrations (if `DATAB
 
 ## Development Guidelines
 - Run `npm test` from the repository root before committing changes. This executes Jest tests within the `server` directory.
+- `npm test` needs no database; `npm run test:integration` needs `DATABASE_URL`.
 - Use the provided Express server structure when adding new endpoints or features.

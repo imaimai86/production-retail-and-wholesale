@@ -59,6 +59,17 @@ The Plan stage of `scripts/sdlc.sh` and the `/plan` command use [graft](https://
 - **Hooks (default).** `.claude/settings.json` runs `.claude/helpers/graft-hooks.cjs` at session start, after edits and at stop. This injects a repo map into the session and keeps the graph in sync. The helper looks for graft in several places (a machine-specific path first, then local and global `node_modules`), so the path baked into it is harmless on other machines.
 - **MCP tools.** Claude can call `graft_find_code`, `graft_find_all`, `graft_trace_calls`, `graft_file_api` and `graft_repo_map` through the server in `.mcp.json`.
 
+## Running integration tests
+
+Start a throwaway Postgres, then run the suite against it:
+
+```bash
+docker run -d --name prw-db -e POSTGRES_USER=app -e POSTGRES_PASSWORD=app -e POSTGRES_DB=app -p 5432:5432 postgres:16
+DATABASE_URL=postgres://app:app@localhost:5432/app npm run test:integration
+```
+
+The suite creates and drops its own `prw_test_*` database, so it never touches the data in `DATABASE_URL`'s database. Without `DATABASE_URL` it fails with `DATABASE_URL is required for integration tests`.
+
 ## SDLC pipeline: integration tests
 
 Integration tests (`npm run test:integration`) are a required part of the pipeline locally. `scripts/sdlc.sh` runs them through `scripts/sdlc-integration.sh` after the unit tests, at the Implement, Test repair and Review checks. They need Docker (a throwaway `postgres:16` container is started and removed) or a `DATABASE_URL` pointing at a database.
