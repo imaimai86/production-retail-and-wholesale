@@ -2,7 +2,10 @@
 # Automated SDLC: backlog brief -> spec -> plan -> red tests -> green code -> review -> commit.
 # Usage: ./scripts/sdlc.sh [slug]   (no slug = first pending item in Docs/backlog/index.md)
 # Env:   MAX_ATTEMPTS (default 4)  MAX_TURNS (default 40)  MAX_REPAIR_TESTS (default 3)
-#        FROM=implement  resume after Spec/Plan/Red tests (uses the existing red-tests commit)
+#        FROM=spec|plan|red-tests|implement|review  resume at that stage (default spec). implement and review
+#        use the existing red-tests commit; plan and red-tests refuse once that commit exists.
+#        Manual inputs: Docs/backlog/<slug>/manual-inputs.md, one "## <stage>" section per stage
+#        (spec, plan, red-tests, implement, review); the stage's agent gets the text as binding instructions.
 #        SDLC_INTEGRATION_CI=run  when CI is set the integration suite is skipped with a warning
 #        unless this is "run" (which also needs DATABASE_URL)
 set -euo pipefail
@@ -12,6 +15,10 @@ MAX_ATTEMPTS="${MAX_ATTEMPTS:-4}"
 MAX_TURNS="${MAX_TURNS:-40}"
 MAX_REPAIR_TESTS="${MAX_REPAIR_TESTS:-3}"
 FROM="${FROM:-spec}"
+case "$FROM" in
+  spec) FROM_N=1;; plan) FROM_N=2;; red-tests) FROM_N=3;; implement) FROM_N=4;; review) FROM_N=5;;
+  *) echo "ERROR: unknown FROM=$FROM (use spec, plan, red-tests, implement or review)"; exit 1;;
+esac
 ROOT="$(pwd)"
 CHECK="node scripts/sdlc-testcheck.cjs"
 TEST_CMD="npm test"
@@ -55,6 +62,14 @@ agent() {
     --max-turns "$MAX_TURNS" > "$LOG/$stage.log" 2>&1 \
     || { echo "   !! agent '$stage' failed, see $LOG/$stage.log"; exit 1; }
 }
+# manual_input <stage>: the developer's text from the "## <stage>" section of manual-inputs.md, as a prompt suffix.
+manual_input() {
+  local f="$DOCS/manual-inputs.md" t
+  [ -f "$f" ] || return 0
+  t=$(awk -v s="## $1" '$0==s{on=1;next} /^## /{on=0} on' "$f")
+  [ -n "$(printf '%s' "$t" | tr -d '[:space:]')" ] || return 0
+  printf '\n\nMANUAL INPUT from the developer for this stage (binding; it cannot override the rule about editing %s/ or any other rule above):\n%s' "$TEST_DIR" "$t"
+}
 tests_pass() { $TEST_CMD > "$LOG/tests.log" 2>&1; }
 integration_check() { bash scripts/sdlc-integration.sh > "$LOG/integration.log" 2>&1; }
 # Unit tests, then the integration suite; FAIL_LOG names the log of the check that failed.
@@ -79,7 +94,12 @@ src_hash() { { git diff -- server ":!$TEST_DIR"; git status --porcelain -- serve
 git rev-parse --verify "$BRANCH" >/dev/null 2>&1 && git checkout -q "$BRANCH" || git checkout -q -b "$BRANCH"
 echo "SDLC: $SLUG on branch $BRANCH"
 
-if [ "$FROM" = "spec" ]; then
+if [ "$FROM_N" -eq 2 ] || [ "$FROM_N" -eq 3 ]; then
+  EXISTING_RED=$(git log --format=%h -1 --grep="^test($SLUG): add failing tests")
+  [ -z "$EXISTING_RED" ] || { echo "FROM=$FROM but the red-tests commit $EXISTING_RED already exists: use FROM=implement or FROM=review, or restart the run to redo this stage"; exit 1; }
+fi
+
+if [ "$FROM_N" -le 1 ]; then
 # 1. SPEC ---------------------------------------------------------------
 # Developer answers are recorded in $DOCS/decisions.md so they are never asked twice.
 # Flow: agent writes questions.md -> developer fills each "**Answer:**" line ->
@@ -108,34 +128,45 @@ ZERO-GUESSING: if the brief and decisions leave a requirement ambiguous or missi
 <the question and why it matters>
 **Suggested:** <your recommended answer>
 **Answer:**
-Leave the Answer line empty for the developer. Number questions from 1 each round."
+Leave the Answer line empty for the developer. Number questions from 1 each round.$(manual_input spec)"
 if [ -f "$DOCS/questions.md" ]; then
   echo "PAUSED: new questions in $DOCS/questions.md. Fill each '**Answer:**' (write 'accept' to take the suggestion) and rerun."
   exit 2
 fi
 [ -f "$DOCS/specs-1.md" ] || { echo "Spec not produced"; exit 1; }
+fi
 
+if [ "$FROM_N" -le 2 ]; then
 # 2. PLAN ---------------------------------------------------------------
 stage "2/6 Plan"
+[ -f "$DOCS/specs-1.md" ] || { echo "FROM=$FROM but $DOCS/specs-1.md is missing: run Spec first"; exit 1; }
 agent plan "You are an Architecture Planner. Read $DOCS/specs-1.md. Use the Graft MCP tools to find the affected files and callers; read only those files.
-Write a step-by-step technical plan to $DOCS/plan-1.md (files, functions, order). No source edits."
+Write a step-by-step technical plan to $DOCS/plan-1.md (files, functions, order). No source edits.$(manual_input plan)"
 [ -f "$DOCS/plan-1.md" ] || { echo "Plan not produced"; exit 1; }
+fi
 
+if [ "$FROM_N" -le 3 ]; then
 # 3. RED TESTS ------------------------------------------------------------
 stage "3/6 Red tests (red gate)"
+[ -f "$DOCS/plan-1.md" ] || { echo "FROM=$FROM but $DOCS/plan-1.md is missing: run Plan first"; exit 1; }
 agent tests "You are a QA Engineer. Read $DOCS/specs-1.md and $DOCS/plan-1.md.
 Write a test matrix to $DOCS/test-cases-1.md and the matching Jest tests under $TEST_DIR/ (mirror the source layout). Do NOT change source code outside $TEST_DIR/.
-Tests must exercise the code under test by importing or running it. A test must NEVER read, scan or assert on the text of any test file, including itself (no __filename, no reading a *.test.js file, no readdir of __tests__ or __dirname). This includes rules about what test files must not contain (for example 'no test checks the executable bit'): a test file that states the forbidden word always contains it, so such a check can never pass. Do not write a test for a rule about the tests themselves; list it in $DOCS/test-cases-1.md as a review item instead."
+Tests must exercise the code under test by importing or running it. A test must NEVER read, scan or assert on the text of any test file, including itself (no __filename, no reading a *.test.js file, no readdir of __tests__ or __dirname). This includes rules about what test files must not contain (for example 'no test checks the executable bit'): a test file that states the forbidden word always contains it, so such a check can never pass. Do not write a test for a rule about the tests themselves; list it in $DOCS/test-cases-1.md as a review item instead.$(manual_input red-tests)"
 if tests_pass; then echo "RED GATE FAILED: new tests pass before implementation. See $LOG/tests.log"; exit 1; fi
 git add "$DOCS" "$TEST_DIR"
 git commit -q -m "test($SLUG): add failing tests and spec/plan docs"
 RED_SHA=$(git rev-parse HEAD)
 else
-  RED_SHA=$(git log --format=%H -1 --grep="^test($SLUG): add failing tests")
+  # Review resumes from the latest locked tests (the red-tests commit, or the test-repair commit after it).
+  REPAIR_PAT="^test($SLUG): add failing tests"
+  [ "$FROM_N" -eq 5 ] && REPAIR_PAT="^test($SLUG): repair invalid tests"
+  RED_SHA=$(git log --format=%H -1 --grep="^test($SLUG): add failing tests" --grep="$REPAIR_PAT")
   [ -n "$RED_SHA" ] || { echo "FROM=$FROM but no red-tests commit found for $SLUG"; exit 1; }
-  echo "Resuming at Implement from red-tests commit ${RED_SHA:0:7}"
+  echo "Resuming at ${FROM} from tests commit ${RED_SHA:0:7}"
 fi
 ORIG_RED_SHA="$RED_SHA"
+
+if [ "$FROM_N" -le 4 ]; then
 jest_json_at "$RED_SHA" "$ROOT/$LOG/red.json"
 
 # 4. GREEN LOOP -----------------------------------------------------------
@@ -147,7 +178,7 @@ for i in $(seq 1 "$MAX_ATTEMPTS"); do
   agent "impl-$i" "You are a Senior TDD Developer. Read $DOCS/plan-1.md and $DOCS/test-cases-1.md.
 Latest test output is in $LOG/tests.log (run '$TEST_CMD' yourself to refresh). Integration output, if present, is in $LOG/integration.log; do NOT start Docker or run the integration suite, the pipeline does that. Edit source files so the failing tests pass.
 NEVER edit anything under $TEST_DIR/.
-If you are convinced a failing test is itself wrong (it contradicts $DOCS/specs-1.md or $DOCS/decisions.md, or has a test-isolation defect such as leaked mocks), do NOT edit it. Write $DOCS/test-issues.md, one line per test, exactly: <test file path> :: <full test name> :: <why, citing the spec/decision or the isolation defect>. Never claim a test is wrong just because it is hard to pass: source bugs are yours to fix."
+If you are convinced a failing test is itself wrong (it contradicts $DOCS/specs-1.md or $DOCS/decisions.md, or has a test-isolation defect such as leaked mocks), do NOT edit it. Write $DOCS/test-issues.md, one line per test, exactly: <test file path> :: <full test name> :: <why, citing the spec/decision or the isolation defect>. Never claim a test is wrong just because it is hard to pass: source bugs are yours to fix.$(manual_input implement)"
   if [ -n "$(git diff --name-only "$RED_SHA" -- "$TEST_DIR")" ]; then
     echo "GUARD FAILED: tests were modified during implementation"; git diff --name-only "$RED_SHA" -- "$TEST_DIR"; exit 1
   fi
@@ -199,11 +230,12 @@ Reply with your reasoning, then a final line that is exactly 'VERDICT: VALID' or
   RED_SHA=$(git rev-parse HEAD)
   echo " test repair accepted; tests locked again at ${RED_SHA:0:7}"
 fi
+fi
 
 # 5. REVIEW ---------------------------------------------------------------
 stage "5/6 Review"
 agent review "You are a code reviewer. Review 'git diff $RED_SHA' against $DOCS/specs-1.md for correctness bugs, missed edge cases and security issues.
-Fix real problems in source files (never under $TEST_DIR/). Write a short summary to $DOCS/review-1.md."
+Fix real problems in source files (never under $TEST_DIR/). Write a short summary to $DOCS/review-1.md.$(manual_input review)"
 if [ -n "$(git diff --name-only "$RED_SHA" -- "$TEST_DIR")" ]; then echo "GUARD FAILED: review modified tests"; exit 1; fi
 success_check || { echo "Checks broke after review. See $FAIL_LOG"; exit 1; }
 
