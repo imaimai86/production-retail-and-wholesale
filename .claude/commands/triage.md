@@ -73,3 +73,17 @@ The pipeline works top-down, so put P0 and P1 items above P2 and P3, and keep it
 
 ## 6. Report back
 Reply with a short table: slug, type, priority, one-line summary, and any open questions. Then give the command to run it: `./scripts/sdlc.sh <slug>`. Refer to SDLC stages by name (Spec, Plan, Red tests, Implement, Review, Ship), never by number.
+
+## 7. Suggest publishing the triaged items (MANDATORY, never skip)
+Triage only writes files; it never commits or pushes by itself. But a brief that is not in git is easy to lose, and the pipeline then starts from whatever branch and working tree happen to be checked out (a backlog line without its brief, or a brief on a dirty branch, breaks `./scripts/sdlc.sh`). So every triage reply MUST end with an explicit offer to publish, listing exactly what would go in:
+- The files: each new or changed `Docs/backlog/<slug>/brief.md` and `Docs/backlog/index.md`. Nothing else. Name any other uncommitted file you see (`git status --short`) and say it would be left out.
+- A suggested branch off the latest `main`, for example `backlog/<slug>` (or `backlog/<slug-1>-and-<n>-more` for several items).
+- The exact commands, using explicit paths (never `git add -A` or `git add .`), for example:
+  ```bash
+  git fetch origin && git switch -c backlog/<slug> origin/main
+  git add Docs/backlog/index.md Docs/backlog/<slug>/brief.md
+  git commit -m "docs(backlog): triage <slug>"
+  git push -u origin backlog/<slug>
+  ```
+- Ask whether to do it. Only run these commands after the user says yes. If the user says to push or publish, create the branch, commit only those files, push, and report the branch name and the PR link (offer to open the PR with `gh pr create`).
+If the working tree has unrelated uncommitted changes that would be carried into a branch switch, say so before running anything.

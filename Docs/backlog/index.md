@@ -10,4 +10,5 @@ Each item needs `Docs/backlog/<slug>/brief.md`.
 - [ ] `add-db-integration-tests` - Feature: integration tests against real Postgres, plus GitLab CI
 - [ ] `add-json-logging` - Feature: Logs all errors and warnings: readable console locally, Google Cloud Logging JSON in Kubernetes
 - [ ] `fix-user-validation` - Bug: POST /users returns 500 when name is missing; validate and fix the docs
+- [ ] `warn-missing-env-config` - Feature: warn at startup when the repo-root .env is missing or ADMIN_TOKEN is not set
 - [x] `add-integration-success-check` - Feature: integration tests are a required local sdlc check; temporary skip in CI only (SDLC_INTEGRATION_CI=run to enable)
