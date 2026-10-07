@@ -5,6 +5,7 @@
 //   namecheck <red.json> <now.json>                every test that existed at red still exists
 //   redcheck  <red.json> <repaired-on-red.json>    every test that failed at red still fails on red source
 //   claimed   <test-issues.md>                     print claimed test keys
+//   resumecheck <red_sha> <test-issues.md> <slug>  preconditions for FROM=test-repair (read-only; empty red_sha = no commit)
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -80,7 +81,29 @@ if (cmd === 'claimed') {
   const origFailed = results(a).failed, nowFailed = results(b).failed, errs = [];
   for (const k of origFailed) if (!nowFailed.has(k)) errs.push(`test failed at red but now PASSES on the unimplemented source (no longer detects the bug): ${k}`);
   if (errs.length) fail(errs);
+} else if (cmd === 'resumecheck') {
+  // Read-only preconditions for FROM=test-repair. Rejects are collected and printed together.
+  if (b === undefined || c === undefined) { console.error('usage: sdlc-testcheck.cjs resumecheck <red_sha> <test-issues.md> <slug>'); process.exit(1); }
+  const errs = [], slug = c, tryGit = (...g) => { try { return git(...g); } catch { return null; } };
+  let sha = a || '';
+  if (!sha) errs.push(`no red-tests commit found for ${slug} (expected a commit with subject "test(${slug}): add failing tests")`);
+  else if (tryGit('rev-parse', '--verify', '--quiet', sha + '^{commit}') === null) { errs.push(`red-tests commit ${sha} is not a known commit`); sha = ''; }
+  if (!fs.existsSync(b)) errs.push(`claim file is missing: ${b}`);
+  else if (!fs.readFileSync(b, 'utf8').trim()) errs.push(`claim file is empty: ${b}`);
+  else if (!claims(b).length) errs.push(`claim file has no valid "<file> :: <test name> :: <reason>" lines: ${b}`);
+  if (sha) {
+    const esc = slug.replace(/[.*^$\[\]\\]/g, '\\$&');
+    const repaired = (tryGit('log', '--format=%h', '-1', `--grep=^test(${esc}): repair invalid tests`, `${sha}..HEAD`) || '').trim();
+    if (repaired) errs.push(`test repair was already accepted in commit ${repaired}: use FROM=review`);
+    const lines = out => (out || '').split('\n').filter(Boolean);
+    const untracked = lines(tryGit('ls-files', '--others', '--exclude-standard'));
+    const tests = [...new Set([...lines(tryGit('diff', '--name-only', sha, '--', TEST_DIR)), ...untracked.filter(f => f.startsWith(TEST_DIR + '/'))])];
+    if (tests.length) errs.push(`tests changed since the red-tests commit ${sha.slice(0, 7)}: ${tests.join(', ')}; restore with: git checkout ${sha} -- ${TEST_DIR} && git clean -fd ${TEST_DIR}`);
+    const impl = [...new Set([...lines(tryGit('diff', '--name-only', sha)), ...untracked])].filter(f => !f.startsWith(TEST_DIR + '/') && !f.startsWith('Docs/'));
+    if (!impl.length) errs.push(`no implementation change since the red-tests commit (changes only under ${TEST_DIR}/ or Docs/ do not count)`);
+  }
+  if (errs.length) fail(errs);
 } else {
-  console.error('usage: sdlc-testcheck.cjs precheck|diffcheck|namecheck|redcheck|claimed ...');
+  console.error('usage: sdlc-testcheck.cjs precheck|diffcheck|namecheck|redcheck|claimed|resumecheck ...');
   process.exit(1);
 }

@@ -17,7 +17,7 @@ Markers: [ ] pending, [x] completed, [!] blocked, [~] parked (skipped by `script
 - [ ] `add-pipeline-change-counts` - Feature: show how many files each pipeline changed, counted in its own worktree
 - [x] `fix-monitor-worktree-path` - Bug: the documented monitor command reads the main tree, not the pipeline's worktree
 - [ ] `retry-unclaimed-failing-test` - Feature: Test repair re-runs unclaimed failing tests once before rejecting, to filter flaky tests
-- [ ] `add-test-repair-resume` - Feature: FROM=test-repair resume point that checks Test repair preconditions (claim file, red commit, tests unchanged) first
+- [x] `add-test-repair-resume` - Feature: FROM=test-repair resume point that checks Test repair preconditions (claim file, red commit, tests unchanged) first
 - [x] `add-backlog-list` - Feature: /backlog-list command that lists backlog items with a status filter (pending, in-progress, blocked, completed)
 - [x] `add-integration-success-check` - Feature: integration tests are a required local sdlc check; temporary skip in CI only (SDLC_INTEGRATION_CI=run to enable)
 - [ ] `require-integration-tests` - Feature: every DB or API change must come with integration tests that fail first; enforced by pipeline gates

@@ -19,11 +19,11 @@ describe('FROM validation in scripts/sdlc.sh', () => {
     const dir = tmpRepo();
     const r = spawnSync('bash', ['scripts/sdlc.sh', 'alpha'], { cwd: dir, env: { ...process.env, FROM: 'bogus' }, encoding: 'utf8' });
     expect(r.status).toBe(1);
-    expect(r.stdout).toContain('ERROR: unknown FROM=bogus (use spec, plan, red-tests, implement or review)');
+    expect(r.stdout).toContain('ERROR: unknown FROM=bogus (use spec, plan, red-tests, implement, review or test-repair)');
     expect(fs.readdirSync(dir).sort()).toEqual(['.git', 'scripts']);
   });
 
-  test.each(['spec', 'plan', 'red-tests', 'implement', 'review'])('FROM=%s is accepted (fails later, not on validation)', from => {
+  test.each(['spec', 'plan', 'red-tests', 'implement', 'test-repair', 'review'])('FROM=%s is accepted (fails later, not on validation)', from => {
     const dir = tmpRepo();
     const r = spawnSync('bash', ['scripts/sdlc.sh', 'alpha'], { cwd: dir, env: { ...process.env, FROM: from }, encoding: 'utf8' });
     expect(r.stdout).not.toContain('unknown FROM');
