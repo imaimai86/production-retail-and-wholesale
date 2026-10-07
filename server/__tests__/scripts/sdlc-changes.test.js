@@ -81,7 +81,7 @@ describe('scripts/sdlc-changes.cjs', () => {
     write(root, 'a.txt', 'dirty\n');
     write(root, 'u.txt', 'untracked\n');
     const base = snapshot(root);
-    expect(changed(root, base)).toEqual({ include: [], skipped: [] });
+    expect(changed(root, base)).toEqual({ include: [], skipped: [], mirror: [] });
   });
 
   test('a file that was dirty and then edited is skipped as pre-existing local changes', () => {
@@ -91,6 +91,7 @@ describe('scripts/sdlc-changes.cjs', () => {
     write(root, 'a.txt', 'dirty and edited\n');
     expect(changed(root, base)).toEqual({
       include: [],
+      mirror: [],
       skipped: [{ path: 'a.txt', reason: 'pre-existing local changes' }],
     });
   });
@@ -133,7 +134,7 @@ describe('scripts/sdlc-changes.cjs', () => {
     const base = snapshot(root);
     write(root, 'ignored.txt');
     write(root, 'logs/run.out');
-    expect(changed(root, base)).toEqual({ include: [], skipped: [] });
+    expect(changed(root, base)).toEqual({ include: [], skipped: [], mirror: [] });
   });
 
   test('a rename appears as one delete and one add', () => {
@@ -141,5 +142,46 @@ describe('scripts/sdlc-changes.cjs', () => {
     const base = snapshot(root);
     git(root, 'mv', 'old.txt', 'new.txt');
     expect(changed(root, base).include).toEqual(['new.txt', 'old.txt']);
+  });
+
+  describe('.env mirroring', () => {
+    test('a .env the cycle changed is listed in mirror with its sibling .env.example, in the same folder', () => {
+      const root = mkRepo();
+      const base = snapshot(root);
+      write(root, '.env', 'A=1\n');
+      write(root, 'server/.env', 'B=2\n');
+      expect(changed(root, base).mirror).toEqual([
+        { from: '.env', to: '.env.example' },
+        { from: 'server/.env', to: 'server/.env.example' },
+      ]);
+    });
+
+    test('no mirror for a .env that was already modified, a deleted .env, other secrets, or when .env.example was touched', () => {
+      const root = mkRepo({ 'a/.env': 'old\n' });
+      write(root, 'a/.env', 'mine\n');
+      const base = snapshot(root);
+      write(root, 'a/.env', 'mine, edited\n');
+      write(root, 'b/.env', 'x\n');
+      fs.rmSync(path.join(root, 'b/.env'));
+      write(root, 'key.pem');
+      write(root, 'c/.env', 'x\n');
+      write(root, 'c/.env.example', 'mine\n');
+      write(root, 'd/.env.local', 'x\n');
+      expect(changed(root, base).mirror).toEqual([]);
+    });
+
+    test('mask replaces every value with <value> and keeps comments, blanks and lines without =', () => {
+      const root = mkRepo();
+      write(root, '.env', '# comment\nABC=xyz\n\nexport TOKEN="s3cr3t"\nURL=postgres://u:p@h:5432/db\nEMPTY=\n  SPACED = v\nnot a pair\n');
+      const r = run(root, 'mask', path.join(root, '.env'), path.join(root, '.env.example'));
+      expect(r.status).toBe(0);
+      const out = fs.readFileSync(path.join(root, '.env.example'), 'utf8');
+      expect(out).toBe('# comment\nABC=<value>\n\nexport TOKEN=<value>\nURL=<value>\nEMPTY=<value>\n  SPACED =<value>\nnot a pair\n');
+      for (const secret of ['xyz', 's3cr3t', 'postgres://']) expect(out).not.toContain(secret);
+    });
+
+    test('mask without both file arguments exits 2', () => {
+      expect(run(mkRepo(), 'mask', 'only-one').status).toBe(2);
+    });
   });
 });

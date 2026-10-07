@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 // Tells the SDLC Ship stage which files the cycle changed. Read-only.
 //   node scripts/sdlc-changes.cjs snapshot <baseline.json>
-//   node scripts/sdlc-changes.cjs changed  <baseline.json>   -> { include: [...], skipped: [{path, reason}] }
+//   node scripts/sdlc-changes.cjs changed  <baseline.json>   -> { include: [...], skipped: [{path, reason}], mirror: [{from, to}] }
+//   node scripts/sdlc-changes.cjs mask <env-file> <example-file>   writes the file with every value replaced by <value>
+// `mirror` lists each `.env` the cycle changed (never committed) with the sibling `.env.example` to write
+// from it; it leaves out a `.env.example` the developer already had modified or the cycle itself changed.
 // A snapshot maps every path `git status` reports (modified, deleted, untracked, staged) to a content
 // hash (null when deleted). `changed` compares the working tree with it. Exit 0 = ok, 1 = error, 2 = usage.
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
-const USAGE = 'Usage: sdlc-changes snapshot|changed <baseline.json>';
+const USAGE = 'Usage: sdlc-changes snapshot|changed <baseline.json> | mask <env-file> <example-file>';
 const MAX_BYTES = 1024 * 1024;
 
 const git = (args, opts = {}) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 1 << 28, ...opts });
@@ -55,8 +58,21 @@ function skipReason(file, top) {
   return null;
 }
 
+// KEY=value -> KEY=<value>; comments, blank lines and lines without "=" are kept as they are.
+function maskEnv(text) {
+  return text.split('\n').map(line => {
+    const m = line.match(/^(\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_.-]*\s*=)/);
+    return m ? `${m[1]}<value>` : line;
+  }).join('\n');
+}
+
 function main(argv) {
-  const [cmd, baselineFile] = argv;
+  const [cmd, baselineFile, exampleFile] = argv;
+  if (cmd === 'mask') {
+    if (!baselineFile || !exampleFile) { console.error(USAGE); return 2; }
+    fs.writeFileSync(exampleFile, maskEnv(fs.readFileSync(baselineFile, 'utf8')));
+    return 0;
+  }
   if (!['snapshot', 'changed'].includes(cmd) || !baselineFile) {
     console.error(USAGE);
     return 2;
@@ -78,7 +94,16 @@ function main(argv) {
     if (reason) skipped.push({ path: file, reason });
     else include.push(file);
   }
-  process.stdout.write(JSON.stringify({ include, skipped }, null, 2) + '\n');
+  const mirror = [];
+  for (const { path: file, reason } of skipped) {
+    if (reason !== 'sensitive file' || path.posix.basename(file) !== '.env' || now[file] === null) continue;
+    const dir = path.posix.dirname(file);
+    const to = dir === '.' ? '.env.example' : `${dir}/.env.example`;
+    const taken = include.includes(to) || skipped.some(s => s.path === to)
+      || Object.prototype.hasOwnProperty.call(baseline, to);
+    if (!taken) mirror.push({ from: file, to });
+  }
+  process.stdout.write(JSON.stringify({ include, skipped, mirror }, null, 2) + '\n');
   return 0;
 }
 

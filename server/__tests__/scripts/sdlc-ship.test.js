@@ -110,7 +110,8 @@ describe('scripts/sdlc-ship.sh', () => {
     write(root, 'server/app.js', 'v2\n');
     write(root, 'server/.env', 'SECRET=1\n');
     expect(runShip(root).status).toBe(0);
-    expect(filesOf(root, 'HEAD~1')).toEqual(['server/app.js']);
+    expect(filesOf(root, 'HEAD~1')).toEqual(['server/.env.example', 'server/app.js']);
+    expect(git(root, 'ls-files', 'server/.env')).toBe('');
     expect(read(root, `${DOCS}/logs/ship-skipped.md`)).toContain('server/.env: sensitive file');
     expect(fs.existsSync(path.join(root, 'server/.env'))).toBe(true);
   });
@@ -159,7 +160,7 @@ describe('scripts/sdlc-ship.sh', () => {
     write(root, '.env');
     const r = runShip(root);
     const last = r.stdout.trim().split('\n').pop();
-    expect(last).toMatch(new RegExp(`^DONE: ${SLUG} on \\S+\\. Committed 2 file\\(s\\), skipped 1 \\(see .*ship-skipped\\.md\\)\\.$`));
+    expect(last).toMatch(new RegExp(`^DONE: ${SLUG} on \\S+\\. Committed 3 file\\(s\\), skipped 1 \\(see .*ship-skipped\\.md\\)\\.$`));
   });
 
   test('a failing git commit exits 1 with the git error', () => {
@@ -171,5 +172,33 @@ describe('scripts/sdlc-ship.sh', () => {
     });
     expect(r.status).toBe(1);
     expect(r.stderr).toMatch(/ident|identity|empty/i);
+  });
+
+  test('a .env the cycle changed is committed as a masked .env.example, and .env itself is not', () => {
+    const root = mkRepo();
+    baseline(root);
+    write(root, 'server/app.js', 'v2\n');
+    write(root, '.env', '# local\nPORT=3000\nADMIN_TOKEN=secret\n');
+    write(root, 'server/.env', 'DATABASE_URL=postgres://u:p@localhost/db\n');
+    const r = runShip(root);
+    expect(r.status).toBe(0);
+    expect(filesOf(root, 'HEAD~1')).toEqual(['.env.example', 'server/.env.example', 'server/app.js']);
+    expect(git(root, 'show', 'HEAD~1:.env.example')).toBe('# local\nPORT=<value>\nADMIN_TOKEN=<value>\n');
+    expect(git(root, 'show', 'HEAD~1:server/.env.example')).toBe('DATABASE_URL=<value>\n');
+    expect(read(root, '.env')).toContain('ADMIN_TOKEN=secret');
+    expect(git(root, 'log', '-p', '--all').includes('secret')).toBe(false);
+    expect(read(root, `${DOCS}/logs/ship-skipped.md`)).toContain('.env: sensitive file');
+    expect(r.stdout).toMatch(/Committed 3 file\(s\), skipped 2/);
+  });
+
+  test('a .env.example the developer already modified is left alone', () => {
+    const root = mkRepo();
+    write(root, '.env.example', 'MINE=1\n');
+    baseline(root);
+    write(root, '.env', 'A=1\n');
+    write(root, 'server/app.js', 'v2\n');
+    expect(runShip(root).status).toBe(0);
+    expect(filesOf(root, 'HEAD~1')).toEqual(['server/app.js']);
+    expect(read(root, '.env.example')).toBe('MINE=1\n');
   });
 });

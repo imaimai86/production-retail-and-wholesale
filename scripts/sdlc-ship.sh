@@ -19,6 +19,13 @@ node "$HERE/sdlc-changes.cjs" changed "$BASELINE" > "$CHANGES"
 INCLUDE=()
 while IFS= read -r -d '' p; do INCLUDE+=("$p"); done < <(node -e '
   for (const p of JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).include) process.stdout.write(p + "\0");' "$CHANGES")
+# Each .env the cycle changed is mirrored to its .env.example with every value masked as <value>.
+while IFS= read -r -d '' pair; do
+  from="${pair%%$'\t'*}"; to="${pair#*$'\t'}"
+  node "$HERE/sdlc-changes.cjs" mask "$from" "$to" || fail "could not write $to from $from"
+  INCLUDE+=("$to")
+done < <(node -e '
+  for (const m of JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).mirror || []) process.stdout.write(m.from + "\t" + m.to + "\0");' "$CHANGES")
 SKIPPED_MD="$(node -e '
   for (const s of JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).skipped) console.log("- " + s.path + ": " + s.reason);' "$CHANGES")"
 SKIPPED_N=0; [ -z "$SKIPPED_MD" ] || SKIPPED_N=$(printf '%s\n' "$SKIPPED_MD" | wc -l | tr -d ' ')
