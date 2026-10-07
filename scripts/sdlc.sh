@@ -2,8 +2,10 @@
 # Automated SDLC: backlog brief -> spec -> plan -> red tests -> green code -> review -> commit.
 # Usage: ./scripts/sdlc.sh [slug]   (no slug = first pending item in Docs/backlog/index.md)
 # Env:   MAX_ATTEMPTS (default 4)  MAX_TURNS (default 40)  MAX_REPAIR_TESTS (default 3)
-#        FROM=spec|plan|red-tests|implement|review  resume at that stage (default spec). implement and review
-#        use the existing red-tests commit; plan and red-tests refuse once that commit exists.
+#        FROM=spec|plan|red-tests|implement|test-repair|review  resume at that stage (default spec). implement and review
+#        use the existing red-tests commit; plan and red-tests refuse once that commit exists. review resumes from the
+#        latest locked tests. test-repair skips Implement, keeps Docs/backlog/<slug>/test-issues.md and checks its
+#        preconditions first (resumecheck, then the pre-check); implement deletes test-issues.md (with a warning).
 #        Manual inputs: Docs/backlog/<slug>/manual-inputs.md, one "## <stage>" section per stage
 #        (spec, plan, red-tests, implement, review); the stage's agent gets the text as binding instructions.
 #        Ship commits only the files this cycle changed (compared with a baseline taken at the start, $LOG/baseline.json),
@@ -20,8 +22,8 @@ MAX_TURNS="${MAX_TURNS:-40}"
 MAX_REPAIR_TESTS="${MAX_REPAIR_TESTS:-3}"
 FROM="${FROM:-spec}"
 case "$FROM" in
-  spec) FROM_N=1;; plan) FROM_N=2;; red-tests) FROM_N=3;; implement) FROM_N=4;; review) FROM_N=5;;
-  *) echo "ERROR: unknown FROM=$FROM (use spec, plan, red-tests, implement or review)"; exit 1;;
+  spec) FROM_N=1;; plan) FROM_N=2;; red-tests) FROM_N=3;; implement) FROM_N=4;; test-repair) FROM_N=5;; review) FROM_N=6;;
+  *) echo "ERROR: unknown FROM=$FROM (use spec, plan, red-tests, implement, review or test-repair)"; exit 1;;
 esac
 ROOT="$(pwd)"
 CHECK="node scripts/sdlc-testcheck.cjs"
@@ -64,7 +66,7 @@ agent() {
   CUR_AGENT="$stage"; AGENT_STARTED="$(date +%Y-%m-%dT%H:%M:%S)"; set_status
   claude -p "$prompt" --permission-mode acceptEdits --allowedTools "${ALLOWED[@]}" \
     --max-turns "$MAX_TURNS" > "$LOG/$stage.log" 2>&1 \
-    || { echo "   !! agent '$stage' failed, see $LOG/$stage.log"; exit 1; }
+    || { echo "   !! agent '$stage' failed, see $LOG/$stage.log"; [ "$stage" = test-repair ] && resume_hint || true; exit 1; }
 }
 # manual_input <stage>: the developer's text from the "## <stage>" section of manual-inputs.md, as a prompt suffix.
 manual_input() {
@@ -92,6 +94,12 @@ jest_json_at() {
   (cd "$wt/server" && npx jest --json --outputFile="$out" >/dev/null 2>&1) || true
   git worktree remove --force "$wt"
 }
+# resume_hint: tell the developer how to resume at Test repair, only when resumecheck's checks 1-4 and Q2 pass now.
+resume_hint() {
+  if $CHECK resumecheck "${ORIG_RED_SHA:-}" "$DOCS/test-issues.md" "$SLUG" >/dev/null 2>&1; then
+    echo "Resume at Test repair once fixed: FROM=test-repair ./scripts/sdlc.sh $SLUG"
+  fi
+}
 jest_json_now() { (cd server && npx jest --json --outputFile="$ROOT/$1" >/dev/null 2>&1) || true; }
 src_hash() { { git diff -- server ":!$TEST_DIR"; git status --porcelain -- server ":!$TEST_DIR"; } | shasum | cut -d' ' -f1; }
 
@@ -109,7 +117,7 @@ fi
 
 if [ "$FROM_N" -eq 2 ] || [ "$FROM_N" -eq 3 ]; then
   EXISTING_RED=$(git log --format=%h -1 --grep="^test($SLUG): add failing tests")
-  [ -z "$EXISTING_RED" ] || { echo "FROM=$FROM but the red-tests commit $EXISTING_RED already exists: use FROM=implement or FROM=review, or restart the run to redo this stage"; exit 1; }
+  [ -z "$EXISTING_RED" ] || { echo "FROM=$FROM but the red-tests commit $EXISTING_RED already exists: use FROM=implement, FROM=test-repair or FROM=review, or restart the run to redo this stage"; exit 1; }
 fi
 
 if [ "$FROM_N" -le 1 ]; then
@@ -172,18 +180,26 @@ RED_SHA=$(git rev-parse HEAD)
 else
   # Review resumes from the latest locked tests (the red-tests commit, or the test-repair commit after it).
   REPAIR_PAT="^test($SLUG): add failing tests"
-  [ "$FROM_N" -eq 5 ] && REPAIR_PAT="^test($SLUG): repair invalid tests"
-  RED_SHA=$(git log --format=%H -1 --grep="^test($SLUG): add failing tests" --grep="$REPAIR_PAT")
-  [ -n "$RED_SHA" ] || { echo "FROM=$FROM but no red-tests commit found for $SLUG"; exit 1; }
+  [ "$FROM_N" -eq 6 ] && REPAIR_PAT="^test($SLUG): repair invalid tests"
+  if [ "$FROM_N" -eq 5 ]; then
+    stage "4b Test repair (only because the Implement agent claimed test defects)"
+    RED_SHA=$(git log --format=%H -1 --grep="^test($SLUG): add failing tests")
+    $CHECK resumecheck "$RED_SHA" "$DOCS/test-issues.md" "$SLUG" || exit 1
+  else
+    RED_SHA=$(git log --format=%H -1 --grep="^test($SLUG): add failing tests" --grep="$REPAIR_PAT")
+    [ -n "$RED_SHA" ] || { echo "FROM=$FROM but no red-tests commit found for $SLUG"; exit 1; }
+  fi
   echo "Resuming at ${FROM} from tests commit ${RED_SHA:0:7}"
 fi
 ORIG_RED_SHA="$RED_SHA"
 
-if [ "$FROM_N" -le 4 ]; then
+if [ "$FROM_N" -le 5 ]; then
 jest_json_at "$RED_SHA" "$ROOT/$LOG/red.json"
 
+if [ "$FROM_N" -le 4 ]; then
 # 4. GREEN LOOP -----------------------------------------------------------
 stage "4/6 Implement (green gate, max $MAX_ATTEMPTS attempts)"
+[ ! -f "$DOCS/test-issues.md" ] || echo "WARNING: test-issues.md exists and will be deleted; use FROM=test-repair to resume at Test repair"
 rm -f "$DOCS/test-issues.md"
 GREEN=0
 for i in $(seq 1 "$MAX_ATTEMPTS"); do
@@ -197,6 +213,9 @@ If you are convinced a failing test is itself wrong (it contradicts $DOCS/specs-
   fi
   if success_check; then echo " tests and integration green"; GREEN=1; break; fi
 done
+else
+  GREEN=0
+fi
 if [ "$GREEN" -ne 1 ]; then
   if [ ! -f "$DOCS/test-issues.md" ]; then
     echo "GREEN GATE FAILED after $MAX_ATTEMPTS attempts and no test defect was claimed. See $FAIL_LOG"; exit 1
@@ -206,10 +225,17 @@ if [ "$GREEN" -ne 1 ]; then
   reject() {
     echo "TEST REPAIR REJECTED: $1"
     git checkout -q "$ORIG_RED_SHA" -- "$TEST_DIR"; git clean -fdq -- "$TEST_DIR"
-    echo "   tests restored to $ORIG_RED_SHA. See $LOG/ and $DOCS/test-issues.md"; exit 1
+    echo "   tests restored to $ORIG_RED_SHA. See $LOG/ and $DOCS/test-issues.md"
+    [ "${2:-}" != hint ] || resume_hint
+    exit 1
   }
   jest_json_now "$LOG/now.json"
-  $CHECK precheck "$LOG/now.json" "$DOCS/test-issues.md" "$MAX_REPAIR_TESTS" || reject "claims fail pre-check (see above)"
+  if [ "$FROM_N" -eq 5 ]; then
+    # FROM=test-repair: fail early, before any agent runs and before anything is restored.
+    $CHECK precheck "$LOG/now.json" "$DOCS/test-issues.md" "$MAX_REPAIR_TESTS" 2> "$LOG/precheck.err" \
+      || { echo "REJECT: claims would not pass the pre-check" >&2; cat "$LOG/precheck.err" >&2; exit 1; }
+  fi
+  $CHECK precheck "$LOG/now.json" "$DOCS/test-issues.md" "$MAX_REPAIR_TESTS" || reject "claims fail pre-check (see above)" hint
   SRC_BEFORE=$(src_hash)
   agent test-repair "You are a Test Repair Agent. The Implement agent claims these tests are wrong; the claims are in $DOCS/test-issues.md. Read it, $DOCS/specs-1.md and $DOCS/decisions.md.
 You may edit ONLY the test files named in test-issues.md, and ONLY to fix the claimed defect. Rules:
@@ -234,7 +260,7 @@ Read $DOCS/specs-1.md, $DOCS/decisions.md, $DOCS/test-issues.md, $DOCS/test-repa
 3. Is it free of tricks: asserting whatever the code returns, loosened matchers, removed cases, changed expected status codes or bodies without spec support?
 4. Does the change touch only what the claim justifies?
 Reply with your reasoning, then a final line that is exactly 'VERDICT: VALID' or 'VERDICT: INVALID'. If in any doubt, INVALID." \
-    --allowedTools Read Glob Grep --max-turns 15 > "$LOG/test-audit.log" 2>&1 || reject "auditor failed to run"
+    --allowedTools Read Glob Grep --max-turns 15 > "$LOG/test-audit.log" 2>&1 || reject "auditor failed to run" hint
   cp "$LOG/test-audit.log" "$DOCS/test-audit.md"
   [ "$(grep -E '^VERDICT: (VALID|INVALID)$' "$LOG/test-audit.log" | tail -1)" = "VERDICT: VALID" ] || reject "independent auditor did not return VERDICT: VALID"
   success_check || reject "checks still fail after an audited repair; see $FAIL_LOG"
