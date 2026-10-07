@@ -5,6 +5,9 @@
 #        FROM=implement  resume after Spec/Plan/Red tests (uses the existing red-tests commit)
 #        SDLC_INTEGRATION_CI=run  when CI is set the integration suite is skipped with a warning
 #        unless this is "run" (which also needs DATABASE_URL)
+# Ship commits only the files the cycle changed anywhere in the repo, compared with
+# $LOG/baseline.json (snapshot taken before Spec). It skips the developer's own uncommitted work,
+# secrets, editor/agent config, generated and oversized files, and lists them in $LOG/ship-skipped.md.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -79,7 +82,9 @@ src_hash() { { git diff -- server ":!$TEST_DIR"; git status --porcelain -- serve
 git rev-parse --verify "$BRANCH" >/dev/null 2>&1 && git checkout -q "$BRANCH" || git checkout -q -b "$BRANCH"
 echo "SDLC: $SLUG on branch $BRANCH"
 
+BASELINE="$LOG/baseline.json"
 if [ "$FROM" = "spec" ]; then
+node scripts/sdlc-changes.cjs snapshot "$BASELINE"
 # 1. SPEC ---------------------------------------------------------------
 # Developer answers are recorded in $DOCS/decisions.md so they are never asked twice.
 # Flow: agent writes questions.md -> developer fills each "**Answer:**" line ->
@@ -133,6 +138,10 @@ else
   RED_SHA=$(git log --format=%H -1 --grep="^test($SLUG): add failing tests")
   [ -n "$RED_SHA" ] || { echo "FROM=$FROM but no red-tests commit found for $SLUG"; exit 1; }
   echo "Resuming at Implement from red-tests commit ${RED_SHA:0:7}"
+  if [ ! -f "$BASELINE" ]; then
+    echo "WARNING: no baseline from the original run; changes made before this resume are treated as pre-existing and will not be committed"
+    node scripts/sdlc-changes.cjs snapshot "$BASELINE"
+  fi
 fi
 ORIG_RED_SHA="$RED_SHA"
 jest_json_at "$RED_SHA" "$ROOT/$LOG/red.json"
@@ -208,8 +217,5 @@ success_check || { echo "Checks broke after review. See $FAIL_LOG"; exit 1; }
 
 # 6. SHIP -----------------------------------------------------------------
 stage "6/6 Commit"
-git add server "$DOCS"
-git commit -q -m "feat($SLUG): implement per $DOCS/specs-1.md"
-sed -i.bak -E "s/^- \[ \] (\`$SLUG\`)/- [x] \1/" "$BACKLOG" && rm -f "$BACKLOG.bak"
-git add "$BACKLOG" && git commit -q -m "chore(backlog): mark $SLUG done"
-echo; echo "DONE: $SLUG on $BRANCH. Review with: git log --oneline $RED_SHA~1..HEAD ; then open a PR."
+bash scripts/sdlc-ship.sh "$SLUG" "$DOCS" "$BASELINE" "$BACKLOG"
+echo "Review with: git log --oneline $RED_SHA~1..HEAD ; then open a PR."

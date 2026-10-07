@@ -82,6 +82,17 @@ Integration tests (`npm run test:integration`) are a required part of the pipeli
 
 CI skips them temporarily, with a visible warning. To enable them in CI, set the CI/CD variable `SDLC_INTEGRATION_CI=run` and provide `DATABASE_URL` (for example from a `postgres:16` service). No code change is needed.
 
+## SDLC pipeline: what Ship commits
+
+Before the Spec stage, `scripts/sdlc.sh` snapshots every uncommitted path with a content hash in `Docs/backlog/<slug>/logs/baseline.json` (resuming with `FROM=implement` reuses it, or makes one with a warning if it is missing). The Ship stage (`scripts/sdlc-ship.sh`, using `scripts/sdlc-changes.cjs`) then commits exactly the files created, modified or deleted since that snapshot, anywhere in the repo, as one `feat(<slug>)` commit whose body lists them, and ticks the item in `Docs/backlog/index.md` in a separate commit. It never commits:
+
+- files that were already modified before the run and changed again by it (your own work);
+- secrets: `.env`, `.env.*` (except `.env.example`), `*.pem`, `*.key`, `*.p12`, `id_rsa*`, `*.keystore`;
+- editor and agent configuration: `.vscode/`, `.idea/`, `.claude/`;
+- `node_modules/`, `.DS_Store`, and files over 1 MiB.
+
+Anything you had staged beforehand stays staged. Skipped files and their reasons are written to `Docs/backlog/<slug>/logs/ship-skipped.md` and printed. If nothing changed, Ship prints `WARNING: nothing to commit` and still finishes successfully.
+
 ## Interactive SDLC: control pane and parallel pipelines
 
 `scripts/sdlc-mod.sh` runs the normal pipeline (`scripts/sdlc.sh`, unchanged) for one backlog item in its **own git worktree**, so several items can run at once. Two Claude Code plugins in `.claude/plugins/` add the interface and the guard rails.
