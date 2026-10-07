@@ -475,3 +475,227 @@ describe('sdlc-mod.sh watch', () => {
   });
 });
 
+describe('sdlc-mod.sh changes', () => {
+  const writeIn = (dir, rel, text = 'x\n') => {
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), text);
+  };
+  const commit = (dir, msg) => { git(dir, 'add', '-A'); git(dir, 'commit', '-q', '-m', msg); };
+
+  // A pipeline worktree under SDLC_WT_BASE on branch sdlc/<slug>, with the links the wrapper adds (kept out of git status),
+  // and a run record written by hand to <common dir>/sdlc-runs/<slug>.json (omitted with record: false).
+  function pipeline(slug, { from = 'main', record = true, base } = {}) {
+    fs.mkdirSync(wts, { recursive: true });
+    const wt = path.join(fs.realpathSync(wts), slug);
+    git(repo, 'worktree', 'add', '-q', '-b', `sdlc/${slug}`, wt, from);
+    fs.appendFileSync(path.join(repo, '.git/info/exclude'), 'server/node_modules\ngraft\n');
+    fs.mkdirSync(path.join(wt, 'server'), { recursive: true });
+    fs.symlinkSync(path.join(repo, 'server/node_modules'), path.join(wt, 'server/node_modules'));
+    fs.symlinkSync(path.join(repo, 'graft'), path.join(wt, 'graft'));
+    if (record) {
+      fs.mkdirSync(path.join(repo, '.git/sdlc-runs'), { recursive: true });
+      const rec = { slug, worktree: wt, pid: 1, started: '2026-10-07T10:00:00', state: 'exited', exit_code: '0', interrupted: false, finished: '', message: '' };
+      if (base) rec.base = base;
+      fs.writeFileSync(path.join(repo, '.git/sdlc-runs', `${slug}.json`), JSON.stringify(rec));
+    }
+    return wt;
+  }
+
+  test('prints "<changed> <uncommitted>" for committed plus uncommitted changes', () => {
+    const wt = pipeline('alpha');
+    writeIn(wt, 'a.txt'); writeIn(wt, 'b.txt');
+    commit(wt, 'two files');
+    writeIn(wt, 'c.txt'); // untracked
+    fs.appendFileSync(path.join(wt, 'Docs/backlog/alpha/brief.md'), 'more\n'); // modified tracked
+    const r = mod(['changes', 'alpha']);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe('4 2\n');
+    expect(r.stderr).toBe('');
+  });
+
+  test('a file committed and then edited again counts once in changed', () => {
+    const wt = pipeline('alpha');
+    writeIn(wt, 'a.txt');
+    commit(wt, 'add');
+    fs.appendFileSync(path.join(wt, 'a.txt'), 'again\n');
+    expect(mod(['changes', 'alpha']).stdout).toBe('1 1\n');
+  });
+
+  test('untracked files count one each; the linked server/node_modules and graft do not', () => {
+    const wt = pipeline('alpha');
+    expect(mod(['changes', 'alpha']).stdout).toBe('0 0\n');
+    writeIn(wt, 'new/dir/one.txt'); writeIn(wt, 'new/dir/two.txt');
+    expect(mod(['changes', 'alpha']).stdout).toBe('2 2\n');
+  });
+
+  test('a renamed file counts as its new path, once', () => {
+    const wt = pipeline('alpha');
+    git(wt, 'mv', 'Docs/backlog/alpha/brief.md', 'Docs/backlog/alpha/renamed.md');
+    const j = JSON.parse(mod(['changes', 'alpha', '--json']).stdout);
+    expect([j.changed, j.uncommitted]).toEqual([1, 1]);
+    expect(j.files).toEqual(['Docs/backlog/alpha/renamed.md']);
+  });
+
+  test('a path with spaces is listed under its real name', () => {
+    const wt = pipeline('alpha');
+    writeIn(wt, 'my notes.txt');
+    const j = JSON.parse(mod(['changes', 'alpha', '--json']).stdout);
+    expect(j.files).toEqual(['my notes.txt']);
+    expect(j.changed).toBe(1);
+  });
+
+  test('--json has exactly slug, worktree, changed, uncommitted, files; --json may come first', () => {
+    const wt = pipeline('alpha');
+    writeIn(wt, 'b.txt'); writeIn(wt, 'a.txt');
+    commit(wt, 'two');
+    writeIn(wt, 'z.txt');
+    for (const args of [['changes', 'alpha', '--json'], ['changes', '--json', 'alpha']]) {
+      const r = mod(args);
+      expect(r.status).toBe(0);
+      const j = JSON.parse(r.stdout);
+      expect(Object.keys(j).sort()).toEqual(['changed', 'files', 'slug', 'uncommitted', 'worktree']);
+      expect(j).toEqual({ slug: 'alpha', worktree: wt, changed: 3, uncommitted: 1, files: ['a.txt', 'b.txt', 'z.txt'] });
+    }
+  });
+
+  test('files is capped at 50 sorted entries while changed is the full total', () => {
+    const wt = pipeline('alpha');
+    for (let i = 1; i <= 60; i++) writeIn(wt, `f/f${String(i).padStart(2, '0')}.txt`);
+    commit(wt, 'sixty');
+    const j = JSON.parse(mod(['changes', 'alpha', '--json']).stdout);
+    expect(j.changed).toBe(60);
+    expect(j.uncommitted).toBe(0);
+    expect(j.files).toHaveLength(50);
+    expect(j.files).toEqual([...j.files].sort());
+    expect(j.files[0]).toBe('f/f01.txt');
+    expect(j.files[49]).toBe('f/f50.txt');
+  });
+
+  test('the numbers do not depend on the current directory', () => {
+    const wt = pipeline('alpha');
+    writeIn(wt, 'a.txt'); commit(wt, 'one'); writeIn(wt, 'b.txt');
+    const here = mod(['changes', 'alpha']);
+    for (const cwd of [tmp, wt, os.tmpdir()]) {
+      const r = spawnSync('bash', [path.join(repo, 'scripts/sdlc-mod.sh'), 'changes', 'alpha'], { cwd, encoding: 'utf8', env: env({}) });
+      expect(r.status).toBe(0);
+      expect(r.stdout).toBe(here.stdout);
+    }
+    expect(here.stdout).toBe('2 1\n');
+  });
+
+  test('dirtying the main working tree changes neither number', () => {
+    const wt = pipeline('alpha');
+    writeIn(wt, 'a.txt');
+    const before = mod(['changes', 'alpha']).stdout;
+    writeIn(repo, 'unrelated.txt');
+    fs.appendFileSync(path.join(repo, 'Docs/backlog/slow-one/brief.md'), 'edit\n');
+    expect(mod(['changes', 'alpha']).stdout).toBe(before);
+    expect(before).toBe('1 1\n');
+  });
+
+  test('an unknown slug exits 1 with "No pipeline for <slug>" and nothing on stdout', () => {
+    for (const args of [['changes', 'ghost'], ['changes', 'ghost', '--json']]) {
+      const r = mod(args);
+      expect(r.status).toBe(1);
+      expect(r.stdout).toBe('');
+      expect(r.stderr).toContain('No pipeline for ghost');
+    }
+  });
+
+  test('a record whose worktree was deleted by hand exits 1 with "Worktree for <slug> is gone"', () => {
+    const wt = pipeline('alpha');
+    fs.rmSync(wt, { recursive: true, force: true });
+    for (const args of [['changes', 'alpha'], ['changes', 'alpha', '--json']]) {
+      const r = mod(args);
+      expect(r.status).toBe(1);
+      expect(r.stdout).toBe('');
+      expect(r.stderr).toContain('Worktree for alpha is gone');
+      expect(r.stderr).not.toContain('No pipeline for');
+    }
+  });
+
+  test('without a run record the $SDLC_WT_BASE/<slug> folder is used', () => {
+    const wt = pipeline('alpha', { record: false });
+    writeIn(wt, 'a.txt');
+    const r = mod(['changes', 'alpha']);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe('1 1\n');
+  });
+
+  test('a record whose worktree path is missing falls back to $SDLC_WT_BASE/<slug>', () => {
+    const wt = pipeline('alpha');
+    writeIn(wt, 'a.txt');
+    const f = path.join(repo, '.git/sdlc-runs/alpha.json');
+    const rec = JSON.parse(fs.readFileSync(f, 'utf8'));
+    rec.worktree = path.join(tmp, 'nowhere');
+    fs.writeFileSync(f, JSON.stringify(rec));
+    expect(mod(['changes', 'alpha']).stdout).toBe('1 1\n');
+  });
+
+  describe('base and merge-base', () => {
+    // main has moved one commit past `root`; the worktree starts from main and commits w.txt.
+    function twoCommits() {
+      git(repo, 'branch', 'root', git(repo, 'rev-parse', 'HEAD'));
+      writeIn(repo, 'm1.txt'); commit(repo, 'm1');
+      const wt = pipeline('alpha');
+      writeIn(wt, 'w.txt'); commit(wt, 'w');
+      return wt;
+    }
+
+    test('with no base in the record the base is pick_base (SDLC_BASE, else main)', () => {
+      twoCommits();
+      expect(mod(['changes', 'alpha']).stdout).toBe('1 0\n');
+      expect(mod(['changes', 'alpha'], { SDLC_BASE: 'root' }).stdout).toBe('2 0\n');
+    });
+
+    test('a base in the record is used, ahead of pick_base', () => {
+      twoCommits();
+      const f = path.join(repo, '.git/sdlc-runs/alpha.json');
+      fs.writeFileSync(f, JSON.stringify({ ...JSON.parse(fs.readFileSync(f, 'utf8')), base: 'root' }));
+      expect(mod(['changes', 'alpha']).stdout).toBe('2 0\n');
+      expect(mod(['changes', 'alpha'], { SDLC_BASE: 'main' }).stdout).toBe('2 0\n');
+    });
+
+    test('no merge-base: the committed part is 0, uncommitted still counts, exit 0', () => {
+      const orphan = git(repo, 'commit-tree', '4b825dc642cb6eb9a060e54bf8d69288fbee4904', '-m', 'orphan');
+      git(repo, 'branch', 'orphan', orphan);
+      const wt = pipeline('alpha', { base: 'orphan' });
+      writeIn(wt, 'w.txt'); commit(wt, 'w');
+      writeIn(wt, 'u.txt');
+      const r = mod(['changes', 'alpha']);
+      expect(r.status).toBe(0);
+      expect(r.stdout).toBe('1 1\n');
+      expect(r.stderr).toBe('');
+    });
+
+    test('an unknown base ref behaves like no merge-base: exit 0, committed part 0', () => {
+      const wt = pipeline('alpha', { base: 'no-such-ref' });
+      writeIn(wt, 'w.txt'); commit(wt, 'w');
+      const r = mod(['changes', 'alpha', '--json']);
+      expect(r.status).toBe(0);
+      expect(JSON.parse(r.stdout)).toMatchObject({ changed: 0, uncommitted: 0, files: [] });
+    });
+  });
+
+  test('it makes no network call: an unreachable origin does not matter', () => {
+    git(repo, 'remote', 'add', 'origin', 'file:///nonexistent/remote.git');
+    const wt = pipeline('alpha');
+    writeIn(wt, 'a.txt');
+    const r = mod(['changes', 'alpha']);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe('1 1\n');
+    expect(r.stderr).toBe('');
+  });
+
+  test('usage: the help text lists changes; a missing or bad slug and extra arguments exit 2', () => {
+    pipeline('alpha');
+    expect(mod([]).stderr).toContain('changes <slug> [--json]');
+    expect(mod(['changes']).status).toBe(2);
+    expect(mod(['changes', '--json']).status).toBe(2);
+    expect(mod(['changes', 'Bad Slug']).status).toBe(2);
+    expect(mod(['changes', 'alpha', '--bogus']).status).toBe(2);
+    expect(mod(['changes', 'alpha', 'beta']).status).toBe(2);
+    expect(mod(['changes', 'alpha', '--json', '--json']).status).toBe(2);
+  });
+});
+
