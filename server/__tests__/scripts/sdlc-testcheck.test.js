@@ -27,7 +27,7 @@ const claimsFile = lines => { fs.writeFileSync(p('test-issues.md'), lines.join('
 const run = (...args) => spawnSync('node', [TC, ...args], { cwd: root, encoding: 'utf8' });
 const readNow = () => JSON.parse(fs.readFileSync(p('now.json'), 'utf8'));
 const flakyPath = () => p('flaky-tests.md');
-const NOT_CLAIMED = 'failing test is NOT claimed as a test defect';
+const NOT_CLAIMED = 'failing test is NOT claimed as a test defect (source bug, not test repair)';
 
 describe('sdlc-testcheck unclaimed', () => {
   test('prints only failing keys that are not claimed', () => {
