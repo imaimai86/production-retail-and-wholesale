@@ -62,6 +62,56 @@ describe('scripts/sdlc.sh gates', () => {
   });
 });
 
+describe('Test repair retry of unclaimed failures', () => {
+  const callIdx = lines.findIndex(l => /^\s*retry_unclaimed\s*$/.test(l));
+  const nowIdx = lines.findIndex(l => l.includes('jest_json_now "$LOG/now.json"'));
+  const prechecks = lines.map((l, i) => [l, i]).filter(([l]) => l.includes('precheck "$LOG/now.json"'));
+  const defIdx = lines.findIndex(l => /^\s*retry_unclaimed\s*\(\)/.test(l));
+  const body = defIdx < 0 ? '' : (() => {
+    let end = defIdx + 1;
+    while (end < lines.length && !/^\}/.test(lines[end])) end++;
+    return lines.slice(defIdx, end + 1).join('\n');
+  })();
+
+  test('defines retry_unclaimed', () => {
+    expect(defIdx).toBeGreaterThan(-1);
+  });
+
+  test('the call sits after jest_json_now now.json and before the first precheck', () => {
+    expect(nowIdx).toBeGreaterThan(-1);
+    expect(prechecks.length).toBeGreaterThan(0);
+    expect(callIdx).toBeGreaterThan(nowIdx);
+    expect(callIdx).toBeLessThan(prechecks[0][1]);
+  });
+
+  test('every precheck on now.json still passes MAX_REPAIR_TESTS', () => {
+    prechecks.forEach(([l]) => expect(l).toContain('MAX_REPAIR_TESTS'));
+  });
+
+  test('the second jest run (after.json) is not followed by a retry', () => {
+    const afterIdx = lines.findIndex(l => l.includes('jest_json_now "$LOG/after.json"'));
+    expect(afterIdx).toBeGreaterThan(-1);
+    expect(lines.filter(l => /^\s*retry_unclaimed\s*$/.test(l))).toHaveLength(1);
+  });
+
+  test('re-runs only the retry set from server/ and merges the result', () => {
+    expect(body).toContain('npx jest');
+    expect(body).toContain(' -t ');
+    expect(body).toContain('--json --outputFile');
+    expect(body).toContain('|| true');
+    expect(body).toContain('>/dev/null 2>&1');
+    expect(body).toContain('cd server');
+    expect(body).toContain('unclaimed');
+    expect(body).toContain('merge-retry');
+    expect(body).toContain('flaky-tests.md');
+  });
+
+  test('adds no new env variable or opt-out switch', () => {
+    expect(sdlc).not.toMatch(/\bSDLC_(RETRY|FLAKY)[A-Z_]*=/);
+    expect(body).not.toMatch(/\$\{[A-Z_]+:-/);
+  });
+});
+
 describe('docs', () => {
   test.each(['README.md', 'CLAUDE.md'])('%s documents SDLC_INTEGRATION_CI and has no off switch', f => {
     const t = read(f);
