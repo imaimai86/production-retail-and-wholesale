@@ -52,6 +52,11 @@ ADMIN_TOKEN=secret
 - Push SDLC work to its own branch `sdlc/<slug>` (not a `claude/...` branch).
 - If that branch name already exists on the remote and the push conflicts, push to `sdlc/<slug>-<n>` instead, where `<n>` is a 5-digit number starting with 1 that increments by one per conflict (`10001`, then `10002`, and so on).
 
+## Working with the user
+- **Times in GST.** Show every time mentioned to the user in GST (Gulf Standard Time, UTC+4), written like `17:21 GST`. Convert UTC timestamps from logs, GitHub, `status.json` and schedulers before showing them.
+- **Status check-ins every minute.** When asked to report on a running SDLC pipeline, schedule the check-ins (`send_later`) every 1 minute until the run is done, failed or paused for questions. With several pipelines running, one check-in covers all of them.
+- **Questions need context.** Whenever you ask the user a question (AskUserQuestion or in text), first name the task it is about (backlog slug, PR number or branch), say in one line what that task does, what the question decides and what happens with each answer. Put the slug in the AskUserQuestion header or question text as well, because several pipelines can run in parallel.
+
 ## Merging pull requests
 - **MANDATORY, never optional: confirm with AskUserQuestion before merging any pull request.** This applies in every case: PRs you opened in this session, PRs raised from an SDLC pipeline run, and PRs where the user earlier said "merge when CI passes". A green CI run, an earlier instruction, or a subscription event never replaces the confirmation.
   - When the PR is ready (CI green, no conflict), ask with the AskUserQuestion tool, never a free-text "merge?" line, with at least the options **Merge** and **Do not merge**, naming the PR number and its CI status in the question. Merge only after the user picks Merge. Any other answer means do not merge.
