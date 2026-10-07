@@ -74,7 +74,7 @@ jest.mock('../models/users', () => {
   return {
     __reset: () => { data = []; },
     getAll: ({ limit = 10, offset = 0 } = {}) => Promise.resolve(data.slice(offset, offset + limit)),
-    create: async (u) => { const item = { id: data.length + 1, ...u }; data.push(item); return item; }
+    create: jest.fn(async (u) => { const item = { id: data.length + 1, ...u }; data.push(item); return item; })
   };
 });
 
@@ -160,6 +160,90 @@ describe('API endpoints using responses', () => {
     await request(app).post('/categories').set('x-auth-token', token).send({ name: 'c', gst: 10 });
     const res = await request(app).get('/categories').set('x-auth-token', token);
     expect(res.body.length).toBe(1);
+  });
+});
+
+describe('POST /users validation', () => {
+  const admin = process.env.ADMIN_TOKEN;
+  const json = (token, raw) => {
+    const r = request(app).post('/users').set('Content-Type', 'application/json');
+    return (token ? r.set('x-auth-token', token) : r).send(raw);
+  };
+  const post = body => request(app).post('/users').set('x-auth-token', admin).send(body);
+
+  test('U-1 valid name returns 201 with {id, name}', async () => {
+    const res = await post({ name: 'Asha' });
+    expect(res.statusCode).toBe(201);
+    expect(res.body).toEqual({ id: expect.any(Number), name: 'Asha' });
+    expect(Users.create).toHaveBeenCalledTimes(1);
+  });
+
+  test('U-2 name is trimmed before the insert and in the response', async () => {
+    const res = await post({ name: '  Asha  ' });
+    expect(res.statusCode).toBe(201);
+    expect(res.body.name).toBe('Asha');
+    expect(Users.create).toHaveBeenCalledWith({ name: 'Asha' });
+  });
+
+  test('U-3 extra fields are ignored, not echoed and not passed to the model', async () => {
+    const res = await post({ name: 'Asha', username: 'a', password: 'p', role: 'admin' });
+    expect(res.statusCode).toBe(201);
+    expect(res.body).toEqual({ id: expect.any(Number), name: 'Asha' });
+    expect(Users.create).toHaveBeenCalledWith({ name: 'Asha' });
+  });
+
+  test('U-4 duplicate names are allowed', async () => {
+    expect((await post({ name: 'Asha' })).statusCode).toBe(201);
+    expect((await post({ name: 'Asha' })).statusCode).toBe(201);
+  });
+
+  const required = { error: 'name is required' };
+  const notString = { error: 'name must be a string' };
+  const cases = [
+    ['{}', () => post({}), required],
+    ['missing name', () => post({ username: 'a' }), required],
+    ['null name', () => post({ name: null }), required],
+    ['empty name', () => post({ name: '' }), required],
+    ['whitespace name', () => post({ name: '   ' }), required],
+    ['no body', () => request(app).post('/users').set('x-auth-token', admin), required],
+    ['empty body', () => json(admin, ''), required],
+    ['array body', () => json(admin, '[]'), required],
+    ['string body', () => json(admin, '"text"'), required],
+    ['null body', () => json(admin, 'null'), required],
+    ['number name', () => post({ name: 123 }), notString],
+    ['object name', () => post({ name: {} }), notString],
+    ['array name', () => post({ name: [] }), notString],
+    ['boolean name', () => post({ name: true }), notString],
+    ['malformed JSON', () => json(admin, '{bad'), { error: 'Bad Request' }]
+  ];
+  test.each(cases)('U-5 400 for %s and no insert', async (_n, send, expected) => {
+    const res = await send();
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toEqual(expected);
+    expect(Users.create).not.toHaveBeenCalled();
+  });
+
+  test('U-6 no token returns 401 even with an invalid body', async () => {
+    const res = await request(app).post('/users').send({});
+    expect(res.statusCode).toBe(401);
+    expect(res.body).toEqual({ error: 'Unauthorized' });
+    expect(Users.create).not.toHaveBeenCalled();
+  });
+
+  test('U-7 non-admin token returns 403 even with an invalid body', async () => {
+    const res = await request(app).post('/users').set('x-auth-token', '1').send({});
+    expect(res.statusCode).toBe(403);
+    expect(res.body).toEqual({ error: 'Forbidden' });
+    expect(Users.create).not.toHaveBeenCalled();
+  });
+
+  test('U-8 a database failure on a valid request returns 500', async () => {
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    Users.create.mockRejectedValueOnce(new Error('boom'));
+    const res = await post({ name: 'Asha' });
+    spy.mockRestore();
+    expect(res.statusCode).toBe(500);
+    expect(res.body).toEqual({ error: 'Internal server error' });
   });
 });
 

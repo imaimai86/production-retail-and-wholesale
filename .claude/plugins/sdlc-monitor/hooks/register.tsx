@@ -12,6 +12,14 @@ const WRAPPER = 'scripts/sdlc-mod.sh'
 const STAGES = ['Spec', 'Plan', 'Red tests', 'Implement', 'Test repair', 'Review', 'Commit']
 // How long the Start button stays a "Starting…" note while the wrapper creates the worktree.
 const LAUNCH_GRACE_MS = 20000
+// Agent stages that take a manual input: the FROM value that resumes at the stage, and the "## <key>" section of manual-inputs.md.
+const INPUT_STAGES = [
+  { key: 'spec', label: 'Spec' },
+  { key: 'plan', label: 'Plan' },
+  { key: 'red-tests', label: 'Red tests' },
+  { key: 'implement', label: 'Implement' },
+  { key: 'review', label: 'Review' },
+]
 const RESUME_AT_IMPLEMENT = ['Implement', 'Test repair', 'Review', 'Commit']
 
 const EMPTY: Snapshot = { now: 0, runs: [], pending: [], discarded: {} }
@@ -82,6 +90,24 @@ function parseQuestions(text: string): Question[] {
   }
 
   return out
+}
+
+// Returns manual-inputs.md with the "## <key>" section set to value (an empty value removes it).
+function setManualInput(text: string, key: string, value: string): string {
+  const sections: Record<string, string> = {}
+  let cur = ''
+  for (const line of text.split('\n')) {
+    const head = line.match(/^## (\S+)\s*$/)
+    if (head) {
+      cur = head[1]
+      sections[cur] = ''
+    } else if (cur) sections[cur] += `${line}\n`
+  }
+  sections[key] = `${value.trim()}\n`
+
+  return INPUT_STAGES.filter(st => (sections[st.key] ?? '').trim())
+    .map(st => `## ${st.key}\n${sections[st.key].trim()}\n`)
+    .join('\n')
 }
 
 // Puts each answer on its "**Answer:**" line, in question order.
@@ -292,6 +318,13 @@ async function drainQueue($: EngineInterface, s: Snapshot) {
   const next = waiting[0]
   await update($, queue, q => q.filter(x => x !== next))
   await launch($, next, '')
+}
+
+// Saves the developer's text for one stage; the pipeline hands it to that stage's agent.
+async function saveManualInput($: EngineInterface, run: Run, key: string, value: string) {
+  const path = `${run.worktree}/Docs/backlog/${run.slug}/manual-inputs.md`
+  await $.fs.write(path, setManualInput((await readText($, path)) ?? '', key, value))
+  await update($, notice, () => `Input saved for ${key} of ${run.slug}.`)
 }
 
 async function submitAnswers($: EngineInterface, run: Run) {
@@ -686,6 +719,26 @@ export const register: Register = on => {
           {['specs-1.md', 'plan-1.md', 'test-cases-1.md', 'review-1.md'].map(f => `${run.files.includes(f) ? '✔' : '○'} ${f.replace('-1.md', '')}`).join('   ')}
           {impls ? `   ⟳ impl ×${impls}` : ''}
         </Text>
+
+        {canResume && (
+          <Box flexDirection="column" gap={1}>
+            <Text bold>Manual input per stage (type, press Enter to save; saving an empty line clears it)</Text>
+            {INPUT_STAGES.map(st => (
+              <Box key={`input-${st.key}`} gap={1} flexWrap="wrap">
+                <Text>{st.label}</Text>
+                <Input key={`in-${st.key}`} placeholder={`instructions for the ${st.label} agent`} onSubmit={value => saveManualInput($, run, st.key, value)} />
+                <Button
+                  key={`resume-at-${st.key}`}
+                  label={`Resume at ${st.label}`}
+                  onPress={async () => {
+                    await launch($, run.slug, st.key === 'spec' ? '' : st.key)
+                    await refresh($)
+                  }}
+                />
+              </Box>
+            ))}
+          </Box>
+        )}
 
         {run.state === 'paused' && run.questions.length > 0 && (
           <Box flexDirection="column" gap={1}>

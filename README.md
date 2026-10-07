@@ -82,6 +82,22 @@ Integration tests (`npm run test:integration`) are a required part of the pipeli
 
 CI skips them temporarily, with a visible warning. To enable them in CI, set the CI/CD variable `SDLC_INTEGRATION_CI=run` and provide `DATABASE_URL` (for example from a `postgres:16` service). No code change is needed.
 
+## SDLC pipeline: what the Ship stage commits
+
+At the start of a run (`FROM=spec`) `scripts/sdlc.sh` records every file that is already modified, staged or untracked in `Docs/backlog/<slug>/logs/baseline.json`. The Ship stage (`scripts/sdlc-ship.sh`) then commits exactly the files the cycle created, changed or deleted since that snapshot, anywhere in the repo, in one `feat(<slug>)` commit, and ticks the item in `Docs/backlog/index.md` in a second commit. Anything else the developer had staged is left staged.
+
+Skipped files are never committed; they are listed with the reason in `Docs/backlog/<slug>/logs/ship-skipped.md` and in the DONE message:
+
+| Reason | Files |
+|---|---|
+| `pre-existing local changes` | files that were already modified before the run and changed again |
+| `sensitive file` | `.env`, `.env.*` (not `.env.example`), `*.pem`, `*.key`, `*.p12`, `id_rsa*`, `*.keystore` |
+| `local or agent configuration` | `.vscode/`, `.idea/`, `.claude/` |
+| `generated` | `node_modules/`, `.DS_Store` |
+| `too large` | files over 1 MiB |
+
+Keys added to a git-ignored `.env` during the run are copied, with the placeholder value `change-me` (never the real value), into the sibling `.env.example`, which is committed. If nothing changed, Ship prints `WARNING: nothing to commit` and the run still succeeds. Resuming with any `FROM` other than `spec` reuses the existing baseline, or creates one with a warning (files changed before the resume then count as pre-existing).
+
 ## Interactive SDLC: control pane and parallel pipelines
 
 `scripts/sdlc-mod.sh` runs the normal pipeline (`scripts/sdlc.sh`, unchanged) for one backlog item in its **own git worktree**, so several items can run at once. Two Claude Code plugins in `.claude/plugins/` add the interface and the guard rails.
@@ -104,6 +120,7 @@ At most 2 pipelines run at once (`SDLC_MAX_PARALLEL`, exit code 3 when full). Ru
 - **Open a pipeline:** stage chips, progress bar, the current agent with elapsed time and attempt, test progress, artifacts and recent output.
 - **Paused for answers:** a toast appears, the row shows **Answer**, and the pipeline view lists each Spec question with its suggested answer. Press **Use suggested** or type your own, then **Submit answers and resume**.
 - **Interrupt:** **Stop** (press twice to confirm). A failed or interrupted pipeline offers **Resume** (from Implement if it got past Red tests).
+- **Manual input per stage:** a failed, interrupted or stopped pipeline shows one text box per agent stage (Spec, Plan, Red tests, Implement, Review) and a **Resume at <stage>** button. Press Enter to save the text; it goes into `Docs/backlog/<slug>/manual-inputs.md` under `## <stage>` and the pipeline hands it to that stage's agent as binding instructions (it cannot override the rule that the tests are locked). Resume points: `FROM=spec|plan|red-tests|implement|review ./scripts/sdlc.sh <slug>`; `plan` and `red-tests` refuse once the red-tests commit exists (restart the run to redo them); `review` resumes from the latest locked tests commit. The same file can be edited by hand.
 - **Discard and start over:** **Discard** (press twice to confirm) stops the pipeline if it is running and deletes its worktree and branch. The pane stays on the item and shows **Start** (and the command that brings the old branch back). **Start** runs it again from Spec, and the running pipeline shows **Stop** and **Discard** again. Discard is offered for any pipeline the wrapper started.
 
 **Guard (`sdlc-guard` plugin).** Loaded into every pipeline agent by the wrapper. It reads the current stage from `status.json` and refuses writes the stage does not allow: Spec and Plan write only that item's docs, Red tests write no source, Implement and Review never touch `server/__tests__`. It also refuses a doc written before the one it builds on.

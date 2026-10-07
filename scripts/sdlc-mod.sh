@@ -12,7 +12,7 @@
 #      SDLC_WT_BASE        folder holding the worktrees (default ../<repo>-sdlc)
 #      SDLC_PLUGIN_DIRS    plugin folders loaded in every agent (default .claude/plugins/sdlc-guard, if present)
 #      SDLC_ALLOW_MERGED   set to run an item again whose red-tests commit is already in the base branch (exit 5 otherwise)
-#      FROM=implement      passed through to sdlc.sh (resume after Spec, Plan and Red tests)
+#      FROM=spec|plan|red-tests|implement|review   passed through to sdlc.sh (resume at that stage)
 # Run state is kept in <git common dir>/sdlc-runs/<slug>.json, outside every worktree, so one place lists all runs.
 set -euo pipefail
 
