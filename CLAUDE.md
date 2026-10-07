@@ -46,6 +46,12 @@ ADMIN_TOKEN=secret
   3. Only then confirm with the AskUserQuestion tool, never with a free-text "accept?" line (headless agents cannot ask: you ask for them). One AskUserQuestion question per agent question, up to 4 per call (batch the rest into further calls), with the question's title as the header and these options: **Accept suggested** (put the suggested answer in the description), **Use my alternative** (only when your answer differs; put it in the description), and the automatic Other for the user's own text. This is in addition to steps 1 and 2, never a replacement: the full text must already be printed in the same reply.
   4. Write each choice on its `**Answer:**` line (`accept` for the suggestion, otherwise the chosen or typed text) and rerun.
 
+- Ship commits only the files changed during the cycle (compared with `Docs/backlog/<slug>/logs/baseline.json`) and lists the skipped ones in `Docs/backlog/<slug>/logs/ship-skipped.md`.
+
+## Git branch and push rule
+- Push SDLC work to its own branch `sdlc/<slug>` (not a `claude/...` branch).
+- If that branch name already exists on the remote and the push conflicts, push to `sdlc/<slug>-<n>` instead, where `<n>` is a 5-digit number starting with 1 that increments by one per conflict (`10001`, then `10002`, and so on).
+
 ## Graft
 Graft must be installed for the SDLC workflow (the Plan stage and `/plan` use it).
 - Before running `./scripts/sdlc.sh` or any SDLC stage, check `command -v graft` and `graft --version`.

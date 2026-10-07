@@ -6,7 +6,7 @@ Markers: [ ] pending, [x] completed, [!] blocked, [~] parked (skipped by `script
 
 - [x] `fix-stock-checks` - Block inventory transfers and sales when stock is insufficient
 - [x] `hide-internal-errors` - Return JSON instead of HTML stack traces for unhandled errors
-- [ ] `fix-ship-commit-scope` - Bug: Ship stage commits only server/ and docs; commit every relevant file the cycle changed
+- [x] `fix-ship-commit-scope` - Bug: Ship stage commits only server/ and docs; commit every relevant file the cycle changed
 - [ ] `add-db-health-check` - Feature: GET /health that checks the database connection
 - [x] `add-db-integration-tests` - Feature: integration tests against real Postgres, plus GitLab CI
 - [ ] `add-json-logging` - Feature: Logs all errors and warnings: readable console locally, Google Cloud Logging JSON in Kubernetes
