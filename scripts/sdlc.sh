@@ -12,6 +12,7 @@
 #        anywhere in the repo. Skipped: the developer's own earlier changes, secrets, .vscode/.idea/.claude, generated
 #        files and files over 1 MiB; they are listed in Docs/backlog/<slug>/logs/ship-skipped.md. Keys added to a
 #        git-ignored .env are copied (placeholder values) into .env.example. Nothing to commit is a warning, not a failure.
+#        Test repair re-runs UNCLAIMED failing tests once; a pass is a flaky test: WARNING, listed in $LOG/flaky-tests.md, not rejected.
 #        SDLC_INTEGRATION_CI=run  when CI is set the integration suite is skipped with a warning
 #        unless this is "run" (which also needs DATABASE_URL)
 set -euo pipefail
@@ -101,6 +102,19 @@ resume_hint() {
   fi
 }
 jest_json_now() { (cd server && npx jest --json --outputFile="$ROOT/$1" >/dev/null 2>&1) || true; }
+# retry_unclaimed: one-time re-run of the UNCLAIMED failing tests in now.json; merges flaky passes back into it.
+retry_unclaimed() {
+  local keys n=0 file pat
+  keys=$($CHECK unclaimed "$LOG/now.json" "$DOCS/test-issues.md") || return 1
+  [ -n "$keys" ] || return 0
+  rm -f "$LOG"/retry-*.json
+  printf '%s\n' "$keys" | $CHECK retry-plan | while IFS=$'\t' read -r file pat; do
+    n=$((n+1))
+    if [ -n "$pat" ]; then (cd server && npx jest "$file" -t "$pat" --json --outputFile="$ROOT/$LOG/retry-$n.json" >/dev/null 2>&1) || true
+    else (cd server && npx jest "$file" --json --outputFile="$ROOT/$LOG/retry-$n.json" >/dev/null 2>&1) || true; fi
+  done
+  $CHECK merge-retry "$LOG/now.json" "$DOCS/test-issues.md" "$LOG/flaky-tests.md" "$LOG"/retry-*.json
+}
 src_hash() { { git diff -- server ":!$TEST_DIR"; git status --porcelain -- server ":!$TEST_DIR"; } | shasum | cut -d' ' -f1; }
 
 git rev-parse --verify "$BRANCH" >/dev/null 2>&1 && git checkout -q "$BRANCH" || git checkout -q -b "$BRANCH"
@@ -230,6 +244,7 @@ if [ "$GREEN" -ne 1 ]; then
     exit 1
   }
   jest_json_now "$LOG/now.json"
+  retry_unclaimed
   if [ "$FROM_N" -eq 5 ]; then
     # FROM=test-repair: fail early, before any agent runs and before anything is restored.
     $CHECK precheck "$LOG/now.json" "$DOCS/test-issues.md" "$MAX_REPAIR_TESTS" 2> "$LOG/precheck.err" \

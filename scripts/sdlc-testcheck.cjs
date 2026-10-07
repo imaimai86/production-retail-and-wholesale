@@ -5,6 +5,9 @@
 //   namecheck <red.json> <now.json>                every test that existed at red still exists
 //   redcheck  <red.json> <repaired-on-red.json>    every test that failed at red still fails on red source
 //   claimed   <test-issues.md>                     print claimed test keys
+//   unclaimed <now.json> <test-issues.md>          print failing test keys that are not claimed
+//   retry-plan                                     stdin: keys; print "<file>\t<jest -t pattern>" per file (empty pattern = whole file)
+//   merge-retry <now.json> <test-issues.md> <flaky-tests.md> <retry.json>...   unclaimed failures that passed on re-run become passed
 //   resumecheck <red_sha> <test-issues.md> <slug>  preconditions for FROM=test-repair (read-only; empty red_sha = no commit)
 const fs = require('fs');
 const path = require('path');
@@ -14,18 +17,27 @@ const TEST_DIR = 'server/__tests__';
 const rel = p => p.replace(/\\/g, '/').replace(/^.*?(server\/__tests__\/)/, '$1').replace(/^server\//, '');
 const fail = msgs => { console.error(msgs.map(m => 'REJECT: ' + m).join('\n')); process.exit(1); };
 
-function results(jsonFile) {
-  const j = JSON.parse(fs.readFileSync(jsonFile, 'utf8'));
-  const all = new Set(), failed = new Set();
+const fileOf = f => rel(path.relative(path.join(process.cwd(), 'server'), f.name) || f.name);
+const readJson = file => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
+
+function collect(j) {
+  const all = new Set(), failed = new Set(), passed = new Set(), passedFiles = new Set();
   for (const f of j.testResults) {
-    const file = rel(path.relative(path.join(process.cwd(), 'server'), f.name) || f.name);
+    const file = fileOf(f);
+    if (f.status === 'passed') passedFiles.add(file);
     if (!f.assertionResults.length && f.status === 'failed') failed.add(`${file}::<suite failed to run>`);
     for (const a of f.assertionResults) {
       const key = `${file}::${norm(a.fullName)}`;
       all.add(key);
       if (a.status === 'failed') failed.add(key);
+      if (a.status === 'passed') passed.add(key);
     }
   }
+  return { all, failed, passed, passedFiles };
+}
+
+function results(jsonFile) {
+  const { all, failed } = collect(JSON.parse(fs.readFileSync(jsonFile, 'utf8')));
   return { all, failed };
 }
 
@@ -46,8 +58,47 @@ const SKIP = /\.(skip|only|todo)\(|\b(xit|xtest|xdescribe|fit|fdescribe)\(/g;
 
 const [, , cmd, a, b, c] = process.argv;
 
+const usage = msg => { console.error('usage: sdlc-testcheck.cjs ' + msg); process.exit(1); };
+const escapeRe = n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const retrySet = (nowJson, issuesFile) => {
+  const claimed = new Set(claims(issuesFile).map(x => x.key));
+  return [...results(nowJson).failed].filter(k => !claimed.has(k));
+};
+
 if (cmd === 'claimed') {
   claims(a).forEach(x => console.log(x.key));
+} else if (cmd === 'unclaimed') {
+  if (!a || !b) usage('unclaimed <now.json> <test-issues.md>');
+  retrySet(a, b).forEach(k => console.log(k));
+} else if (cmd === 'retry-plan') {
+  const byFile = new Map();
+  for (const key of fs.readFileSync(0, 'utf8').split('\n').filter(Boolean)) {
+    const i = key.indexOf('::'), file = key.slice(0, i), name = key.slice(i + 2);
+    if (!byFile.has(file)) byFile.set(file, []);
+    byFile.get(file).push(name);
+  }
+  for (const [file, names] of byFile) {
+    const pat = names.includes('<suite failed to run>') ? '' : '^(?:' + names.map(escapeRe).join('|') + ')$';
+    console.log(`${file}\t${pat}`);
+  }
+} else if (cmd === 'merge-retry') {
+  if (!a || !b || !c) usage('merge-retry <now.json> <test-issues.md> <flaky-tests.md> <retry.json>...');
+  const keys = retrySet(a, b);
+  const reruns = process.argv.slice(6).map(readJson).filter(j => j && Array.isArray(j.testResults)).map(collect);
+  const flaky = keys.filter(k => k.endsWith('::<suite failed to run>')
+    ? reruns.some(r => r.passedFiles.has(k.slice(0, k.lastIndexOf('::'))))
+    : reruns.some(r => r.passed.has(k)) && !reruns.some(r => r.failed.has(k)));
+  if (flaky.length) {
+    const set = new Set(flaky), j = JSON.parse(fs.readFileSync(a, 'utf8'));
+    for (const f of j.testResults) {
+      const file = fileOf(f);
+      if (set.has(`${file}::<suite failed to run>`)) f.status = 'passed';
+      for (const t of f.assertionResults) if (set.has(`${file}::${norm(t.fullName)}`)) t.status = 'passed';
+    }
+    fs.writeFileSync(a, JSON.stringify(j));
+    fs.appendFileSync(c, flaky.map(k => `${k} :: first run: failed :: re-run: passed\n`).join(''));
+    flaky.forEach(k => console.log('WARNING: flaky test passed on re-run, not rejected: ' + k));
+  }
 } else if (cmd === 'precheck') {
   const max = Number(c || 3), cl = claims(b), { all, failed } = results(a), errs = [];
   const keys = new Set(cl.map(x => x.key));
@@ -104,6 +155,6 @@ if (cmd === 'claimed') {
   }
   if (errs.length) fail(errs);
 } else {
-  console.error('usage: sdlc-testcheck.cjs precheck|diffcheck|namecheck|redcheck|claimed|resumecheck ...');
+  console.error('usage: sdlc-testcheck.cjs precheck|diffcheck|namecheck|redcheck|claimed|unclaimed|retry-plan|merge-retry|resumecheck ...');
   process.exit(1);
 }
