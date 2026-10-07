@@ -34,7 +34,7 @@ ADMIN_TOKEN=secret
 ## SDLC pipeline
 - Refer to SDLC stages by name (Spec, Plan, Red tests, Implement, Review, Ship), never by number.
 - The pipeline runs the integration suite after the unit tests. CI skips it temporarily with a warning; set the CI/CD variable `SDLC_INTEGRATION_CI=run` and provide `DATABASE_URL` to enable it. There is no opt-out switch for local runs.
-- Ship commits only the files changed during the cycle (compared with `Docs/backlog/<slug>/logs/baseline.json`) and lists the skipped ones in `Docs/backlog/<slug>/logs/ship-skipped.md`. A changed `.env` is never committed; its `.env.example` is regenerated with every value masked as `<value>`.
+- Ship commits only the files changed during the cycle (compared with `Docs/backlog/<slug>/logs/baseline.json`) and lists the skipped ones in `Docs/backlog/<slug>/logs/ship-skipped.md`. A changed `.env` is never committed; new keys in it are appended to `.env.example` as `KEY=<value>` (existing lines and comments untouched).
 - **MANDATORY, never optional: show the monitor command.** A run is active from the moment you start or resume `./scripts/sdlc.sh` (or hand work to a background agent or task) until its completion notice arrives. During that whole time, EVERY reply to the user must contain the monitor command in a code block: when you start or resume it, when you report progress, and in any other reply (answers to unrelated questions, other edits, questions to the user). Do not wait to be asked. Put it at the end of the reply, with the slug filled in:
   ```bash
   watch -n3 'cat Docs/backlog/<slug>/logs/status.json; git status --short | head -15'

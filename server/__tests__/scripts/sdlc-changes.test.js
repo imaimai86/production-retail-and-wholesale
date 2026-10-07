@@ -170,18 +170,38 @@ describe('scripts/sdlc-changes.cjs', () => {
       expect(changed(root, base).mirror).toEqual([]);
     });
 
-    test('mask replaces every value with <value> and keeps comments, blanks and lines without =', () => {
-      const root = mkRepo();
-      write(root, '.env', '# comment\nABC=xyz\n\nexport TOKEN="s3cr3t"\nURL=postgres://u:p@h:5432/db\nEMPTY=\n  SPACED = v\nnot a pair\n');
-      const r = run(root, 'mask', path.join(root, '.env'), path.join(root, '.env.example'));
+    const merge = (root, env, example) => {
+      write(root, '.env', env);
+      if (example !== null) write(root, '.env.example', example);
+      const r = run(root, 'merge', path.join(root, '.env'), path.join(root, '.env.example'));
       expect(r.status).toBe(0);
-      const out = fs.readFileSync(path.join(root, '.env.example'), 'utf8');
-      expect(out).toBe('# comment\nABC=<value>\n\nexport TOKEN=<value>\nURL=<value>\nEMPTY=<value>\n  SPACED =<value>\nnot a pair\n');
-      for (const secret of ['xyz', 's3cr3t', 'postgres://']) expect(out).not.toContain(secret);
+      return fs.existsSync(path.join(root, '.env.example')) ? fs.readFileSync(path.join(root, '.env.example'), 'utf8') : null;
+    };
+
+    test('merge appends only the keys the example lacks, as KEY=<value>, and keeps the example untouched', () => {
+      const example = '# my notes\nPORT=3000\n\n# keep this\nexport TOKEN=<value>\n';
+      const out = merge(mkRepo(), 'PORT=9999\nTOKEN=s3cr3t\nNEW_KEY=abc\nexport OTHER = x\nURL=postgres://u:p@h/db\n', example);
+      expect(out).toBe(`${example}NEW_KEY=<value>\nOTHER=<value>\nURL=<value>\n`);
+      expect(out).not.toMatch(/s3cr3t|abc|postgres|9999/);
     });
 
-    test('mask without both file arguments exits 2', () => {
-      expect(run(mkRepo(), 'mask', 'only-one').status).toBe(2);
+    test('merge never copies comments or values from the .env', () => {
+      expect(merge(mkRepo(), '# password is hunter2\nNEW=1\n', 'A=<value>\n')).toBe('A=<value>\nNEW=<value>\n');
+    });
+
+    test('merge adds a missing final newline before appending and creates a missing example', () => {
+      expect(merge(mkRepo(), 'B=1\n', 'A=<value>')).toBe('A=<value>\nB=<value>\n');
+      expect(merge(mkRepo(), 'A=1\n# c\nA=2\nB=\n', null)).toBe('A=<value>\nB=<value>\n');
+    });
+
+    test('merge leaves the example byte for byte alone when nothing is new, and creates none for an empty .env', () => {
+      const example = '# x\r\nA=<value>\r\nno newline';
+      expect(merge(mkRepo(), 'A=1\n', example)).toBe(example);
+      expect(merge(mkRepo(), '# only a comment\n', null)).toBeNull();
+    });
+
+    test('merge without both file arguments exits 2', () => {
+      expect(run(mkRepo(), 'merge', 'only-one').status).toBe(2);
     });
   });
 });

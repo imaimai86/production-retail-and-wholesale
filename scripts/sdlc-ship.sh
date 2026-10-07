@@ -19,11 +19,11 @@ node "$HERE/sdlc-changes.cjs" changed "$BASELINE" > "$CHANGES"
 INCLUDE=()
 while IFS= read -r -d '' p; do INCLUDE+=("$p"); done < <(node -e '
   for (const p of JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).include) process.stdout.write(p + "\0");' "$CHANGES")
-# Each .env the cycle changed is mirrored to its .env.example with every value masked as <value>.
+# Keys the cycle added to a .env are appended to its .env.example as KEY=<value>; nothing else in the example changes.
 while IFS= read -r -d '' pair; do
   from="${pair%%$'\t'*}"; to="${pair#*$'\t'}"
-  node "$HERE/sdlc-changes.cjs" mask "$from" "$to" || fail "could not write $to from $from"
-  INCLUDE+=("$to")
+  node "$HERE/sdlc-changes.cjs" merge "$from" "$to" || fail "could not update $to from $from"
+  [ -z "$(git status --porcelain -- "$to")" ] || INCLUDE+=("$to")
 done < <(node -e '
   for (const m of JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).mirror || []) process.stdout.write(m.from + "\t" + m.to + "\0");' "$CHANGES")
 SKIPPED_MD="$(node -e '

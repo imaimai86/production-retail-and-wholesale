@@ -2,16 +2,16 @@
 // Tells the SDLC Ship stage which files the cycle changed. Read-only.
 //   node scripts/sdlc-changes.cjs snapshot <baseline.json>
 //   node scripts/sdlc-changes.cjs changed  <baseline.json>   -> { include: [...], skipped: [{path, reason}], mirror: [{from, to}] }
-//   node scripts/sdlc-changes.cjs mask <env-file> <example-file>   writes the file with every value replaced by <value>
-// `mirror` lists each `.env` the cycle changed (never committed) with the sibling `.env.example` to write
-// from it; it leaves out a `.env.example` the developer already had modified or the cycle itself changed.
+//   node scripts/sdlc-changes.cjs merge <env-file> <example-file>   appends KEY=<value> to the example for each key it lacks
+// `mirror` lists each `.env` the cycle changed (never committed) with the sibling `.env.example` to merge
+// its new keys into; it leaves out a `.env.example` the developer already had modified or the cycle itself changed.
 // A snapshot maps every path `git status` reports (modified, deleted, untracked, staged) to a content
 // hash (null when deleted). `changed` compares the working tree with it. Exit 0 = ok, 1 = error, 2 = usage.
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
-const USAGE = 'Usage: sdlc-changes snapshot|changed <baseline.json> | mask <env-file> <example-file>';
+const USAGE = 'Usage: sdlc-changes snapshot|changed <baseline.json> | merge <env-file> <example-file>';
 const MAX_BYTES = 1024 * 1024;
 
 const git = (args, opts = {}) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 1 << 28, ...opts });
@@ -58,19 +58,29 @@ function skipReason(file, top) {
   return null;
 }
 
-// KEY=value -> KEY=<value>; comments, blank lines and lines without "=" are kept as they are.
-function maskEnv(text) {
-  return text.split('\n').map(line => {
-    const m = line.match(/^(\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_.-]*\s*=)/);
-    return m ? `${m[1]}<value>` : line;
-  }).join('\n');
+const ENV_KEY = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_.-]*)\s*=/;
+const envKeys = text => text.split('\n').map(l => (l.match(ENV_KEY) || [])[1]).filter(Boolean);
+
+// Appends KEY=<value> for every key in envText that exampleText lacks. Existing lines, comments and
+// order are kept as they are; values and comments from the .env are never copied. Returns null if nothing is new.
+function mergeEnvExample(envText, exampleText) {
+  const known = new Set(envKeys(exampleText));
+  const added = [];
+  for (const key of envKeys(envText)) {
+    if (!known.has(key)) { known.add(key); added.push(`${key}=<value>`); }
+  }
+  if (!added.length) return null;
+  const sep = exampleText === '' || exampleText.endsWith('\n') ? '' : '\n';
+  return `${exampleText}${sep}${added.join('\n')}\n`;
 }
 
 function main(argv) {
   const [cmd, baselineFile, exampleFile] = argv;
-  if (cmd === 'mask') {
+  if (cmd === 'merge') {
     if (!baselineFile || !exampleFile) { console.error(USAGE); return 2; }
-    fs.writeFileSync(exampleFile, maskEnv(fs.readFileSync(baselineFile, 'utf8')));
+    const current = fs.existsSync(exampleFile) ? fs.readFileSync(exampleFile, 'utf8') : '';
+    const merged = mergeEnvExample(fs.readFileSync(baselineFile, 'utf8'), current);
+    if (merged !== null) fs.writeFileSync(exampleFile, merged);
     return 0;
   }
   if (!['snapshot', 'changed'].includes(cmd) || !baselineFile) {

@@ -91,7 +91,7 @@ Before the Spec stage, `scripts/sdlc.sh` snapshots every uncommitted path with a
 - editor and agent configuration: `.vscode/`, `.idea/`, `.claude/`;
 - `node_modules/`, `.DS_Store`, and files over 1 MiB.
 
-A `.env` the cycle changed is never committed, but its sibling `.env.example` is written from it with every value replaced by `<value>` (`ABC=xyz` becomes `ABC=<value>`; comments and blank lines are kept) and committed. This is skipped when you had already modified that `.env.example`, or the cycle changed it itself. Anything you had staged beforehand stays staged. Skipped files and their reasons are written to `Docs/backlog/<slug>/logs/ship-skipped.md` and printed. If nothing changed, Ship prints `WARNING: nothing to commit` and still finishes successfully.
+A `.env` the cycle changed is never committed, but each key it holds that the sibling `.env.example` lacks is appended there as `KEY=<value>` and committed. Existing lines, comments and order in `.env.example` are never changed, and neither values nor comments are copied from `.env`. Nothing is written when there are no new keys, or when you had already modified that `.env.example`, or the cycle changed it itself. Anything you had staged beforehand stays staged. Skipped files and their reasons are written to `Docs/backlog/<slug>/logs/ship-skipped.md` and printed. If nothing changed, Ship prints `WARNING: nothing to commit` and still finishes successfully.
 
 ## Interactive SDLC: control pane and parallel pipelines
 
