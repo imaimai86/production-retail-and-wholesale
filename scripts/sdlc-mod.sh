@@ -7,6 +7,7 @@
 #                                                         exit 6; a running pipeline is refused unless --stop stops it first)
 #   scripts/sdlc-mod.sh restart <slug> [--yes]   stop it if running, discard it, and start again from Spec
 #   scripts/sdlc-mod.sh status         one line per known run
+#   scripts/sdlc-mod.sh changes <slug> [--json]   files changed in the pipeline's worktree: "<changed> <uncommitted>" (--json adds the file list)
 #   scripts/sdlc-mod.sh watch <slug> [--once]   live view of one pipeline: its status.json line, run state, uncommitted files and the
 #                                               tail of run.out, read from its worktree (or the current directory for a run started
 #                                               in place). Refreshes every WATCH_INTERVAL seconds (default 3); --once prints one frame.
@@ -28,7 +29,7 @@ MAX_PARALLEL="${SDLC_MAX_PARALLEL:-2}"
 WT_BASE="${SDLC_WT_BASE:-$(dirname "$ROOT")/$(basename "$ROOT")-sdlc}"
 
 now() { date +%Y-%m-%dT%H:%M:%S; }
-usage() { echo "Usage: $0 run <slug> | stop <slug> | discard <slug> [--yes] [--stop] | restart <slug> [--yes] | status | watch <slug> [--once]" >&2; exit 2; }
+usage() { echo "Usage: $0 run <slug> | stop <slug> | discard <slug> [--yes] [--stop] | restart <slug> [--yes] | status | changes <slug> [--json] | watch <slug> [--once]" >&2; exit 2; }
 check_slug() { [[ "${1:-}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "Invalid slug '${1:-}': lowercase letters, digits and dashes only" >&2; exit 2; }; }
 json_get() { node -e 'try{const v=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))[process.argv[2]];process.stdout.write(v===undefined||v===null?"":String(v))}catch(e){}' "$1" "$2"; }
 # kill -0 also succeeds on a zombie (a process that has exited but whose parent has not collected it): that is not alive.
@@ -274,12 +275,57 @@ cmd_watch() {
   done
 }
 
+# changes <slug> [--json]: files the pipeline changed, counted in its own worktree (committed since the merge-base, plus uncommitted).
+cmd_changes() {
+  local slug="" json=0 a f wt base mb tc ts
+  for a in "$@"; do
+    case "$a" in
+      --json) [ "$json" -eq 0 ] || usage; json=1 ;;
+      -*) usage ;;
+      *) [ -z "$slug" ] || usage; slug="$a" ;;
+    esac
+  done
+  [ -n "$slug" ] || usage
+  check_slug "$slug"
+  f="$REG/$slug.json"
+  wt="$(json_get "$f" worktree 2>/dev/null || true)"
+  if [ -z "$wt" ] || [ ! -d "$wt" ]; then wt="$WT_BASE/$slug"; fi
+  if [ ! -d "$wt" ]; then
+    if [ -f "$f" ]; then echo "Worktree for $slug is gone" >&2; else echo "No pipeline for $slug" >&2; fi
+    exit 1
+  fi
+  base="$(json_get "$f" base 2>/dev/null || true)"
+  [ -n "$base" ] || base="$(pick_base)"
+  tc="$(mktemp)"; ts="$(mktemp)"
+  mb="$(git -C "$wt" merge-base HEAD "$base" 2>/dev/null || true)"
+  if [ -n "$mb" ]; then git -C "$wt" diff --name-only -z "$mb"..HEAD > "$tc" 2>/dev/null || true; fi
+  git -C "$wt" status --porcelain -z --untracked-files=all > "$ts" 2>/dev/null || true
+  node -e '
+    const fs = require("fs");
+    const [slug, wt, json, tc, ts] = process.argv.slice(1);
+    const set = new Set(fs.readFileSync(tc, "utf8").split("\0").filter(Boolean));
+    const st = fs.readFileSync(ts, "utf8").split("\0").filter(Boolean);
+    let m = 0;
+    for (let i = 0; i < st.length; i++) {
+      const code = st[i].slice(0, 2);
+      set.add(st[i].slice(3));
+      m++;
+      if (code[0] === "R" || code[0] === "C" || code[1] === "R" || code[1] === "C") i++;
+    }
+    const files = [...set].sort();
+    if (json === "1") process.stdout.write(JSON.stringify({ slug, worktree: wt, changed: files.length, uncommitted: m, files: files.slice(0, 50) }) + "\n");
+    else process.stdout.write(files.length + " " + m + "\n");
+  ' "$slug" "$wt" "$json" "$tc" "$ts" || { rm -f "$tc" "$ts"; exit 1; }
+  rm -f "$tc" "$ts"
+}
+
 case "${1:-}" in
   run)    [ $# -eq 2 ] || usage; cmd_run "$2" ;;
   stop)   [ $# -eq 2 ] || usage; cmd_stop "$2" ;;
   discard) [ $# -ge 2 ] || usage; slug="$2"; shift 2; cmd_discard "$slug" "$@" ;;
   restart) { [ $# -eq 2 ] || [ $# -eq 3 ]; } || usage; cmd_restart "$2" "${3:-}" ;;
   status) cmd_status ;;
+  changes) { [ $# -eq 2 ] || [ $# -eq 3 ]; } || usage; shift; cmd_changes "$@" ;;
   watch)  { [ $# -eq 2 ] || [ $# -eq 3 ]; } || usage; cmd_watch "$2" "${3:-}" ;;
   *)      usage ;;
 esac
