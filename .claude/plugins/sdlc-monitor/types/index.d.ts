@@ -21,6 +21,10 @@ export type Run = {
   managed: boolean
   // why the wrapper refused to start it (already merged, cap reached, no brief)
   message: string
+  // files changed in the pipeline's own worktree (sdlc-mod.sh changes); null when unavailable (unmanaged, discarded, call failed)
+  changes: { changed: number; uncommitted: number } | null
+  // the base branch from the run record, '' when it has none
+  base: string
 }
 
 export type PendingItem = { slug: string; type: string; priority: string; title: string }

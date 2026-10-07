@@ -107,6 +107,7 @@ bash scripts/sdlc-mod.sh run <slug>     # start or resume; worktree at ../<repo>
 bash scripts/sdlc-mod.sh stop <slug>    # interrupt the pipeline and everything it started
 bash scripts/sdlc-mod.sh status         # one line per run
 bash scripts/sdlc-mod.sh watch <slug>    # live view of one pipeline, read from its worktree (--once prints one frame; WATCH_INTERVAL seconds, default 3)
+bash scripts/sdlc-mod.sh changes <slug> [--json]   # files changed in the pipeline's worktree: "<changed> <uncommitted>"
 bash scripts/sdlc-mod.sh discard <slug> [--yes] [--stop]   # delete its worktree, branch and run record (without --yes: show what would go, exit 6)
 bash scripts/sdlc-mod.sh restart <slug> [--yes]   # stop it if running, discard it, start again from Spec
 ```
@@ -117,7 +118,7 @@ At most 2 pipelines run at once (`SDLC_MAX_PARALLEL`, exit code 3 when full). Ru
 
 **Control pane (`sdlc-monitor` plugin).** Start Claude with `claude --plugin-dir .claude/plugins/sdlc-monitor`, then press the **SDLC** button above the prompt or type `/sdlc-monitor`.
 
-- **Overview:** the pending backlog items with checkboxes, a **Run selected** button (extra items wait in a queue until a slot frees), and one row per pipeline with its state: running, paused, done, failed, interrupted.
+- **Overview:** the pending backlog items with checkboxes, a **Run selected** button (extra items wait in a queue until a slot frees), and one row per pipeline with its state: running, paused, done, failed, interrupted. Each row ends with how many files the pipeline has changed (`N files changed (M uncommitted)`, or `no changes yet` while running); the pipeline view shows the same in a `Files` line. Counts refresh with the pane, and every 10 s for finished pipelines.
 - **Open a pipeline:** stage chips, progress bar, the current agent with elapsed time and attempt, test progress, artifacts and recent output.
 - **Paused for answers:** a toast appears, the row shows **Answer**, and the pipeline view lists each Spec question with its suggested answer. Press **Use suggested** or type your own, then **Submit answers and resume**.
 - **Interrupt:** **Stop** (press twice to confirm). A failed or interrupted pipeline offers **Resume** (from Implement if it got past Red tests).

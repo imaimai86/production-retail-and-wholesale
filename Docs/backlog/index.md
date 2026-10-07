@@ -14,7 +14,7 @@ Markers: [ ] pending, [x] completed, [!] blocked, [~] parked (skipped by `script
 - [x] `fix-user-validation-v2` - Bug: POST /users returns 500 when name is missing; validate and fix the docs (v2: deliberately vaguer brief, for the clarifying-questions demo)
 - [ ] `warn-missing-env-config` - Feature: warn at startup when the repo-root .env is missing or ADMIN_TOKEN is not set
 - [ ] `add-base-branch-dropdown` - Feature: choose the base branch for each SDLC task from a dropdown, default main
-- [ ] `add-pipeline-change-counts` - Feature: show how many files each pipeline changed, counted in its own worktree
+- [x] `add-pipeline-change-counts` - Feature: show how many files each pipeline changed, counted in its own worktree
 - [x] `fix-monitor-worktree-path` - Bug: the documented monitor command reads the main tree, not the pipeline's worktree
 - [ ] `retry-unclaimed-failing-test` - Feature: Test repair re-runs unclaimed failing tests once before rejecting, to filter flaky tests
 - [x] `add-test-repair-resume` - Feature: FROM=test-repair resume point that checks Test repair preconditions (claim file, red commit, tests unchanged) first
