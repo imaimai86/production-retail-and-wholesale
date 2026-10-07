@@ -82,6 +82,22 @@ Integration tests (`npm run test:integration`) are a required part of the pipeli
 
 CI skips them temporarily, with a visible warning. To enable them in CI, set the CI/CD variable `SDLC_INTEGRATION_CI=run` and provide `DATABASE_URL` (for example from a `postgres:16` service). No code change is needed.
 
+## SDLC pipeline: what the Ship stage commits
+
+At the start of a run (`FROM=spec`) `scripts/sdlc.sh` records every file that is already modified, staged or untracked in `Docs/backlog/<slug>/logs/baseline.json`. The Ship stage (`scripts/sdlc-ship.sh`) then commits exactly the files the cycle created, changed or deleted since that snapshot, anywhere in the repo, in one `feat(<slug>)` commit, and ticks the item in `Docs/backlog/index.md` in a second commit. Anything else the developer had staged is left staged.
+
+Skipped files are never committed; they are listed with the reason in `Docs/backlog/<slug>/logs/ship-skipped.md` and in the DONE message:
+
+| Reason | Files |
+|---|---|
+| `pre-existing local changes` | files that were already modified before the run and changed again |
+| `sensitive file` | `.env`, `.env.*` (not `.env.example`), `*.pem`, `*.key`, `*.p12`, `id_rsa*`, `*.keystore` |
+| `local or agent configuration` | `.vscode/`, `.idea/`, `.claude/` |
+| `generated` | `node_modules/`, `.DS_Store` |
+| `too large` | files over 1 MiB |
+
+Keys added to a git-ignored `.env` during the run are copied, with the placeholder value `change-me` (never the real value), into the sibling `.env.example`, which is committed. If nothing changed, Ship prints `WARNING: nothing to commit` and the run still succeeds. Resuming with any `FROM` other than `spec` reuses the existing baseline, or creates one with a warning (files changed before the resume then count as pre-existing).
+
 ## Interactive SDLC: control pane and parallel pipelines
 
 `scripts/sdlc-mod.sh` runs the normal pipeline (`scripts/sdlc.sh`, unchanged) for one backlog item in its **own git worktree**, so several items can run at once. Two Claude Code plugins in `.claude/plugins/` add the interface and the guard rails.
