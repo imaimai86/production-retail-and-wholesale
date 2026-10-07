@@ -12,7 +12,7 @@ Node.js/Express backend for production, sales and inventory management, used by 
 | `npm test` | Run the Jest tests (in `server/`). Run it from the repo root before committing. |
 | `./install.sh` | Install dependencies, apply database migrations (if `DATABASE_URL` is set) and start the server. |
 | `./scripts/sdlc.sh [slug]` | Run the automated SDLC pipeline for a backlog item. |
-| `bash scripts/sdlc-mod.sh run\|stop\|restart\|discard\|status [slug]` | Run the SDLC pipeline for a backlog item in its own worktree (up to 2 at once), stop it, or `restart` it from scratch (`discard` deletes its worktree and branch; both need `--yes`, and the branch tip is saved first). Control pane: `claude --plugin-dir .claude/plugins/sdlc-monitor`, then `/sdlc-monitor`. |
+| `bash scripts/sdlc-mod.sh run\|stop\|restart\|discard\|status\|watch [slug]` | Run the SDLC pipeline for a backlog item in its own worktree (up to 2 at once), stop it, or `restart` it from scratch (`discard` deletes its worktree and branch; both need `--yes`, and the branch tip is saved first). Control pane: `claude --plugin-dir .claude/plugins/sdlc-monitor`, then `/sdlc-monitor`. |
 | `bash scripts/sdlc-integration.sh` | Run the integration suite as the SDLC does (`DATABASE_URL` from the shell or repo-root `.env`, else Docker). |
 | `/backlog-list [status]` or `npm run backlog -- [status]` | List the backlog, optionally filtered by status. |
 
@@ -36,9 +36,9 @@ ADMIN_TOKEN=secret
 - The pipeline runs the integration suite after the unit tests. CI skips it temporarily with a warning; set the CI/CD variable `SDLC_INTEGRATION_CI=run` and provide `DATABASE_URL` to enable it. There is no opt-out switch for local runs.
 - **MANDATORY, never optional: show the monitor command.** A run is active from the moment you start or resume `./scripts/sdlc.sh` (or hand work to a background agent or task) until its completion notice arrives. During that whole time, EVERY reply to the user must contain the monitor command in a code block: when you start or resume it, when you report progress, and in any other reply (answers to unrelated questions, other edits, questions to the user). Do not wait to be asked. Put it at the end of the reply, with the slug filled in:
   ```bash
-  watch -n3 'cat Docs/backlog/<slug>/logs/status.json; git status --short | head -15'
+  bash scripts/sdlc-mod.sh watch <slug>
   ```
-  `status.json` is the single-line live status. The run output is `Docs/backlog/<slug>/logs/run*.out`.
+  The command finds the pipeline's directory itself (its worktree when started through `scripts/sdlc-mod.sh` or the pane, the current directory otherwise) and prints the `status.json` line, the run state, the uncommitted files and the last lines of `run.out`. In a worktree run, `Docs/backlog/<slug>/logs/status.json` and `run*.out` live in that worktree, not in the main tree.
 - Before sending any reply, check whether a run is still active (the background task has not reported completion). If it is, the reply is incomplete without the monitor command.
 - **MANDATORY: show the answers, then confirm with AskUserQuestion.** When a run pauses on Spec questions (exit code 2, `Docs/backlog/<slug>/questions.md`), or a Plan agent reports open questions, do these in order:
   1. Print EVERY question in the reply with its full, verbatim `**Suggested:**` answer and why it matters. A summary, a shortened table, or "accept all three suggested answers?" without the answers on screen is not allowed.

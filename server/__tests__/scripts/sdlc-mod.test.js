@@ -385,3 +385,93 @@ describe('sdlc-mod.sh discard and restart', () => {
     expect(mod(['restart']).status).toBe(2);
   });
 });
+
+describe('sdlc-mod.sh watch', () => {
+  const wtOf = slug => path.join(fs.realpathSync(wts), slug);
+  const writeStatus = (dir, slug, text) => {
+    fs.mkdirSync(path.join(dir, 'Docs/backlog', slug, 'logs'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'Docs/backlog', slug, 'logs/status.json'), text + '\n');
+  };
+
+  test('a wrapper run shows the worktree status.json and files, not the main tree', () => {
+    mod(['run', 'alpha']);
+    const wt = wtOf('alpha');
+    writeStatus(wt, 'alpha', '{"slug":"alpha","stage":"Red tests"}');
+    fs.writeFileSync(path.join(wt, 'in-worktree.txt'), 'x');
+    fs.writeFileSync(path.join(repo, 'in-main-tree.txt'), 'x');
+    const r = mod(['watch', 'alpha', '--once']);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('{"slug":"alpha","stage":"Red tests"}');
+    expect(r.stdout).toContain('in-worktree.txt');
+    expect(r.stdout).not.toContain('in-main-tree.txt');
+    expect(r.stdout).not.toContain('No such file');
+  });
+
+  test('it shows the last 5 lines of run.out', () => {
+    mod(['run', 'alpha']);
+    const wt = wtOf('alpha');
+    fs.writeFileSync(path.join(wt, 'Docs/backlog/alpha/logs/run.out'), Array.from({ length: 9 }, (_, i) => `line${i + 1}`).join('\n') + '\n');
+    const out = mod(['watch', 'alpha', '--once']).stdout;
+    expect(out).toContain('line9');
+    expect(out).toContain('line5');
+    expect(out).not.toContain('line4');
+  });
+
+  test('a run started in place falls back to the current directory', () => {
+    writeStatus(repo, 'alpha', '{"slug":"alpha","state":"running"}');
+    const r = mod(['watch', 'alpha', '--once']);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('{"slug":"alpha","state":"running"}');
+  });
+
+  test('an unknown slug exits 1 with a message', () => {
+    const r = mod(['watch', 'alpha', '--once']);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('No pipeline for alpha');
+  });
+
+  test('a finished run says so on its own line', () => {
+    mod(['run', 'alpha']);
+    expect(mod(['watch', 'alpha', '--once']).stdout).toContain('run: finished, exit code 0');
+  });
+
+  test('a stopped run says so, and an interrupted one says interrupted', async () => {
+    const child = modAsync(['run', 'slow-one']);
+    await until(() => fs.existsSync(path.join(wts, 'slow-one/sleep.pid')));
+    expect(mod(['watch', 'slow-one', '--once']).stdout).not.toMatch(/^run: /m);
+    // the wrapper dies without finishing: the record still says running, the pid is gone
+    process.kill(child.pid, 'SIGKILL');
+    await until(() => !alive(child.pid));
+    expect(mod(['watch', 'slow-one', '--once']).stdout).toContain('run: process has gone');
+    const f = path.join(repo, '.git/sdlc-runs/slow-one.json');
+    fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace('"interrupted":false', '"interrupted":true'));
+    expect(mod(['watch', 'slow-one', '--once']).stdout).toContain('run: interrupted');
+  });
+
+  test('WATCH_INTERVAL is validated: a bad value exits 2, a good one works', () => {
+    mod(['run', 'alpha']);
+    for (const bad of ['abc', '0', '-1', '']) {
+      const r = mod(['watch', 'alpha', '--once'], { WATCH_INTERVAL: bad });
+      if (bad === '') { expect(r.status).toBe(0); continue; }
+      expect(r.status).toBe(2);
+      expect(r.stderr).toContain('WATCH_INTERVAL');
+    }
+    expect(mod(['watch', 'alpha', '--once'], { WATCH_INTERVAL: '0.5' }).status).toBe(0);
+  });
+
+  test('without --once it loops and refreshes until it is killed', async () => {
+    mod(['run', 'alpha']);
+    const out = path.join(tmp, 'watch.out');
+    const fd = fs.openSync(out, 'w');
+    const child = spawn('bash', [path.join(repo, 'scripts/sdlc-mod.sh'), 'watch', 'alpha'], { cwd: repo, env: env({ WATCH_INTERVAL: '0.2' }), stdio: ['ignore', fd, fd] });
+    live.push(child);
+    await until(() => (fs.readFileSync(out, 'utf8').match(/run: finished/g) || []).length >= 2);
+  });
+
+  test('an extra argument or a bad slug is a usage error', () => {
+    expect(mod(['watch', 'alpha', '--bogus']).status).toBe(2);
+    expect(mod(['watch']).status).toBe(2);
+    expect(mod(['watch', 'Bad Slug', '--once']).status).toBe(2);
+  });
+});
+

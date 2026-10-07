@@ -7,11 +7,15 @@
 #                                                         exit 6; a running pipeline is refused unless --stop stops it first)
 #   scripts/sdlc-mod.sh restart <slug> [--yes]   stop it if running, discard it, and start again from Spec
 #   scripts/sdlc-mod.sh status         one line per known run
+#   scripts/sdlc-mod.sh watch <slug> [--once]   live view of one pipeline: its status.json line, run state, uncommitted files and the
+#                                               tail of run.out, read from its worktree (or the current directory for a run started
+#                                               in place). Refreshes every WATCH_INTERVAL seconds (default 3); --once prints one frame.
 # Env: SDLC_MAX_PARALLEL   most pipelines running at once (default 2; exit 3 when full)
 #      SDLC_BASE           ref a new branch starts from (default origin/main, else main, else HEAD)
 #      SDLC_WT_BASE        folder holding the worktrees (default ../<repo>-sdlc)
 #      SDLC_PLUGIN_DIRS    plugin folders loaded in every agent (default .claude/plugins/sdlc-guard, if present)
 #      SDLC_ALLOW_MERGED   set to run an item again whose red-tests commit is already in the base branch (exit 5 otherwise)
+#      WATCH_INTERVAL      seconds between frames of `watch` (default 3; a non-positive or non-numeric value exits 2)
 #      FROM=spec|plan|red-tests|implement|review   passed through to sdlc.sh (resume at that stage)
 # Run state is kept in <git common dir>/sdlc-runs/<slug>.json, outside every worktree, so one place lists all runs.
 set -euo pipefail
@@ -24,7 +28,7 @@ MAX_PARALLEL="${SDLC_MAX_PARALLEL:-2}"
 WT_BASE="${SDLC_WT_BASE:-$(dirname "$ROOT")/$(basename "$ROOT")-sdlc}"
 
 now() { date +%Y-%m-%dT%H:%M:%S; }
-usage() { echo "Usage: $0 run <slug> | stop <slug> | discard <slug> [--yes] [--stop] | restart <slug> [--yes] | status" >&2; exit 2; }
+usage() { echo "Usage: $0 run <slug> | stop <slug> | discard <slug> [--yes] [--stop] | restart <slug> [--yes] | status | watch <slug> [--once]" >&2; exit 2; }
 check_slug() { [[ "${1:-}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "Invalid slug '${1:-}': lowercase letters, digits and dashes only" >&2; exit 2; }; }
 json_get() { node -e 'try{const v=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))[process.argv[2]];process.stdout.write(v===undefined||v===null?"":String(v))}catch(e){}' "$1" "$2"; }
 # kill -0 also succeeds on a zombie (a process that has exited but whose parent has not collected it): that is not alive.
@@ -233,11 +237,49 @@ cmd_status() {
   done
 }
 
+# One frame of `watch`: the pipeline's own files, wherever its worktree is.
+watch_frame() {
+  local slug="$1" dir="$2" f="$REG/$1.json" logs state pid line
+  logs="$dir/Docs/backlog/$slug/logs"
+  if [ -f "$logs/status.json" ]; then cat "$logs/status.json"; else echo "(no status.json yet in $logs)"; fi
+  if [ -f "$f" ]; then
+    state="$(json_get "$f" state)"; pid="$(json_get "$f" pid)"
+    if [ "$(json_get "$f" interrupted)" = true ]; then echo "run: interrupted (stopped by the user)"
+    elif [ "$state" = exited ]; then echo "run: finished, exit code $(json_get "$f" exit_code)"
+    elif [ "$state" = running ] && ! alive "$pid"; then echo "run: process has gone (stopped without finishing)"
+    fi
+  fi
+  { git -C "$dir" status --short 2>&1 | head -15; } || true
+  if [ -f "$logs/run.out" ]; then echo "--- run.out (last 5 lines)"; tail -n 5 "$logs/run.out"; fi
+}
+
+cmd_watch() {
+  local slug="$1" once="${2:-}" interval="${WATCH_INTERVAL:-3}" f dir="" wt
+  check_slug "$slug"
+  case "$once" in ""|--once) ;; *) usage ;; esac
+  if ! [[ "$interval" =~ ^[0-9]+(\.[0-9]+)?$ ]] || ! awk -v n="$interval" 'BEGIN { exit !(n > 0) }'; then
+    echo "Invalid WATCH_INTERVAL '$interval': a positive number of seconds" >&2; exit 2
+  fi
+  f="$REG/$slug.json"
+  wt="$(json_get "$f" worktree 2>/dev/null || true)"
+  if [ -n "$wt" ] && [ -d "$wt" ]; then dir="$wt"
+  elif [ -f "Docs/backlog/$slug/logs/status.json" ]; then dir="."
+  else echo "No pipeline for $slug" >&2; exit 1
+  fi
+  if [ "$once" = --once ]; then watch_frame "$slug" "$dir"; return 0; fi
+  while true; do
+    printf '\033[H\033[2J'
+    watch_frame "$slug" "$dir"
+    sleep "$interval"
+  done
+}
+
 case "${1:-}" in
   run)    [ $# -eq 2 ] || usage; cmd_run "$2" ;;
   stop)   [ $# -eq 2 ] || usage; cmd_stop "$2" ;;
   discard) [ $# -ge 2 ] || usage; slug="$2"; shift 2; cmd_discard "$slug" "$@" ;;
   restart) { [ $# -eq 2 ] || [ $# -eq 3 ]; } || usage; cmd_restart "$2" "${3:-}" ;;
   status) cmd_status ;;
+  watch)  { [ $# -eq 2 ] || [ $# -eq 3 ]; } || usage; cmd_watch "$2" "${3:-}" ;;
   *)      usage ;;
 esac
