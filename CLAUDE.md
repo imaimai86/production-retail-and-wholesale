@@ -52,6 +52,11 @@ ADMIN_TOKEN=secret
 - Push SDLC work to its own branch `sdlc/<slug>` (not a `claude/...` branch).
 - If that branch name already exists on the remote and the push conflicts, push to `sdlc/<slug>-<n>` instead, where `<n>` is a 5-digit number starting with 1 that increments by one per conflict (`10001`, then `10002`, and so on).
 
+## Merging pull requests
+- **MANDATORY, never optional: confirm with AskUserQuestion before merging any pull request.** This applies in every case: PRs you opened in this session, PRs raised from an SDLC pipeline run, and PRs where the user earlier said "merge when CI passes". A green CI run, an earlier instruction, or a subscription event never replaces the confirmation.
+  - When the PR is ready (CI green, no conflict), ask with the AskUserQuestion tool, never a free-text "merge?" line, with at least the options **Merge** and **Do not merge**, naming the PR number and its CI status in the question. Merge only after the user picks Merge. Any other answer means do not merge.
+  - Creating a PR, pushing to it and watching its CI do not need this confirmation; only the merge does.
+
 ## Graft
 Graft must be installed for the SDLC workflow (the Plan stage and `/plan` use it).
 - Before running `./scripts/sdlc.sh` or any SDLC stage, check `command -v graft` and `graft --version`.
