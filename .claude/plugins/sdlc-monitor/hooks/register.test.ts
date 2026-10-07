@@ -18,6 +18,10 @@ type RunSpec = {
   message?: string
   // a pipeline started by hand: no wrapper record, only a status.json in the main working tree
   legacy?: boolean
+  // what `sdlc-mod.sh changes <slug> --json` reports; null makes the command fail (discarded run, worktree gone)
+  changes?: { changed: number; uncommitted: number } | null
+  // the base branch in the run record
+  base?: string
 }
 
 const QUESTIONS = [
@@ -71,6 +75,7 @@ function world(on: any, runs: RunSpec[] = []) {
           value: JSON.stringify({
             slug: r.slug, worktree: WT, pid: pidOf(r), started: '2026-10-06T10:00:00',
             state: r.exitCode ? 'exited' : 'running', exit_code: r.exitCode ?? '', interrupted: r.interrupted === true, message: r.message ?? '',
+            ...(r.base ? { base: r.base } : {}),
           }),
         }
       }
@@ -102,6 +107,12 @@ function world(on: any, runs: RunSpec[] = []) {
     if (e.argv[0] === 'git') return out('.git\n')
     if (e.argv[0] === 'node') return out(JSON.stringify(PENDING))
     if (e.argv[0] === 'kill') return out('', e.argv[2] === '100' ? 0 : 1)
+    if (e.argv[1] === 'scripts/sdlc-mod.sh' && e.argv[2] === 'changes') {
+      const c = runs.find(r => r.slug === e.argv[3])?.changes
+      if (!c) return out('', 1)
+
+      return out(JSON.stringify({ slug: e.argv[3], worktree: WT, changed: c.changed, uncommitted: c.uncommitted, files: [] }))
+    }
 
     return out('')
   })
@@ -120,6 +131,7 @@ async function open($: any) {
 }
 
 const launches = (calls: string[][]) => calls.filter(c => c[0] === 'bash' && c[1] === '-c').map(c => c[c.length - 1])
+const changesCalls = (calls: string[][], slug: string) => calls.filter(c => c[2] === 'changes' && c[3] === slug)
 const stops = (calls: string[][]) => calls.filter(c => c[0] === 'bash' && c[2] === 'stop').map(c => c[3])
 const text = async (ui: any, re: RegExp) => (await ui.find({ type: 'Text', text: re }))?.text
 
@@ -399,5 +411,77 @@ test('the button above the prompt shows the live summary', async ($, on) => {
 
   expect((await ui.find({ key: 'sdlc-open' }))?.props.label).toBe('SDLC')
   expect(await text(ui, /1 running · 1 paused/)).toBeDefined()
+  await ui.unmount()
+})
+
+test('a running pipeline shows its changed files in the overview row', async ($, on) => {
+  world(on, [{ slug: 'cc-run', state: 'running', stage: 'Implement', agent: 'impl-1', attempt: '1/4', changes: { changed: 6, uncommitted: 4 } }])
+  const ui = await open($)
+
+  expect(await text(ui, /cc-run|Implement/)).toBeDefined()
+  expect(await text(ui, /6 files changed \(4 uncommitted\)/)).toBeDefined()
+  await ui.unmount()
+})
+
+test('a running pipeline with no changes says so; a finished one with none shows nothing', async ($, on) => {
+  world(on, [
+    { slug: 'cc-idle', state: 'running', stage: 'Spec', agent: 'spec-1', changes: { changed: 0, uncommitted: 0 } },
+    { slug: 'cc-done0', state: 'done', stage: 'Commit', changes: { changed: 0, uncommitted: 0 } },
+  ])
+  const ui = await open($)
+
+  expect(await text(ui, /no changes yet/)).toBeDefined()
+  expect(await text(ui, /^done$/)).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /files? changed/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('an unmanaged run makes no changes call and a failing call shows no counts and no Files line', async ($, on) => {
+  const w = world(on, [
+    { slug: 'cc-hand', state: 'running', stage: 'Plan', agent: 'plan', legacy: true },
+    { slug: 'cc-gone', state: 'failed', stage: 'Plan', changes: null },
+  ])
+  const ui = await open($)
+
+  expect(changesCalls(w.calls, 'cc-hand')).toEqual([])
+  expect(changesCalls(w.calls, 'cc-gone').length).toBeGreaterThan(0)
+  expect(await ui.find({ type: 'Text', text: /files? changed/ })).toBeUndefined()
+  await ui.press({ key: 'open-cc-gone' })
+  expect(await ui.find({ type: 'Text', text: /^Files /i })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('the pipeline view shows the Files line with the base, or the word base, and for 0/0', async ($, on) => {
+  world(on, [
+    { slug: 'cc-based', state: 'running', stage: 'Implement', agent: 'impl-1', base: 'origin/develop', changes: { changed: 7, uncommitted: 3 } },
+    { slug: 'cc-nobase', state: 'done', stage: 'Commit', changes: { changed: 0, uncommitted: 0 } },
+  ])
+  const ui = await open($)
+  await ui.press({ key: 'open-cc-based' })
+  expect(await text(ui, /^Files /)).toBe('Files  7 changed since origin/develop · 3 uncommitted')
+  await ui.press({ key: 'back' })
+  await ui.press({ key: 'open-cc-nobase' })
+  expect(await text(ui, /^Files /)).toBe('Files  0 changed since base · 0 uncommitted')
+  await ui.unmount()
+})
+
+test('a finished pipeline is not recounted within 10 seconds; a running one is recounted on every refresh', async ($, on) => {
+  const w = world(on, [
+    { slug: 'cc-fin', state: 'done', stage: 'Commit', changes: { changed: 2, uncommitted: 0 } },
+    { slug: 'cc-live', state: 'running', stage: 'Implement', agent: 'impl-1', changes: { changed: 1, uncommitted: 1 } },
+  ])
+  const ui = await open($)
+  const fin0 = changesCalls(w.calls, 'cc-fin').length
+  const live0 = changesCalls(w.calls, 'cc-live').length
+  expect(fin0).toBe(1)
+
+  await w.clock.advance(2000)
+  await $.command.run({ command: 'sdlc-monitor', args: '' })
+  expect(changesCalls(w.calls, 'cc-fin').length).toBe(fin0)
+  expect(changesCalls(w.calls, 'cc-live').length).toBeGreaterThan(live0)
+
+  await w.clock.advance(10000)
+  await $.command.run({ command: 'sdlc-monitor', args: '' })
+  expect(changesCalls(w.calls, 'cc-fin').length).toBeGreaterThan(fin0)
   await ui.unmount()
 })

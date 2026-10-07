@@ -8,6 +8,8 @@ const EVERY_MS = 2000
 const PENDING_EVERY_MS = 10000
 const CAP = 2
 const WRAPPER = 'scripts/sdlc-mod.sh'
+// How often the file counts of a pipeline that is not running are recomputed.
+const CHANGES_EVERY_MS = 10000
 // The stage names status.json carries (scripts/sdlc.sh strips the numbering).
 const STAGES = ['Spec', 'Plan', 'Red tests', 'Implement', 'Test repair', 'Review', 'Commit']
 // How long the Start button stays a "Starting…" note while the wrapper creates the worktree.
@@ -187,8 +189,33 @@ async function loadPending($: EngineInterface, now: number): Promise<PendingItem
   return pendingCache
 }
 
+// Files a pipeline has changed, counted by the wrapper inside the pipeline's own worktree. A pipeline started by hand has
+// no record, so its changes cannot be told apart from the developer's own work: no counts. A running, paused or starting
+// pipeline is counted on every refresh; a finished one at most every CHANGES_EVERY_MS (the last result, null included, is reused).
+const LIVE: RunState[] = ['running', 'paused', 'starting']
+const changesCache = new Map<string, { at: number; value: Run['changes'] }>()
+
+async function loadChanges($: EngineInterface, slug: string, state: RunState, managed: boolean, now: number): Promise<Run['changes']> {
+  if (!managed) return null
+  const hit = changesCache.get(slug)
+  if (!LIVE.includes(state) && hit && now - hit.at < CHANGES_EVERY_MS) return hit.value
+  let value: Run['changes'] = null
+  try {
+    const r = await $.process.run(['bash', WRAPPER, 'changes', slug, '--json'])
+    if (r.exitCode === 0) {
+      const j = JSON.parse(r.stdout) as { changed?: unknown; uncommitted?: unknown }
+      if (typeof j.changed === 'number' && typeof j.uncommitted === 'number') value = { changed: j.changed, uncommitted: j.uncommitted }
+    }
+  } catch {
+    value = null
+  }
+  changesCache.set(slug, { at: now, value })
+
+  return value
+}
+
 // One pipeline: the wrapper's record, the pipeline's own status.json, and what it has written so far.
-async function loadRun($: EngineInterface, slug: string, worktree: string, reg: Record<string, unknown> | null): Promise<Run> {
+async function loadRun($: EngineInterface, slug: string, worktree: string, reg: Record<string, unknown> | null, now: number): Promise<Run> {
   const root = worktree || '.'
   const docs = `${root}/Docs/backlog/${slug}`
   const status = parse(await readText($, `${docs}/logs/status.json`))
@@ -228,6 +255,8 @@ async function loadRun($: EngineInterface, slug: string, worktree: string, reg: 
     questions: questionsText ? parseQuestions(questionsText) : [],
     managed: reg !== null,
     message: String(reg?.message ?? ''),
+    changes: await loadChanges($, slug, state, reg !== null, now),
+    base: String(reg?.base ?? ''),
   }
 }
 
@@ -247,12 +276,12 @@ async function collect($: EngineInterface): Promise<Snapshot> {
     const reg = parse(await readText($, `${dir}/${f.name}`))
     if (!reg || typeof reg.slug !== 'string') continue
     seen.add(reg.slug)
-    runs.push(await loadRun($, reg.slug, String(reg.worktree ?? ''), reg))
+    runs.push(await loadRun($, reg.slug, String(reg.worktree ?? ''), reg, now))
   }
   // A pipeline started by hand with scripts/sdlc.sh in this working tree has no record: find it by its status file.
   for (const d of await names($, 'Docs/backlog')) {
     if (d.kind === 'dir' && !seen.has(d.name) && (await readText($, `Docs/backlog/${d.name}/logs/status.json`))) {
-      runs.push(await loadRun($, d.name, '', null))
+      runs.push(await loadRun($, d.name, '', null, now))
     }
   }
   runs.sort((a, b) => ORDER[a.state] - ORDER[b.state] || b.updated.localeCompare(a.updated))
@@ -363,7 +392,7 @@ const summary = (runs: Run[], queued: number) => {
   return parts.join(' · ')
 }
 
-const oneLine = (run: Run, now: number) => {
+const stateLine = (run: Run, now: number) => {
   if (run.state === 'running') return `${run.stage || 'Starting'} · ${run.agent || '…'} · ${clock(now - Date.parse(run.agentStarted))}${run.attempt ? ` · attempt ${run.attempt}` : ''}`
   if (run.state === 'paused') return `needs answers: ${run.questions.length} question${run.questions.length === 1 ? '' : 's'}`
   if (run.state === 'done') return 'done'
@@ -372,6 +401,16 @@ const oneLine = (run: Run, now: number) => {
   if (run.state === 'failed') return run.message ? `failed: ${run.message}` : `failed at ${run.stage || 'start'}`
 
   return 'starting'
+}
+
+// The overview row: the state line, then the file counts when there is something to say.
+function oneLine(run: Run, now: number): string {
+  const line = stateLine(run, now)
+  const c = run.changes
+  if (!c) return line
+  if (c.changed === 0 && c.uncommitted === 0) return run.state === 'running' ? `${line} · no changes yet` : line
+
+  return `${line} · ${c.changed} file${c.changed === 1 ? '' : 's'} changed (${c.uncommitted} uncommitted)`
 }
 
 async function sweepAgents($: EngineInterface) {
@@ -707,6 +746,8 @@ export const register: Register = on => {
             )}
           </Box>
         )}
+
+        {run.changes && <Text>{`Files  ${run.changes.changed} changed since ${run.base || 'base'} · ${run.changes.uncommitted} uncommitted`}</Text>}
 
         {run.tests && (
           <Text>
