@@ -25,7 +25,7 @@ id. All endpoints require this header.
 
 ## Users
 - `GET /users` – list users *(requires admin token)*
-- `POST /users` – create a user *(requires admin token)*
+- `POST /users` – create a user; body `{"name": "<string>"}` (required, trimmed, must contain a non-whitespace character); `400` with `name is required` or `name must be a string`; other fields are ignored *(requires admin token)*
 
 ## Sales
 - `GET /sales` – list invoices/sales (supports `page` and `limit` query params)

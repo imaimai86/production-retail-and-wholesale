@@ -22,7 +22,7 @@ function handleStockError(err, res, next) {
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.use(express.json());
+app.use(express.json({ strict: false }));
 
 app.get('/', (req, res) => {
   res.json({ status: 'ok' });
@@ -34,32 +34,42 @@ app.use(Auth.verify);
  * @swagger
  * /users:
  *   post:
- *     summary: Create a new user. Test update.
+ *     summary: Create a new user
  *     tags: [Users]
  *     security:
  *       - xAuthToken: []
  *     requestBody:
  *       required: true
+ *       description: Other fields are ignored.
  *       content:
  *         application/json:
  *           schema:
  *             type: object
+ *             required: [name]
  *             properties:
- *               username:
+ *               name:
  *                 type: string
- *               password:
- *                 type: string
- *               role:
- *                 type: string
+ *                 description: Must contain a non-whitespace character; surrounding whitespace is trimmed.
  *     responses:
  *       201:
  *         description: User created successfully
+ *       400:
+ *         description: name missing, empty or not a string
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Forbidden
  *       500:
  *         description: Server error
  */
 app.post('/users', Auth.requireAdmin, async (req, res, next) => {
   try {
-    const user = await Users.create(req.body);
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+    const { name } = body;
+    if (name === undefined || name === null || name === '') return res.status(400).json({ error: 'name is required' });
+    if (typeof name !== 'string') return res.status(400).json({ error: 'name must be a string' });
+    if (!isNonEmptyString(name)) return res.status(400).json({ error: 'name is required' });
+    const user = await Users.create({ name: name.trim() });
     res.status(201).json(user);
   } catch (err) {
     next(err);

@@ -20,7 +20,9 @@ There is no error-handling middleware after the routes, so any error passed to `
 
 **Suggested fix:** Add a final `app.use((err, req, res, next) => ...)` that logs the error and returns `500 { "error": "Internal server error" }` (no stack outside development), and add a test.
 
-## `POST /users` docs list fields the API ignores
+## `POST /users` docs list fields the API ignores (Fixed)
 The OpenAPI docs for `POST /users` show `username`, `password` and `role`, but `Users.create` reads only `name`, and the `users` table has only `id` and `name`. A request sent as documented inserts a NULL name and fails (500).
 
 **Suggested fix:** Either align the docs with the real body (`name`), or implement the fields (password hash, role) as part of the authentication work in `AGENTS.md`.
+
+**Fixed:** Docs aligned with the real body (`name`); `POST /users` now validates `name` and returns 400.
