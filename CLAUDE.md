@@ -48,6 +48,10 @@ ADMIN_TOKEN=secret
 
 - Ship commits only the files changed during the cycle (compared with `Docs/backlog/<slug>/logs/baseline.json`) and lists the skipped ones in `Docs/backlog/<slug>/logs/ship-skipped.md`.
 
+## Git branch and push rule
+- Push SDLC work to its own branch `sdlc/<slug>` (not a `claude/...` branch).
+- If that branch name already exists on the remote and the push conflicts, push to `sdlc/<slug>-<n>` instead, where `<n>` is a 5-digit number starting with 1 that increments by one per conflict (`10001`, then `10002`, and so on).
+
 ## Graft
 Graft must be installed for the SDLC workflow (the Plan stage and `/plan` use it).
 - Before running `./scripts/sdlc.sh` or any SDLC stage, check `command -v graft` and `graft --version`.
