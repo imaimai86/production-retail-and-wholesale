@@ -106,6 +106,7 @@ Keys added to a git-ignored `.env` during the run are copied, with the placehold
 bash scripts/sdlc-mod.sh run <slug>     # start or resume; worktree at ../<repo>-sdlc/<slug>, branch sdlc/<slug>
 bash scripts/sdlc-mod.sh stop <slug>    # interrupt the pipeline and everything it started
 bash scripts/sdlc-mod.sh status         # one line per run
+bash scripts/sdlc-mod.sh watch <slug>    # live view of one pipeline, read from its worktree (--once prints one frame; WATCH_INTERVAL seconds, default 3)
 bash scripts/sdlc-mod.sh discard <slug> [--yes] [--stop]   # delete its worktree, branch and run record (without --yes: show what would go, exit 6)
 bash scripts/sdlc-mod.sh restart <slug> [--yes]   # stop it if running, discard it, start again from Spec
 ```
