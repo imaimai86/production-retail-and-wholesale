@@ -22,3 +22,5 @@ Markers: [ ] pending, [x] completed, [!] blocked, [~] parked (skipped by `script
 - [x] `add-integration-success-check` - Feature: integration tests are a required local sdlc check; temporary skip in CI only (SDLC_INTEGRATION_CI=run to enable)
 - [ ] `require-integration-tests` - Feature: every DB or API change must come with integration tests that fail first; enforced by pipeline gates
 - [~] `sdlc-bg-agents` - Feature: run the SDLC agents as `claude --bg` background sessions so they can ask questions and be monitored (parked: the orchestrator AskUserQuestion rule and stream-json monitoring cover it for now)
+- [ ] `run-changed-tests-only` - Feature: in GitHub Actions pull requests, run only the unit and integration tests related to the changed files; full suite on main or when unsure
+- [ ] `remove-gitlab-ci` - Feature: remove .gitlab-ci.yml (after run-changed-tests-only adds the GitHub integration job)
