@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Run the integration suite (npm run test:integration) the way the SDLC pipeline does.
 # Database: DATABASE_URL from the shell, else from the repo-root .env (local host only), else a throwaway Docker Postgres.
+# Exit codes: 0 pass or CI skip, 1 tests fail, 3 the suite could not run (no script, no database, container not started or not ready).
 # Run from the repo root. Env: CI, SDLC_INTEGRATION_CI, SDLC_DB, SDLC_ALLOW_REMOTE_DB (see README.md "SDLC pipeline: integration tests").
 set -euo pipefail
 
@@ -12,7 +13,7 @@ fi
 
 if ! node -e 'const s=require("./server/package.json").scripts||{}; process.exit(s["test:integration"]?0:1)'; then
   echo "ERROR: no test:integration script in server/package.json (see add-db-integration-tests)"
-  exit 1
+  exit 3
 fi
 
 # Database, first match wins:
@@ -54,11 +55,14 @@ elif command -v docker >/dev/null 2>&1; then
   trap cleanup EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  docker run -d --rm --name "$NAME" -e POSTGRES_USER=app -e POSTGRES_PASSWORD="$PW" \
-    -e POSTGRES_DB=app -p 127.0.0.1::5432 postgres:16 >/dev/null
-  PORT="$(docker port "$NAME" 5432/tcp | head -n1 | sed -E 's/.*://')"
+  if ! docker run -d --rm --name "$NAME" -e POSTGRES_USER=app -e POSTGRES_PASSWORD="$PW" \
+    -e POSTGRES_DB=app -p 127.0.0.1::5432 postgres:16 >/dev/null; then
+    echo "ERROR: could not start the database container"
+    exit 3
+  fi
+  PORT="$(docker port "$NAME" 5432/tcp | head -n1 | sed -E 's/.*://' || true)"
   case "$PORT" in
-    ''|*[!0-9]*) echo "ERROR: could not determine database container port"; exit 1 ;;
+    ''|*[!0-9]*) echo "ERROR: could not determine database container port"; exit 3 ;;
   esac
   ready=0
   for ((attempt = 1; attempt <= 60; attempt++)); do
@@ -70,12 +74,12 @@ elif command -v docker >/dev/null 2>&1; then
   done
   if [ "$ready" -ne 1 ]; then
     echo "ERROR: database container not ready after 60 attempts"
-    exit 1
+    exit 3
   fi
   export DATABASE_URL="postgres://app:${PW}@127.0.0.1:${PORT}/app"
 else
   echo "ERROR: integration tests need DATABASE_URL or docker"
-  exit 1
+  exit 3
 fi
 
 rc=0

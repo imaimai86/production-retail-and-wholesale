@@ -14,6 +14,7 @@
 #        git-ignored .env are copied (placeholder values) into .env.example. Nothing to commit is a warning, not a failure.
 #        SDLC_INTEGRATION_CI=run  when CI is set the integration suite is skipped with a warning
 #        unless this is "run" (which also needs DATABASE_URL)
+#        The Red tests stage requires integration tests for the plan's DB and API changes; there is no opt-out.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -27,6 +28,7 @@ case "$FROM" in
 esac
 ROOT="$(pwd)"
 CHECK="node scripts/sdlc-testcheck.cjs"
+GATE="node scripts/sdlc-integration-gate.cjs"
 TEST_CMD="npm test"
 TEST_DIR="server/__tests__"
 BACKLOG="Docs/backlog/index.md"
@@ -162,7 +164,14 @@ if [ "$FROM_N" -le 2 ]; then
 stage "2/6 Plan"
 [ -f "$DOCS/specs-1.md" ] || { echo "FROM=$FROM but $DOCS/specs-1.md is missing: run Spec first"; exit 1; }
 agent plan "You are an Architecture Planner. Read $DOCS/specs-1.md. Use the Graft MCP tools to find the affected files and callers; read only those files.
-Write a step-by-step technical plan to $DOCS/plan-1.md (files, functions, order). No source edits.$(manual_input plan)"
+Write a step-by-step technical plan to $DOCS/plan-1.md (files, functions, order). No source edits.
+The plan MUST contain a section headed exactly '## DB and API changes'. Its bullets are each exactly one of these forms (the token is the text between the backticks), or the single bullet '- none' when no DB or API behaviour changes:
+- API: \`METHOD /path\` (upper-case method, for example \`POST /sales/:id/refund\`)
+- DB: migration \`<name without .sql>\`
+- DB: table \`<table>\`
+- DB: column \`<table>.<column>\`
+- DB: model \`<name without .js>\`
+A plan with a missing, empty or malformed section is rejected at the Red tests stage.$(manual_input plan)"
 [ -f "$DOCS/plan-1.md" ] || { echo "Plan not produced"; exit 1; }
 fi
 
@@ -172,9 +181,27 @@ stage "3/6 Red tests (red gate)"
 [ -f "$DOCS/plan-1.md" ] || { echo "FROM=$FROM but $DOCS/plan-1.md is missing: run Plan first"; exit 1; }
 agent tests "You are a QA Engineer. Read $DOCS/specs-1.md and $DOCS/plan-1.md.
 Write a test matrix to $DOCS/test-cases-1.md and the matching Jest tests under $TEST_DIR/ (mirror the source layout). Do NOT change source code outside $TEST_DIR/.
-Tests must exercise the code under test by importing or running it. A test must NEVER read, scan or assert on the text of any test file, including itself (no __filename, no reading a *.test.js file, no readdir of __tests__ or __dirname). This includes rules about what test files must not contain (for example 'no test checks the executable bit'): a test file that states the forbidden word always contains it, so such a check can never pass. Do not write a test for a rule about the tests themselves; list it in $DOCS/test-cases-1.md as a review item instead.$(manual_input red-tests)"
-if tests_pass; then echo "RED GATE FAILED: new tests pass before implementation. See $LOG/tests.log"; exit 1; fi
+Tests must exercise the code under test by importing or running it. A test must NEVER read, scan or assert on the text of any test file, including itself (no __filename, no reading a *.test.js file, no readdir of __tests__ or __dirname). This includes rules about what test files must not contain (for example 'no test checks the executable bit'): a test file that states the forbidden word always contains it, so such a check can never pass. Do not write a test for a rule about the tests themselves; list it in $DOCS/test-cases-1.md as a review item instead.
+Integration tests: for every bullet of the '## DB and API changes' section in $DOCS/plan-1.md other than '- none', write integration tests in server/__tests__/integration/ following api.integration.test.js (helper server/test-utils/scratchDb.js, supertest on require('../../index')). Put the bullet's token (the text between the backticks) in a describe or test title, and add a matching '## DB and API changes' section to $DOCS/test-cases-1.md. They must fail before implementation.$(manual_input red-tests)"
 git add "$DOCS" "$TEST_DIR"
+PLAN_OUT=$($GATE plan "$DOCS/plan-1.md" "$TEST_DIR") || exit 1
+INT_NONE=0; if [ "$PLAN_OUT" = NONE ]; then INT_NONE=1; fi
+UNIT_PASS=0
+if tests_pass; then UNIT_PASS=1; if [ "$INT_NONE" -eq 1 ]; then echo "RED GATE FAILED: new tests pass before implementation. See $LOG/tests.log"; exit 1; fi; fi
+if [ "$INT_NONE" -ne 1 ]; then
+  if [ -n "${CI:-}" ] && [ "${SDLC_INTEGRATION_CI:-}" != "run" ]; then
+    echo "WARNING: TEMPORARY: integration red check skipped in CI. Set SDLC_INTEGRATION_CI=run once CI has a database."
+    if [ "$UNIT_PASS" -eq 1 ]; then echo "RED GATE FAILED: new tests pass before implementation. See $LOG/tests.log"; exit 1; fi
+  else
+    INT_RC=0; bash scripts/sdlc-integration.sh > "$LOG/integration.log" 2>&1 || INT_RC=$?
+    case "$INT_RC" in
+      0) echo "RED GATE FAILED: new integration tests pass before implementation. See $LOG/integration.log"; exit 1;;
+      3) echo "ERROR: no database for the integration red check (set DATABASE_URL or start Docker)"; exit 1;;
+      1) : ;;
+      *) echo "ERROR: integration red check could not run (exit $INT_RC). See $LOG/integration.log"; exit 1;;
+    esac
+  fi
+fi
 git commit -q -m "test($SLUG): add failing tests and spec/plan docs"
 RED_SHA=$(git rev-parse HEAD)
 else
@@ -192,6 +219,8 @@ else
   echo "Resuming at ${FROM} from tests commit ${RED_SHA:0:7}"
 fi
 ORIG_RED_SHA="$RED_SHA"
+INT_RED_SHA=$(git log --format=%H -1 --grep="^test($SLUG): add failing tests")
+[ -n "$INT_RED_SHA" ] || { echo "FROM=$FROM but no red-tests commit found for $SLUG"; exit 1; }
 
 if [ "$FROM_N" -le 5 ]; then
 jest_json_at "$RED_SHA" "$ROOT/$LOG/red.json"
@@ -211,6 +240,7 @@ If you are convinced a failing test is itself wrong (it contradicts $DOCS/specs-
   if [ -n "$(git diff --name-only "$RED_SHA" -- "$TEST_DIR")" ]; then
     echo "GUARD FAILED: tests were modified during implementation"; git diff --name-only "$RED_SHA" -- "$TEST_DIR"; exit 1
   fi
+  $GATE diff "$RED_SHA" "$INT_RED_SHA" || exit 1
   if success_check; then echo " tests and integration green"; GREEN=1; break; fi
 done
 else
@@ -276,6 +306,7 @@ stage "5/6 Review"
 agent review "You are a code reviewer. Review 'git diff $RED_SHA' against $DOCS/specs-1.md for correctness bugs, missed edge cases and security issues.
 Fix real problems in source files (never under $TEST_DIR/). Write a short summary to $DOCS/review-1.md.$(manual_input review)"
 if [ -n "$(git diff --name-only "$RED_SHA" -- "$TEST_DIR")" ]; then echo "GUARD FAILED: review modified tests"; exit 1; fi
+$GATE diff "$RED_SHA" "$INT_RED_SHA" || exit 1
 success_check || { echo "Checks broke after review. See $FAIL_LOG"; exit 1; }
 
 # 6. SHIP -----------------------------------------------------------------
