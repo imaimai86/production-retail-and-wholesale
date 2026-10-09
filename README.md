@@ -82,6 +82,22 @@ Integration tests (`npm run test:integration`) are a required part of the pipeli
 
 CI skips them temporarily, with a visible warning. To enable them in CI, set the CI/CD variable `SDLC_INTEGRATION_CI=run` and provide `DATABASE_URL` (for example from a `postgres:16` service). No code change is needed.
 
+## SDLC pipeline: flaky tests in Test repair
+
+Before the Test repair pre-check, `scripts/sdlc.sh` re-runs once every failing test that `test-issues.md` does not claim (only those tests, one jest run per test file). A test that passes on the re-run is treated as flaky and not rejected. The pipeline prints:
+
+```
+WARNING: flaky test passed on re-run, not rejected: <key>
+```
+
+and appends one line per flaky test to `Docs/backlog/<slug>/logs/flaky-tests.md`:
+
+```
+<key> :: first run: failed :: re-run: passed
+```
+
+That file is under `logs/`, so it is git-ignored and never committed. A test that fails again, or is missing from the re-run, stays failing and is rejected as before.
+
 ## SDLC pipeline: what the Ship stage commits
 
 At the start of a run (`FROM=spec`) `scripts/sdlc.sh` records every file that is already modified, staged or untracked in `Docs/backlog/<slug>/logs/baseline.json`. The Ship stage (`scripts/sdlc-ship.sh`) then commits exactly the files the cycle created, changed or deleted since that snapshot, anywhere in the repo, in one `feat(<slug>)` commit, and ticks the item in `Docs/backlog/index.md` in a second commit. Anything else the developer had staged is left staged.
