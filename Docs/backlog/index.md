@@ -27,3 +27,6 @@ Markers: [ ] pending, [x] completed, [!] blocked, [~] parked (skipped by `script
 - [ ] `validate-route-ids` - Bug: invalid :id on products and sales routes returns 500; return 404, and 409 when deleting a product that is in use
 - [ ] `add-jwt-login-acl` - Feature: login with JWT (tokens stored in auth_tokens) and role-based access control; depends on add-auth-token-table
 - [ ] `fix-pagination-limits` - Bug: negative or huge page/limit on list endpoints returns 500 or reads whole tables; return 400 and cap limit at 100
+- [ ] `add-stage-input-gate` - Feature: pipeline waits before each agent stage (Spec, Plan, Red tests, Implement, Review) for the developer's input; opt-in gate with a pane screen
+- [ ] `add-stage-stop-with-input` - Feature: stop a running stage from the pane, add input for it, and restart that stage in one action
+- [ ] `add-monitor-fullscreen` - Feature: redesign the /sdlc-monitor pane as a large two-column screen (pipeline list, stage rail, input, live output, key hints) and a Files changed view (docs, tests, source) available at any time
