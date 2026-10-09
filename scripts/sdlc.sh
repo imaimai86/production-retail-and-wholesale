@@ -13,6 +13,12 @@
 #        files and files over 1 MiB; they are listed in Docs/backlog/<slug>/logs/ship-skipped.md. Keys added to a
 #        git-ignored .env are copied (placeholder values) into .env.example. Nothing to commit is a warning, not a failure.
 #        Test repair re-runs UNCLAIMED failing tests once; a pass is a flaky test: WARNING, listed in $LOG/flaky-tests.md, not rejected.
+#        Prompts: scripts/prompts/prompt-<stage>.md (spec, plan, red-tests, implement, test-repair, test-audit, review), read at run
+#        time. Placeholders: {{DOCS}} {{LOG}} {{TEST_DIR}} {{TEST_CMD}} {{RED_SHA}} {{SLUG}}.
+#        Model and effort per stage: MODEL_<STAGE> and EFFORT_<STAGE>, STAGE = SPEC PLAN RED_TESTS IMPLEMENT TEST_REPAIR
+#        TEST_AUDIT REVIEW (for example MODEL_IMPLEMENT=opus EFFORT_IMPLEMENT=high). SDLC_MODEL / SDLC_EFFORT set every stage
+#        that has no stage-specific value. Models: any `claude --model` value (alias or full id); effort: low|medium|high|xhigh|max.
+#        Defaults are in stage_defaults() below.
 #        SDLC_INTEGRATION_CI=run  when CI is set the integration suite is skipped with a warning
 #        unless this is "run" (which also needs DATABASE_URL)
 set -euo pipefail
@@ -60,14 +66,49 @@ set_status() {
 # Final state on any exit: done (0), paused for answers (2), failed (anything else).
 trap 'rc=$?; case $rc in 0) RUN_STATE=done;; 2) RUN_STATE=paused;; *) RUN_STATE=failed;; esac; CUR_AGENT=""; set_status' EXIT
 
-# agent <stage> <prompt>: headless, scoped tools, bounded turns, transcript saved.
+# Default per stage (no limit; override for any run with MODEL_<STAGE> / EFFORT_<STAGE>): "<model> <effort>". See the header.
+stage_defaults() {
+  case "$1" in
+    spec)        echo "opus medium";;
+    plan)        echo "opus medium";;
+    red-tests)   echo "sonnet medium";;
+    implement)   echo "sonnet medium";;
+    test-repair) echo "sonnet medium";;
+    test-audit)  echo "opus medium";;   # a different model from test-repair, so the audit is independent
+    review)      echo "opus medium";;
+    *)           echo "sonnet medium";;
+  esac
+}
+# stage_flags <stage>: sets STAGE_FLAGS to "--model M --effort E" for the stage (stage env > SDLC_* env > default).
+stage_flags() {
+  local up; up=$(echo "$1" | tr 'a-z-' 'A-Z_')
+  local def dm de m e; def=$(stage_defaults "$1"); dm="${def% *}"; de="${def#* }"
+  eval "m=\"\${MODEL_$up:-\${SDLC_MODEL:-$dm}}\"; e=\"\${EFFORT_$up:-\${SDLC_EFFORT:-$de}}\""
+  case "$e" in low|medium|high|xhigh|max) ;; *) echo "ERROR: invalid effort '$e' for stage $1 (use low, medium, high, xhigh or max)" >&2; exit 1;; esac
+  STAGE_FLAGS=(--model "$m" --effort "$e")
+  echo "   model=$m effort=$e"
+}
+# render_prompt <stage>: scripts/prompts/prompt-<stage>.md with the {{PLACEHOLDERS}} filled in.
+render_prompt() {
+  local f="scripts/prompts/prompt-$1.md" t
+  [ -f "$f" ] || { echo "ERROR: missing prompt file $f" >&2; exit 1; }
+  t=$(cat "$f")
+  t=${t//\{\{DOCS\}\}/$DOCS}; t=${t//\{\{LOG\}\}/$LOG}; t=${t//\{\{TEST_DIR\}\}/$TEST_DIR}
+  t=${t//\{\{TEST_CMD\}\}/$TEST_CMD}; t=${t//\{\{RED_SHA\}\}/${RED_SHA:-}}; t=${t//\{\{SLUG\}\}/$SLUG}
+  printf '%s' "$t"
+}
+# agent <log-name> <stage>: headless, scoped tools, bounded turns, transcript saved. The prompt comes from prompt-<stage>.md
+# (plus the developer's manual input for that stage, if any); model and effort come from stage_flags.
 agent() {
-  local stage="$1" prompt="$2"
-  echo "   -> agent: $stage"
-  CUR_AGENT="$stage"; AGENT_STARTED="$(date +%Y-%m-%dT%H:%M:%S)"; set_status
-  claude -p "$prompt" --permission-mode acceptEdits --allowedTools "${ALLOWED[@]}" \
-    --max-turns "$MAX_TURNS" > "$LOG/$stage.log" 2>&1 \
-    || { echo "   !! agent '$stage' failed, see $LOG/$stage.log"; [ "$stage" = test-repair ] && resume_hint || true; exit 1; }
+  local name="$1" pstage="$2" prompt
+  prompt="$(render_prompt "$pstage")"
+  case "$pstage" in test-repair|test-audit) ;; *) prompt="$prompt$(manual_input "$pstage")";; esac
+  echo "   -> agent: $name"
+  stage_flags "$pstage"
+  CUR_AGENT="$name"; AGENT_STARTED="$(date +%Y-%m-%dT%H:%M:%S)"; set_status
+  claude -p "$prompt" "${STAGE_FLAGS[@]}" --permission-mode acceptEdits --allowedTools "${ALLOWED[@]}" \
+    --max-turns "$MAX_TURNS" > "$LOG/$name.log" 2>&1 \
+    || { echo "   !! agent '$name' failed, see $LOG/$name.log"; [ "$pstage" = test-repair ] && resume_hint || true; exit 1; }
 }
 # manual_input <stage>: the developer's text from the "## <stage>" section of manual-inputs.md, as a prompt suffix.
 manual_input() {
@@ -156,14 +197,7 @@ if [ -f "$DOCS/questions.md" ]; then
   echo "   recorded round $ROUND answers in $DECISIONS"
 fi
 ROUND_NO=$(( $(grep -c '^## Round ' "$DECISIONS" 2>/dev/null || true) + 1 ))
-agent "spec-$ROUND_NO" "You are a Requirements Agent. Read CLAUDE.md, AGENTS.md, $DOCS/brief.md and, if it exists, $DOCS/decisions.md (answers the developer already gave: treat them as binding and NEVER ask them again; an Answer of "accept" means the Suggested value was approved).
-Write a complete specification to $DOCS/specs-1.md: behaviour, inputs/outputs, error cases, acceptance criteria. No source code.
-ZERO-GUESSING: if the brief and decisions leave a requirement ambiguous or missing, do NOT invent it. Do not write specs-1.md; write only the NEW questions to $DOCS/questions.md in exactly this format, one block per question:
-### Q<n>: <short title>
-<the question and why it matters>
-**Suggested:** <your recommended answer>
-**Answer:**
-Leave the Answer line empty for the developer. Number questions from 1 each round.$(manual_input spec)"
+agent "spec-$ROUND_NO" spec
 if [ -f "$DOCS/questions.md" ]; then
   echo "PAUSED: new questions in $DOCS/questions.md. Fill each '**Answer:**' (write 'accept' to take the suggestion) and rerun."
   exit 2
@@ -175,8 +209,7 @@ if [ "$FROM_N" -le 2 ]; then
 # 2. PLAN ---------------------------------------------------------------
 stage "2/6 Plan"
 [ -f "$DOCS/specs-1.md" ] || { echo "FROM=$FROM but $DOCS/specs-1.md is missing: run Spec first"; exit 1; }
-agent plan "You are an Architecture Planner. Read $DOCS/specs-1.md. Use the Graft MCP tools to find the affected files and callers; read only those files.
-Write a step-by-step technical plan to $DOCS/plan-1.md (files, functions, order). No source edits.$(manual_input plan)"
+agent plan plan
 [ -f "$DOCS/plan-1.md" ] || { echo "Plan not produced"; exit 1; }
 fi
 
@@ -184,9 +217,7 @@ if [ "$FROM_N" -le 3 ]; then
 # 3. RED TESTS ------------------------------------------------------------
 stage "3/6 Red tests (red gate)"
 [ -f "$DOCS/plan-1.md" ] || { echo "FROM=$FROM but $DOCS/plan-1.md is missing: run Plan first"; exit 1; }
-agent tests "You are a QA Engineer. Read $DOCS/specs-1.md and $DOCS/plan-1.md.
-Write a test matrix to $DOCS/test-cases-1.md and the matching Jest tests under $TEST_DIR/ (mirror the source layout). Do NOT change source code outside $TEST_DIR/.
-Tests must exercise the code under test by importing or running it. A test must NEVER read, scan or assert on the text of any test file, including itself (no __filename, no reading a *.test.js file, no readdir of __tests__ or __dirname). This includes rules about what test files must not contain (for example 'no test checks the executable bit'): a test file that states the forbidden word always contains it, so such a check can never pass. Do not write a test for a rule about the tests themselves; list it in $DOCS/test-cases-1.md as a review item instead.$(manual_input red-tests)"
+agent tests red-tests
 if tests_pass; then echo "RED GATE FAILED: new tests pass before implementation. See $LOG/tests.log"; exit 1; fi
 git add "$DOCS" "$TEST_DIR"
 git commit -q -m "test($SLUG): add failing tests and spec/plan docs"
@@ -218,10 +249,7 @@ rm -f "$DOCS/test-issues.md"
 GREEN=0
 for i in $(seq 1 "$MAX_ATTEMPTS"); do
   echo " attempt $i"; CUR_ATTEMPT="$i/$MAX_ATTEMPTS"
-  agent "impl-$i" "You are a Senior TDD Developer. Read $DOCS/plan-1.md and $DOCS/test-cases-1.md.
-Latest test output is in $LOG/tests.log (run '$TEST_CMD' yourself to refresh). Integration output, if present, is in $LOG/integration.log; do NOT start Docker or run the integration suite, the pipeline does that. Edit source files so the failing tests pass.
-NEVER edit anything under $TEST_DIR/.
-If you are convinced a failing test is itself wrong (it contradicts $DOCS/specs-1.md or $DOCS/decisions.md, or has a test-isolation defect such as leaked mocks), do NOT edit it. Write $DOCS/test-issues.md, one line per test, exactly: <test file path> :: <full test name> :: <why, citing the spec/decision or the isolation defect>. Never claim a test is wrong just because it is hard to pass: source bugs are yours to fix.$(manual_input implement)"
+  agent "impl-$i" implement
   if [ -n "$(git diff --name-only "$RED_SHA" -- "$TEST_DIR")" ]; then
     echo "GUARD FAILED: tests were modified during implementation"; git diff --name-only "$RED_SHA" -- "$TEST_DIR"; exit 1
   fi
@@ -252,12 +280,7 @@ if [ "$GREEN" -ne 1 ]; then
   fi
   $CHECK precheck "$LOG/now.json" "$DOCS/test-issues.md" "$MAX_REPAIR_TESTS" || reject "claims fail pre-check (see above)" hint
   SRC_BEFORE=$(src_hash)
-  agent test-repair "You are a Test Repair Agent. The Implement agent claims these tests are wrong; the claims are in $DOCS/test-issues.md. Read it, $DOCS/specs-1.md and $DOCS/decisions.md.
-You may edit ONLY the test files named in test-issues.md, and ONLY to fix the claimed defect. Rules:
-- Verify each claim yourself. If the test is right and the code is wrong, do not edit the test: write 'NO REPAIR NEEDED: <reason>' to $DOCS/test-repair-1.md and stop.
-- Never delete, rename, skip, or weaken a test or assertion. Keep every expect() and keep it at least as strict. Do not add toBeDefined/toBeTruthy/expect.anything to replace exact checks.
-- Never edit source files. Never make a test pass by asserting whatever the code currently does.
-- For each change write to $DOCS/test-repair-1.md: test name, what was wrong, the spec/decision line or isolation defect that proves it, and what you changed."
+  agent test-repair test-repair
   if grep -q '^NO REPAIR NEEDED' "$DOCS/test-repair-1.md" 2>/dev/null; then reject "repair agent says the tests are right; the source is wrong"; fi
   [ "$(src_hash)" = "$SRC_BEFORE" ] || reject "source files were modified during test repair"
   $CHECK diffcheck "$ORIG_RED_SHA" "$DOCS/test-issues.md" || reject "diff check failed (see above)"
@@ -268,13 +291,9 @@ You may edit ONLY the test files named in test-issues.md, and ONLY to fix the cl
   # shellcheck disable=SC2086
   jest_json_at "$ORIG_RED_SHA" "$ROOT/$LOG/repaired-on-red.json" $CHANGED
   $CHECK redcheck "$LOG/red.json" "$LOG/repaired-on-red.json" || reject "a repaired test no longer fails on the unimplemented source"
-    claude -p "You are an independent, skeptical Test Auditor. You cannot edit anything. A developer agent was blocked by failing tests and another agent edited those tests. Your job is to catch any cheating.
-Read $DOCS/specs-1.md, $DOCS/decisions.md, $DOCS/test-issues.md, $DOCS/test-repair-1.md and the test diff in $LOG/test-repair.diff. Then check:
-1. Was the ORIGINAL test genuinely wrong (contradicted the spec/decisions, or a real isolation defect)? Quote the spec line.
-2. Does the NEW test still verify the specified behaviour with equal or greater strictness?
-3. Is it free of tricks: asserting whatever the code returns, loosened matchers, removed cases, changed expected status codes or bodies without spec support?
-4. Does the change touch only what the claim justifies?
-Reply with your reasoning, then a final line that is exactly 'VERDICT: VALID' or 'VERDICT: INVALID'. If in any doubt, INVALID." \
+  stage_flags test-audit
+  AUDIT_PROMPT="$(render_prompt test-audit)"
+  claude -p "$AUDIT_PROMPT" "${STAGE_FLAGS[@]}" \
     --allowedTools Read Glob Grep --max-turns 15 > "$LOG/test-audit.log" 2>&1 || reject "auditor failed to run" hint
   cp "$LOG/test-audit.log" "$DOCS/test-audit.md"
   [ "$(grep -E '^VERDICT: (VALID|INVALID)$' "$LOG/test-audit.log" | tail -1)" = "VERDICT: VALID" ] || reject "independent auditor did not return VERDICT: VALID"
@@ -288,8 +307,7 @@ fi
 
 # 5. REVIEW ---------------------------------------------------------------
 stage "5/6 Review"
-agent review "You are a code reviewer. Review 'git diff $RED_SHA' against $DOCS/specs-1.md for correctness bugs, missed edge cases and security issues.
-Fix real problems in source files (never under $TEST_DIR/). Write a short summary to $DOCS/review-1.md.$(manual_input review)"
+agent review review
 if [ -n "$(git diff --name-only "$RED_SHA" -- "$TEST_DIR")" ]; then echo "GUARD FAILED: review modified tests"; exit 1; fi
 success_check || { echo "Checks broke after review. See $FAIL_LOG"; exit 1; }
 
