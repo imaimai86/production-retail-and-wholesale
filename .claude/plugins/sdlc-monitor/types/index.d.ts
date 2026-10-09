@@ -8,6 +8,10 @@ export type Run = {
   state: RunState
   stage: string
   agent: string
+  // Model and effort of the running agent, and of every stage (from status.json; empty for runs started before this was recorded).
+  model: string
+  effort: string
+  models: Record<string, { model: string; effort: string }>
   attempt: string
   agentStarted: string
   runStarted: string

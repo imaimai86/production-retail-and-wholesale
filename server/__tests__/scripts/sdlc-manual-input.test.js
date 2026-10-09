@@ -58,8 +58,11 @@ describe('manual_input', () => {
   });
 
   test('every agent stage prompt includes its input', () => {
+    // agent() appends the manual input for every stage except the test-repair/test-audit ones.
+    expect(sdlc).toContain('prompt="$prompt$(manual_input "$pstage")"');
+    expect(sdlc).toMatch(/case "\$pstage" in test-repair\|test-audit\) ;;/);
     for (const stage of ['spec', 'plan', 'red-tests', 'implement', 'review']) {
-      expect(sdlc).toContain(`$(manual_input ${stage})`);
+      expect(sdlc).toMatch(new RegExp(`^\\s*agent \\S+ ${stage}$`, 'm'));
     }
   });
 });

@@ -244,6 +244,9 @@ async function loadRun($: EngineInterface, slug: string, worktree: string, reg: 
     state,
     stage: String(status?.stage ?? ''),
     agent: String(status?.agent ?? ''),
+    model: String(status?.model ?? ''),
+    effort: String(status?.effort ?? ''),
+    models: (status?.models && typeof status.models === 'object' ? status.models : {}) as Run['models'],
     attempt: String(status?.attempt ?? ''),
     agentStarted: String(status?.agent_started ?? ''),
     runStarted: String(status?.run_started ?? reg?.started ?? ''),
@@ -370,6 +373,18 @@ async function submitAnswers($: EngineInterface, run: Run) {
   await refresh($)
 }
 
+// Pipeline stage (as the monitor names it) -> the sdlc.sh stages whose agents run in it.
+const STAGE_AGENTS: Record<string, string[]> = {
+  Spec: ['spec'], Plan: ['plan'], 'Red tests': ['red-tests'], Implement: ['implement'], 'Test repair': ['test-repair', 'test-audit'], Review: ['review'],
+}
+const modelOf = (m?: { model: string; effort: string }) => (m ? `${m.model} · ${m.effort}` : '')
+// "opus · medium" for a stage; the Test repair stage lists its repair and audit agents. '' when status.json has no model data.
+const stageModel = (run: Run, name: string) => {
+  const keys = STAGE_AGENTS[name] ?? []
+  if (keys.length === 1) return modelOf(run.models[keys[0]])
+  return keys.map(k => (run.models[k] ? `${k.replace('test-', '')} ${modelOf(run.models[k])}` : '')).filter(Boolean).join(' / ')
+}
+
 function stageStates(run: Run): { name: string; state: StageState }[] {
   const isGone = run.state === 'stopped'
   const at = STAGES.indexOf(run.stage)
@@ -393,7 +408,7 @@ const summary = (runs: Run[], queued: number) => {
 }
 
 const stateLine = (run: Run, now: number) => {
-  if (run.state === 'running') return `${run.stage || 'Starting'} · ${run.agent || '…'} · ${clock(now - Date.parse(run.agentStarted))}${run.attempt ? ` · attempt ${run.attempt}` : ''}`
+  if (run.state === 'running') return `${run.stage || 'Starting'} · ${run.agent || '…'}${run.model ? ` (${run.model} · ${run.effort})` : ''} · ${clock(now - Date.parse(run.agentStarted))}${run.attempt ? ` · attempt ${run.attempt}` : ''}`
   if (run.state === 'paused') return `needs answers: ${run.questions.length} question${run.questions.length === 1 ? '' : 's'}`
   if (run.state === 'done') return 'done'
   if (run.state === 'interrupted') return `interrupted at ${run.stage || 'start'}`
@@ -724,10 +739,11 @@ export const register: Register = on => {
 
         <Box flexWrap="wrap" gap={1}>
           {stages.map(st => (
-            <Box key={`stage-${st.name}`} borderStyle="round" borderColor={STAGE_COLOR[st.state]} paddingX={1}>
+            <Box key={`stage-${st.name}`} flexDirection="column" borderStyle="round" borderColor={STAGE_COLOR[st.state]} paddingX={1}>
               <Text color={STAGE_COLOR[st.state]} bold={st.state === 'active'} dimColor={st.state === 'pending'}>
                 {STAGE_GLYPH[st.state]} {st.name}
               </Text>
+              {stageModel(run, st.name) && <Text dimColor>{stageModel(run, st.name)}</Text>}
             </Box>
           ))}
         </Box>
@@ -737,6 +753,7 @@ export const register: Register = on => {
             <Text bold>Agent</Text>
             <Text>
               <Text color="cyan">{run.agent}</Text>
+              {run.model && <Text>  {run.model} · {run.effort}</Text>}
               <Text dimColor>  running {clock(since)}</Text>
             </Text>
             {tryMax > 0 && (
