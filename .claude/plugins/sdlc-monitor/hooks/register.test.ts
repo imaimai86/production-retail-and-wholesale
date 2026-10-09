@@ -82,7 +82,8 @@ function world(on: any, runs: RunSpec[] = []) {
       if (e.path.endsWith(`${r.slug}/logs/status.json`) && r.state) {
         return {
           value: JSON.stringify({
-            slug: r.slug, state: r.state, stage: r.stage ?? '', agent: r.agent ?? '', attempt: r.attempt ?? '',
+            slug: r.slug, state: r.state, stage: r.stage ?? '', agent: r.agent ?? '', model: 'opus', effort: 'medium',
+            models: { implement: { model: 'sonnet', effort: 'medium' }, 'test-repair': { model: 'sonnet', effort: 'low' }, 'test-audit': { model: 'opus', effort: 'high' } }, attempt: r.attempt ?? '',
             agent_started: '2026-10-06T10:00:00', run_started: '2026-10-06T09:50:00', updated: '2026-10-06T10:03:00', pid: pidOf(r),
           }),
         }
@@ -198,6 +199,8 @@ test('a running pipeline shows stages, agent, attempt and test progress', async 
   expect(await text(ui, /3\/6 stages/)).toBeDefined()
   expect(await text(ui, /impl-2/)).toMatch(/03:12/)
   expect(await text(ui, /attempt/)).toMatch(/2\/4/)
+  expect(await text(ui, /opus · medium\s+running/)).toBeDefined() // the running agent's model and effort
+  expect(await text(ui, /sonnet · medium/)).toBeDefined() // the Implement stage box
   expect(await text(ui, /Tests/)).toMatch(/15\/20 passing/)
   expect(await text(ui, /impl ×2/)).toBeDefined()
   expect(await text(ui, /agent: impl-2/)).toBeDefined()

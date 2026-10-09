@@ -57,14 +57,15 @@ ALLOWED=(Read Write Edit Glob Grep mcp__graft
 # Status file: ONE small JSON line, overwritten in place (never appended), so it stays tiny.
 # Watch it with:  watch -n5 cat Docs/backlog/<slug>/logs/status.json
 STATUS="$LOG/status.json"; RUN_STARTED="$(date +%Y-%m-%dT%H:%M:%S)"
+MODELS_JSON="{}"; CUR_MODEL=""; CUR_EFFORT=""
 CUR_STAGE=""; CUR_AGENT=""; CUR_ATTEMPT=""; AGENT_STARTED=""; RUN_STATE="running"
 set_status() {
-  printf '{"slug":"%s","state":"%s","stage":"%s","agent":"%s","attempt":"%s","agent_started":"%s","run_started":"%s","updated":"%s","pid":%s}\n' \
-    "$SLUG" "$RUN_STATE" "$CUR_STAGE" "$CUR_AGENT" "$CUR_ATTEMPT" "$AGENT_STARTED" "$RUN_STARTED" "$(date +%Y-%m-%dT%H:%M:%S)" "$$" \
+  printf '{"slug":"%s","state":"%s","stage":"%s","agent":"%s","model":"%s","effort":"%s","models":%s,"attempt":"%s","agent_started":"%s","run_started":"%s","updated":"%s","pid":%s}\n' \
+    "$SLUG" "$RUN_STATE" "$CUR_STAGE" "$CUR_AGENT" "$CUR_MODEL" "$CUR_EFFORT" "$MODELS_JSON" "$CUR_ATTEMPT" "$AGENT_STARTED" "$RUN_STARTED" "$(date +%Y-%m-%dT%H:%M:%S)" "$$" \
     > "$STATUS.tmp" && mv "$STATUS.tmp" "$STATUS"
 }
 # Final state on any exit: done (0), paused for answers (2), failed (anything else).
-trap 'rc=$?; case $rc in 0) RUN_STATE=done;; 2) RUN_STATE=paused;; *) RUN_STATE=failed;; esac; CUR_AGENT=""; set_status' EXIT
+trap 'rc=$?; case $rc in 0) RUN_STATE=done;; 2) RUN_STATE=paused;; *) RUN_STATE=failed;; esac; CUR_AGENT=""; CUR_MODEL=""; CUR_EFFORT=""; set_status' EXIT
 
 # Default per stage (no limit; override for any run with MODEL_<STAGE> / EFFORT_<STAGE>): "<model> <effort>". See the header.
 stage_defaults() {
@@ -79,15 +80,24 @@ stage_defaults() {
     *)           echo "sonnet medium";;
   esac
 }
-# stage_flags <stage>: sets STAGE_FLAGS to "--model M --effort E" for the stage (stage env > SDLC_* env > default).
-stage_flags() {
-  local up; up=$(echo "$1" | tr 'a-z-' 'A-Z_')
-  local def dm de m e; def=$(stage_defaults "$1"); dm="${def% *}"; de="${def#* }"
-  eval "m=\"\${MODEL_$up:-\${SDLC_MODEL:-$dm}}\"; e=\"\${EFFORT_$up:-\${SDLC_EFFORT:-$de}}\""
-  case "$e" in low|medium|high|xhigh|max) ;; *) echo "ERROR: invalid effort '$e' for stage $1 (use low, medium, high, xhigh or max)" >&2; exit 1;; esac
-  STAGE_FLAGS=(--model "$m" --effort "$e")
-  echo "   model=$m effort=$e"
+# stage_model_effort <stage>: sets SM and SE for the stage (stage env > SDLC_* env > default); exits 1 on a bad effort.
+stage_model_effort() {
+  local up def dm de; up=$(echo "$1" | tr 'a-z-' 'A-Z_'); def=$(stage_defaults "$1"); dm="${def% *}"; de="${def#* }"
+  eval "SM=\"\${MODEL_$up:-\${SDLC_MODEL:-$dm}}\"; SE=\"\${EFFORT_$up:-\${SDLC_EFFORT:-$de}}\""
+  case "$SE" in low|medium|high|xhigh|max) ;; *) echo "ERROR: invalid effort '$SE' for stage $1 (use low, medium, high, xhigh or max)" >&2; exit 1;; esac
 }
+# stage_flags <stage>: sets STAGE_FLAGS to "--model M --effort E" and CUR_MODEL/CUR_EFFORT for the status file.
+stage_flags() {
+  stage_model_effort "$1"; CUR_MODEL="$SM"; CUR_EFFORT="$SE"
+  STAGE_FLAGS=(--model "$SM" --effort "$SE")
+  echo "   model=$SM effort=$SE"
+}
+# Resolved model/effort of every stage, written to status.json so the monitor can show them (and a bad value fails at the start).
+MODELS_JSON="{"
+for st in spec plan red-tests implement test-repair test-audit review; do
+  stage_model_effort "$st"; MODELS_JSON="$MODELS_JSON\"$st\":{\"model\":\"$SM\",\"effort\":\"$SE\"},"
+done
+MODELS_JSON="${MODELS_JSON%,}}"
 # render_prompt <stage>: scripts/prompts/prompt-<stage>.md with the {{PLACEHOLDERS}} filled in.
 render_prompt() {
   local f="scripts/prompts/prompt-$1.md" t
