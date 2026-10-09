@@ -82,6 +82,22 @@ Integration tests (`npm run test:integration`) are a required part of the pipeli
 
 CI skips them temporarily, with a visible warning. To enable them in CI, set the CI/CD variable `SDLC_INTEGRATION_CI=run` and provide `DATABASE_URL` (for example from a `postgres:16` service). No code change is needed.
 
+### Required integration tests for DB and API changes
+
+Every plan must contain a `## DB and API changes` section. Each bullet is exactly one of these forms, or the section is the single bullet `- none`:
+
+| Bullet | Token checked |
+|---|---|
+| ``- API: `METHOD /path` `` | `METHOD /path` |
+| ``- DB: migration `<name>` `` | `<name>` (no `.sql`) |
+| ``- DB: table `<table>` `` | `<table>` |
+| ``- DB: column `<table>.<column>` `` | `<table>.<column>` |
+| ``- DB: model `<name>` `` | `<name>` (no `.js`) |
+
+At the Red tests stage the `plan` check rejects a malformed section, and any token that does not appear in a new or modified file under `server/__tests__/integration/` (a bad plan costs one Red tests agent run). With integration bullets, the integration red check then runs the suite: it must fail before implementation. After each Implement attempt and after Review, the diff gate rejects source changes to `server/migrations/`, `server/schema.sql`, `server/models/`, `server/index.js`, `server/middleware/` or `server/validation.js` (comments and whitespace ignored) unless the original red-tests commit added integration tests; rerun from Plan if so.
+
+`scripts/sdlc-integration.sh` exit codes: 0 pass (or CI skip), 1 tests fail, 3 the suite could not run (no `test:integration` script, no database, container not ready); the Red tests stage stops on exit 3. In CI the red check is skipped with a warning unless `SDLC_INTEGRATION_CI=run`. Limitation: the diff gate only sees tracked changes, so a new untracked file under a source path is not seen until it is staged. There is no opt-out.
+
 ## SDLC pipeline: what the Ship stage commits
 
 At the start of a run (`FROM=spec`) `scripts/sdlc.sh` records every file that is already modified, staged or untracked in `Docs/backlog/<slug>/logs/baseline.json`. The Ship stage (`scripts/sdlc-ship.sh`) then commits exactly the files the cycle created, changed or deleted since that snapshot, anywhere in the repo, in one `feat(<slug>)` commit, and ticks the item in `Docs/backlog/index.md` in a second commit. Anything else the developer had staged is left staged.
