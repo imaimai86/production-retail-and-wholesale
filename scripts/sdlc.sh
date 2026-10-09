@@ -19,6 +19,10 @@
 #        TEST_AUDIT REVIEW (for example MODEL_IMPLEMENT=opus EFFORT_IMPLEMENT=high). SDLC_MODEL / SDLC_EFFORT set every stage
 #        that has no stage-specific value. Models: any `claude --model` value (alias or full id); effort: low|medium|high|xhigh|max.
 #        Defaults are in stage_defaults() below.
+#        Providers other than Anthropic: a model written "<provider>/<model>" (for example MODEL_IMPLEMENT=openrouter/openai/gpt-5)
+#        runs through Claude Code against that provider's Anthropic-compatible endpoint. Providers are listed in the repo-root
+#        .env (git-ignored; see .env.example): SDLC_PROVIDERS and, per provider, SDLC_PROVIDER_<NAME>_ENDPOINT, _API_KEY,
+#        _MODELS (comma list of allowed model names) and optional _EFFORT=yes (pass --effort; default no). Shell values win over .env.
 #        SDLC_INTEGRATION_CI=run  when CI is set the integration suite is skipped with a warning
 #        unless this is "run" (which also needs DATABASE_URL)
 set -euo pipefail
@@ -80,19 +84,60 @@ stage_defaults() {
     *)           echo "sonnet medium";;
   esac
 }
+# --- Model providers (see .env.example) ---------------------------------------------------------------------------------
+# load_env_models: copy the SDLC_PROVIDER* keys of the repo-root .env into the environment (a value already set in the shell wins).
+# Only those keys are read; the rest of .env is never exported.
+load_env_models() {
+  [ -f .env ] || return 0
+  local line k v
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in SDLC_PROVIDER*=*) ;; *) continue;; esac
+    k="${line%%=*}"; v="${line#*=}"
+    [[ "$k" =~ ^[A-Z0-9_]+$ ]] || continue
+    v="${v%\"}"; v="${v#\"}"; v="${v%\'}"; v="${v#\'}"
+    [ -n "${!k:-}" ] || export "$k=$v"
+  done < .env
+}
+prov_key() { echo "$1" | tr 'a-z-' 'A-Z_'; }
+prov_var() { local n="SDLC_PROVIDER_$(prov_key "$1")_$2"; printf '%s' "${!n:-}"; }
+# resolve_provider <model> <stage>: sets PV_ACTIVE (1 for a custom provider), PV_MODEL (name passed to --model), PV_ENDPOINT, PV_KEY and
+# PV_EFFORT_FLAG (1 = pass --effort). A model without "/" is an Anthropic model, untouched. Exits 1 on an unknown provider, a missing
+# endpoint or key, or a model name the provider does not list.
+resolve_provider() {
+  PV_ACTIVE=0; PV_ENDPOINT=""; PV_KEY=""; PV_MODEL="$1"; PV_EFFORT_FLAG=1
+  case "$1" in */*) ;; *) return 0;; esac
+  local p="${1%%/*}" m="${1#*/}" known=0 x ep key models list=()
+  IFS=',' read -ra list <<< "${SDLC_PROVIDERS:-}"
+  for x in ${list[@]+"${list[@]}"}; do x="${x// /}"; [ "$x" = "$p" ] && known=1; done
+  [ "$known" -eq 1 ] || { echo "ERROR: model '$1' (stage $2): provider '$p' is not listed in SDLC_PROVIDERS (see .env.example)" >&2; exit 1; }
+  ep="$(prov_var "$p" ENDPOINT)"; key="$(prov_var "$p" API_KEY)"; models="$(prov_var "$p" MODELS)"
+  { [ -n "$ep" ] && [ -n "$key" ]; } || { echo "ERROR: provider '$p' (stage $2) needs SDLC_PROVIDER_$(prov_key "$p")_ENDPOINT and SDLC_PROVIDER_$(prov_key "$p")_API_KEY" >&2; exit 1; }
+  case ",${models// /}," in *",$m,"*) ;; *) echo "ERROR: model '$m' (stage $2) is not in SDLC_PROVIDER_$(prov_key "$p")_MODELS (allowed: ${models:-none})" >&2; exit 1;; esac
+  PV_ACTIVE=1; PV_ENDPOINT="$ep"; PV_KEY="$key"; PV_MODEL="$m"
+  [ "$(prov_var "$p" EFFORT)" = yes ] || PV_EFFORT_FLAG=0
+}
+# apply_provider_env: run inside the subshell that starts claude, so the key never reaches the rest of the script or a command line.
+# ANTHROPIC_API_KEY is emptied so a real Anthropic key from the shell is never sent to a third-party endpoint.
+apply_provider_env() {
+  [ "$PV_ACTIVE" -eq 1 ] || return 0
+  export ANTHROPIC_BASE_URL="$PV_ENDPOINT" ANTHROPIC_AUTH_TOKEN="$PV_KEY" ANTHROPIC_API_KEY="" \
+    ANTHROPIC_DEFAULT_HAIKU_MODEL="$PV_MODEL" ANTHROPIC_SMALL_FAST_MODEL="$PV_MODEL"
+}
 # stage_model_effort <stage>: sets SM and SE for the stage (stage env > SDLC_* env > default); exits 1 on a bad effort.
 stage_model_effort() {
   local up def dm de; up=$(echo "$1" | tr 'a-z-' 'A-Z_'); def=$(stage_defaults "$1"); dm="${def% *}"; de="${def#* }"
   eval "SM=\"\${MODEL_$up:-\${SDLC_MODEL:-$dm}}\"; SE=\"\${EFFORT_$up:-\${SDLC_EFFORT:-$de}}\""
   case "$SE" in low|medium|high|xhigh|max) ;; *) echo "ERROR: invalid effort '$SE' for stage $1 (use low, medium, high, xhigh or max)" >&2; exit 1;; esac
+  resolve_provider "$SM" "$1"
 }
 # stage_flags <stage>: sets STAGE_FLAGS to "--model M --effort E" and CUR_MODEL/CUR_EFFORT for the status file.
 stage_flags() {
   stage_model_effort "$1"; CUR_MODEL="$SM"; CUR_EFFORT="$SE"
-  STAGE_FLAGS=(--model "$SM" --effort "$SE")
-  echo "   model=$SM effort=$SE"
+  STAGE_FLAGS=(--model "$PV_MODEL")
+  if [ "$PV_EFFORT_FLAG" -eq 1 ]; then STAGE_FLAGS+=(--effort "$SE"); echo "   model=$SM effort=$SE"; else echo "   model=$SM (provider without effort)"; fi
 }
 # Resolved model/effort of every stage, written to status.json so the monitor can show them (and a bad value fails at the start).
+load_env_models
 MODELS_JSON="{"
 for st in spec plan red-tests implement test-repair test-audit review; do
   stage_model_effort "$st"; MODELS_JSON="$MODELS_JSON\"$st\":{\"model\":\"$SM\",\"effort\":\"$SE\"},"
@@ -116,8 +161,8 @@ agent() {
   echo "   -> agent: $name"
   stage_flags "$pstage"
   CUR_AGENT="$name"; AGENT_STARTED="$(date +%Y-%m-%dT%H:%M:%S)"; set_status
-  claude -p "$prompt" "${STAGE_FLAGS[@]}" --permission-mode acceptEdits --allowedTools "${ALLOWED[@]}" \
-    --max-turns "$MAX_TURNS" > "$LOG/$name.log" 2>&1 \
+  ( apply_provider_env; exec claude -p "$prompt" "${STAGE_FLAGS[@]}" --permission-mode acceptEdits --allowedTools "${ALLOWED[@]}" \
+    --max-turns "$MAX_TURNS" ) > "$LOG/$name.log" 2>&1 \
     || { echo "   !! agent '$name' failed, see $LOG/$name.log"; [ "$pstage" = test-repair ] && resume_hint || true; exit 1; }
 }
 # manual_input <stage>: the developer's text from the "## <stage>" section of manual-inputs.md, as a prompt suffix.
@@ -303,8 +348,8 @@ if [ "$GREEN" -ne 1 ]; then
   $CHECK redcheck "$LOG/red.json" "$LOG/repaired-on-red.json" || reject "a repaired test no longer fails on the unimplemented source"
   stage_flags test-audit
   AUDIT_PROMPT="$(render_prompt test-audit)"
-  claude -p "$AUDIT_PROMPT" "${STAGE_FLAGS[@]}" \
-    --allowedTools Read Glob Grep --max-turns 15 > "$LOG/test-audit.log" 2>&1 || reject "auditor failed to run" hint
+  ( apply_provider_env; exec claude -p "$AUDIT_PROMPT" "${STAGE_FLAGS[@]}" \
+    --allowedTools Read Glob Grep --max-turns 15 ) > "$LOG/test-audit.log" 2>&1 || reject "auditor failed to run" hint
   cp "$LOG/test-audit.log" "$DOCS/test-audit.md"
   [ "$(grep -E '^VERDICT: (VALID|INVALID)$' "$LOG/test-audit.log" | tail -1)" = "VERDICT: VALID" ] || reject "independent auditor did not return VERDICT: VALID"
   success_check || reject "checks still fail after an audited repair; see $FAIL_LOG"
