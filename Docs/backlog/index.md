@@ -32,4 +32,5 @@ Markers: [ ] pending, [x] completed, [!] blocked, [~] parked (skipped by `script
 - [ ] `add-stage-input-gate` - Feature: pipeline waits before each agent stage (Spec, Plan, Red tests, Implement, Review) for the developer's input; opt-in gate with a pane screen
 - [ ] `add-stage-stop-with-input` - Feature: stop a running stage from the pane, add input for it, and restart that stage in one action
 - [ ] `add-monitor-fullscreen` - Feature: redesign the /sdlc-monitor pane as a large two-column screen (pipeline list, stage rail, input, live output, key hints) and a Files changed view (docs, tests, source) available at any time
+- [ ] `add-model-registry` - Feature: add, list, test and remove custom providers and models from the pane; stored once per user in a cross-OS JSON file, API keys by env variable name only
 - [ ] `add-stage-model-switch` - Feature: choose model and effort per stage from the pane before the stage starts (non-blocking, locked once the stage has started; stop and resume to change it)
