@@ -27,6 +27,11 @@ At any point, in any state, the developer can open a progress view of the select
   - Data: `scripts/sdlc-mod.sh changes <slug> --json` gains a `files` array of `{ "path", "status", "committed" }`; its existing keys and the table output are unchanged. The snapshot carries it as `Run.changes.files`; it refreshes on the existing 10 s cadence for a pipeline that is not running (`CHANGES_EVERY_MS`) and every poll for a running one.
   - Unmanaged runs and discarded ones have no list; the view says "not available" as the counts do today.
   - Opening a file (viewing its contents) is out of scope; the view lists paths only.
+- Open and minimize:
+  - The pane never opens on its own. It opens only from the `/sdlc-monitor` command or the `SDLC` button above the prompt (`AbovePrompt` render, already present).
+  - A Close action (`q`, and `Esc` through `closeOnEscape: true` on `$.ui.open`) calls `$.ui.close({ id: PANE })` and returns the person to the normal view. There is no separate minimized state: the typings offer open and close only.
+  - While the pane is closed the `SDLC` button stays above the prompt with the running, waiting and queued counts, the status line summary and the toasts keep working, and pipelines keep running (they are background processes).
+  - Reopening shows the pipeline that was selected, the drafts and the queue, because they live in plugin atoms (`view`, `draft`, `queue`), not in the pane. Closing does not reset them.
 - Everything the pane does today keeps working: start, select several and run, queue, answer Spec questions, stop with confirm, discard and restart, change counts, base branch display, toasts.
 - The input and stop controls from `add-stage-input-gate` and `add-stage-stop-with-input` are drawn in this layout; until they exist the layout keeps today's input row and Stop button.
 - Colours, terminal-safe: green done, cyan running, yellow waiting or stopped, red failed, dim grey pending. No colour carries meaning alone: every state also has its glyph and word.
@@ -39,6 +44,7 @@ At any point, in any state, the developer can open a progress view of the select
 
 ## Tests
 - `.claude/plugins/sdlc-monitor/hooks/register.test.ts`: `ui.open` is called with `focus: true` and the size request; the overview renders the list and the detail for the selected run; each state shows its glyph and word; the six stage boxes follow `status.json`; times render in GST; start, stop, discard, queue and the Spec question flow still work.
+- `register.test.ts` also covers open and close: nothing is opened at `session.start`; the `SDLC` button and `/sdlc-monitor` call `ui.open`; `q` and `Esc` call `ui.close`; after a close and reopen the same pipeline is selected and the drafts are intact; the button still renders with counts while closed.
 - `server/__tests__/scripts/sdlc-mod.test.js` (throwaway git repos): `changes --json` returns `files` with the right path, status and `committed` for an added, a modified, a deleted and an untracked file, and keeps its existing keys; `logs/` paths are not listed.
 - `register.test.ts` also covers the Files changed view: grouping into docs, tests and source; `f` opens it in a running, waiting, stopped and done state and `Esc` closes it; an unmanaged run shows "not available".
 - Integration tests: none, there is no database or API change.
