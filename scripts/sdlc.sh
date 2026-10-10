@@ -23,6 +23,8 @@
 #        runs through Claude Code against that provider's Anthropic-compatible endpoint. Providers are listed in the repo-root
 #        .env (git-ignored; see .env.example): SDLC_PROVIDERS and, per provider, SDLC_PROVIDER_<NAME>_ENDPOINT, _API_KEY,
 #        _MODELS (comma list of allowed model names) and optional _EFFORT=yes (pass --effort; default no). Shell values win over .env.
+#        Providers are looked up first in the user-level registry (scripts/sdlc-mod.sh model ...; the key is read from the
+#        environment variable the provider names), then in SDLC_PROVIDER*. The registry wins as a whole for a provider it lists.
 #        SDLC_INTEGRATION_CI=run  when CI is set the integration suite is skipped with a warning
 #        unless this is "run" (which also needs DATABASE_URL)
 set -euo pipefail
@@ -100,13 +102,36 @@ load_env_models() {
 }
 prov_key() { echo "$1" | tr 'a-z-' 'A-Z_'; }
 prov_var() { local n="SDLC_PROVIDER_$(prov_key "$1")_$2"; printf '%s' "${!n:-}"; }
-# resolve_provider <model> <stage>: sets PV_ACTIVE (1 for a custom provider), PV_MODEL (name passed to --model), PV_ENDPOINT, PV_KEY and
+# The registry helper (user-level models.json). ROOT is the repo root; the tests run this block from another directory.
+models_helper() { node "${ROOT:-$PWD}/scripts/sdlc-models.cjs" "$@"; }
+# registry_check: a broken registry file fails the run at startup, whatever models the stages use.
+registry_check() { [ -f "${ROOT:-$PWD}/scripts/sdlc-models.cjs" ] || return 0; models_helper list --json >/dev/null || exit 1; }
+# resolve_provider <model> <stage>: looks the provider up in the registry first, then in SDLC_PROVIDER*. Sets PV_ACTIVE (1 for a custom provider), PV_MODEL (name passed to --model), PV_ENDPOINT, PV_KEY and
 # PV_EFFORT_FLAG (1 = pass --effort). A model without "/" is an Anthropic model, untouched. Exits 1 on an unknown provider, a missing
 # endpoint or key, or a model name the provider does not list.
 resolve_provider() {
   PV_ACTIVE=0; PV_ENDPOINT=""; PV_KEY=""; PV_MODEL="$1"; PV_EFFORT_FLAG=1
   case "$1" in */*) ;; *) return 0;; esac
-  local p="${1%%/*}" m="${1#*/}" known=0 x ep key models list=()
+  local p="${1%%/*}" m="${1#*/}" known=0 x ep key models list=() out err rc=0 line kv="" models_ok
+  err="$(mktemp)"; out="$(models_helper get "$p" 2>"$err")" || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    rm -f "$err"
+    while IFS= read -r line; do
+      case "$line" in
+        endpoint=*) ep="${line#endpoint=}";; api_key_env=*) kv="${line#api_key_env=}";;
+        models=*) models="${line#models=}";; effort=*) [ "${line#effort=}" = true ] || PV_EFFORT_FLAG=0;;
+      esac
+    done <<< "$out"
+    case "$m" in *,*) models_ok=0;; *) models_ok=1;; esac
+    case ",$models," in *",$m,"*) ;; *) models_ok=0;; esac
+    [ "$models_ok" -eq 1 ] || { echo "ERROR: model '$m' (stage $2) is not in the registry models of provider '$p' (allowed: $models)" >&2; exit 1; }
+    key="${!kv:-}"
+    [ -n "$key" ] || { echo "ERROR: provider '$p' (stage $2): key variable $kv is not set in the environment (export it; .env is not read for a registry provider)" >&2; exit 1; }
+    PV_ACTIVE=1; PV_ENDPOINT="$ep"; PV_KEY="$key"; PV_MODEL="$m"
+    return 0
+  fi
+  line="$(cat "$err")"; rm -f "$err"
+  [ "$line" = "unknown provider '$p'" ] || { echo "ERROR: model registry: $line" >&2; exit 1; }
   IFS=',' read -ra list <<< "${SDLC_PROVIDERS:-}"
   for x in ${list[@]+"${list[@]}"}; do x="${x// /}"; [ "$x" = "$p" ] && known=1; done
   [ "$known" -eq 1 ] || { echo "ERROR: model '$1' (stage $2): provider '$p' is not listed in SDLC_PROVIDERS (see .env.example)" >&2; exit 1; }
@@ -139,6 +164,7 @@ stage_flags() {
 # Resolved model/effort of every stage, written to status.json so the monitor can show them (and a bad value fails at the start).
 load_env_models
 MODELS_JSON="{"
+registry_check
 for st in spec plan red-tests implement test-repair test-audit review; do
   stage_model_effort "$st"; MODELS_JSON="$MODELS_JSON\"$st\":{\"model\":\"$SM\",\"effort\":\"$SE\"},"
 done
