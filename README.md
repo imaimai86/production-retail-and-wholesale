@@ -82,6 +82,16 @@ Integration tests (`npm run test:integration`) are a required part of the pipeli
 
 CI skips them temporarily, with a visible warning. To enable them in CI, set the CI/CD variable `SDLC_INTEGRATION_CI=run` and provide `DATABASE_URL` (for example from a `postgres:16` service). No code change is needed.
 
+### Integration tests are required for every database or API change
+
+The pipeline refuses to finish a run that changes the database or the API without integration tests for the change:
+
+- **Plan.** `plan-1.md` must contain a `## DB and API changes` section. Each bullet is exactly one of: ``- API: `<METHOD> <path>` ``, ``- DB: migration `<file name without .sql>` ``, ``- DB: table `<name>` ``, ``- DB: column `<table.column>` `` or ``- DB: model `<file name without .js>` ``; or the single bullet `- none`. A plan without the section fails the Plan stage.
+- **Red tests.** For every bullet the QA agent writes integration tests in `server/__tests__/integration/` (like `api.integration.test.js`, with `server/test-utils/scratchDb.js` and `supertest`), with the bullet's text (for example `POST /sales/:id/refund` or `refunds.reason`) in a `describe` or `test` title. `scripts/sdlc-integration-gate.cjs plan` checks this, then `scripts/sdlc-integration.sh` must show those tests failing before the implementation exists. If they pass, the run stops with `RED GATE FAILED`; if there is no database (exit code 3), it stops with `ERROR: no database for the integration red check`. In CI the red check is skipped with a warning, like the rest of the integration suite.
+- **Implement and Review.** After each Implement attempt and after Review, `scripts/sdlc-integration-gate.cjs diff` rejects the run if source changed (`server/migrations/`, `server/schema.sql`, `server/models/`, `server/index.js`, `server/middleware/`, `server/validation.js`; comment-only and whitespace-only edits are ignored) but the original Red tests commit added no files under `server/__tests__/integration/`. Rerun from Plan in that case.
+
+There is no switch to turn this off. Docs, `server/test-utils/`, `server/scripts/` and package files are not source changes.
+
 ## Interactive SDLC: control pane and parallel pipelines
 
 `scripts/sdlc-mod.sh` runs the normal pipeline (`scripts/sdlc.sh`, unchanged) for one backlog item in its **own git worktree**, so several items can run at once. Two Claude Code plugins in `.claude/plugins/` add the interface and the guard rails.
@@ -97,6 +107,8 @@ bash scripts/sdlc-mod.sh restart <slug> [--yes]   # stop it if running, discard 
 `discard` and `restart` throw away the item's worktree, its local branch `sdlc/<slug>` (including unpushed commits and uncommitted files) and its run record, but first save the branch tip in `.git/sdlc-runs/<slug>.discarded`; the command it prints, `git branch sdlc/<slug> <sha>`, brings the work back. `discard` refuses a running pipeline unless `--stop` is given, which stops it first (after `--yes`); `restart` stops it itself. `restart` refuses an item already merged into the base branch (exit 5).
 
 At most 2 pipelines run at once (`SDLC_MAX_PARALLEL`, exit code 3 when full). Run records live in `.git/sdlc-runs/`. The wrapper links `server/node_modules`, `graft` and `.env` into each worktree.
+
+Because the wrapper runs `scripts/sdlc.sh` itself, every pipeline it starts is subject to the same integration-test requirement (see "Integration tests are required for every database or API change"). Each worktree's Red tests stage needs a database for the integration red check: the shared `.env` is read, or a throwaway Docker Postgres is started. Parallel runs are safe because every run creates and drops its own `prw_test_*` databases. A worktree uses the scripts of the branch it starts from (`SDLC_BASE`, default `origin/main`), so the requirement applies once these scripts are on that branch.
 
 **Control pane (`sdlc-monitor` plugin).** Start Claude with `claude --plugin-dir .claude/plugins/sdlc-monitor`, then press the **SDLC** button above the prompt or type `/sdlc-monitor`.
 

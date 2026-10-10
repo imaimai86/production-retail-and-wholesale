@@ -1,2 +1,3 @@
 Slug: $ARGUMENTS
 Read `Docs/backlog/$ARGUMENTS/specs-1.md`. Use Graft to find affected code, then write the technical plan to `Docs/backlog/$ARGUMENTS/plan-1.md`. No source edits.
+The plan MUST contain a section titled exactly `## DB and API changes`. Each bullet is exactly one of (backticks literal): `- API: `<METHOD> <path>``, `- DB: migration `<file name without .sql>``, `- DB: table `<name>``, `- DB: column `<table.column>``, `- DB: model `<file name without .js>``, or the single bullet `- none`. Check it with `node scripts/sdlc-integration-gate.cjs section Docs/backlog/$ARGUMENTS/plan-1.md`.

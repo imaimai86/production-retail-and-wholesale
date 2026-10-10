@@ -113,9 +113,9 @@ describe('scripts/sdlc-integration.sh', () => {
     expect(r.log).toContain('npm run test:integration');
   });
 
-  test('4. missing test:integration script exits 1 with message', () => {
+  test('4. missing test:integration script exits 3 with message', () => {
     const r = run({ SHIM_NODE_RC: '1', DATABASE_URL: 'postgres://u:p@h:1/d' });
-    expect(r.status).toBe(1);
+    expect(r.status).toBe(3);
     expect(r.out).toContain('no test:integration script');
     expect(r.log).not.toContain('npm ');
   });
@@ -164,9 +164,9 @@ describe('scripts/sdlc-integration.sh', () => {
     expect(r.log).toMatch(/^docker rm -f/m);
   });
 
-  test('7. neither DATABASE_URL nor docker exits 1 with message', () => {
+  test('7. neither DATABASE_URL nor docker exits 3 with message', () => {
     const r = run({}, { withDocker: false });
-    expect(r.status).toBe(1);
+    expect(r.status).toBe(3);
     expect(r.out).toContain('DATABASE_URL or docker');
     expect(r.log).not.toContain('npm ');
   });

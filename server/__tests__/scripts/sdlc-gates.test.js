@@ -13,8 +13,8 @@ describe('scripts/sdlc.sh gates', () => {
     expect(sdlc).toMatch(/success_check\s*\(\)/);
   });
 
-  test('Red tests gate stays unit-only', () => {
-    const l = lineWith(/RED GATE FAILED/);
+  test('the unit-test Red tests gate uses tests_pass (integration tests get their own red check)', () => {
+    const l = lineWith(/RED GATE FAILED: new tests pass before implementation/);
     expect(l).toContain('tests_pass');
     expect(l).not.toContain('success_check');
   });

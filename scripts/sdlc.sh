@@ -5,6 +5,9 @@
 #        FROM=implement  resume after Spec/Plan/Red tests (uses the existing red-tests commit)
 #        SDLC_INTEGRATION_CI=run  when CI is set the integration suite is skipped with a warning
 #        unless this is "run" (which also needs DATABASE_URL)
+# Integration tests are required for every DB or API change: the plan lists them in "## DB and API changes",
+# Red tests must write integration tests for each item and see them fail, and the diff gate rejects source
+# changes whose Red tests commit added none (scripts/sdlc-integration-gate.cjs).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -14,6 +17,7 @@ MAX_REPAIR_TESTS="${MAX_REPAIR_TESTS:-3}"
 FROM="${FROM:-spec}"
 ROOT="$(pwd)"
 CHECK="node scripts/sdlc-testcheck.cjs"
+GATE="node scripts/sdlc-integration-gate.cjs"
 TEST_CMD="npm test"
 TEST_DIR="server/__tests__"
 BACKLOG="Docs/backlog/index.md"
@@ -62,6 +66,8 @@ success_check() {
   if ! tests_pass; then FAIL_LOG="$LOG/tests.log"; return 1; fi
   if ! integration_check; then FAIL_LOG="$LOG/integration.log"; return 1; fi
 }
+# Source changed since the lock commit but the original Red tests commit added no integration tests: reject.
+integration_gate() { $GATE diff "$RED_SHA" "$ORIG_RED_SHA"; }
 stage() { echo; echo "== $1"; CUR_STAGE="$(echo "$1" | sed -E 's/^[0-9a-z]+(\/[0-9]+)? //; s/ \(.*//')"; CUR_AGENT=""; CUR_ATTEMPT=""; set_status; }
 # jest_json_at <sha> <out> [files...]: run the suite on <sha>'s source, optionally overlaying test files from the working tree.
 jest_json_at() {
@@ -118,15 +124,32 @@ fi
 # 2. PLAN ---------------------------------------------------------------
 stage "2/6 Plan"
 agent plan "You are an Architecture Planner. Read $DOCS/specs-1.md. Use the Graft MCP tools to find the affected files and callers; read only those files.
-Write a step-by-step technical plan to $DOCS/plan-1.md (files, functions, order). No source edits."
+Write a step-by-step technical plan to $DOCS/plan-1.md (files, functions, order). No source edits.
+Your plan MUST contain a section titled exactly '## DB and API changes'. Its bullets must each be exactly one of these forms (the backticks are literal): - API: \`<METHOD> <path>\` (METHOD is GET, POST, PUT, PATCH or DELETE, for example \`POST /sales/:id/refund\`), - DB: migration \`<file name without .sql>\`, - DB: table \`<name>\`, - DB: column \`<table.column>\`, - DB: model \`<file name without .js>\`. Write one bullet for every API route, migration, table, column or model file this work adds or changes, or the single bullet '- none' if it changes none of them."
 [ -f "$DOCS/plan-1.md" ] || { echo "Plan not produced"; exit 1; }
+$GATE section "$DOCS/plan-1.md" > /dev/null || { echo "PLAN GATE FAILED: see the REJECT line above."; exit 1; }
 
 # 3. RED TESTS ------------------------------------------------------------
 stage "3/6 Red tests (red gate)"
 agent tests "You are a QA Engineer. Read $DOCS/specs-1.md and $DOCS/plan-1.md.
 Write a test matrix to $DOCS/test-cases-1.md and the matching Jest tests under $TEST_DIR/ (mirror the source layout). Do NOT change source code outside $TEST_DIR/.
-Tests must exercise the code under test by importing or running it. A test must NEVER read, scan or assert on the text of any test file, including itself (no __filename, no reading a *.test.js file, no readdir of __tests__ or __dirname). This includes rules about what test files must not contain (for example 'no test checks the executable bit'): a test file that states the forbidden word always contains it, so such a check can never pass. Do not write a test for a rule about the tests themselves; list it in $DOCS/test-cases-1.md as a review item instead."
+Tests must exercise the code under test by importing or running it. A test must NEVER read, scan or assert on the text of any test file, including itself (no __filename, no reading a *.test.js file, no readdir of __tests__ or __dirname). This includes rules about what test files must not contain (for example 'no test checks the executable bit'): a test file that states the forbidden word always contains it, so such a check can never pass. Do not write a test for a rule about the tests themselves; list it in $DOCS/test-cases-1.md as a review item instead.
+For every bullet in the '## DB and API changes' section of $DOCS/plan-1.md (unless it is '- none'), write integration tests in $TEST_DIR/integration/, following $TEST_DIR/integration/api.integration.test.js (helper server/test-utils/scratchDb.js, supertest on require('../../index')). Write the bullet's token (for example POST /sales/:id/refund, 003_add_refunds, refunds, refunds.reason or sales) in a describe or test title, and add a matching '## Integration tests' section to $DOCS/test-cases-1.md. These tests run against a real database and are checked to fail before the implementation exists."
+PLAN_KIND="$($GATE plan "$DOCS/plan-1.md" "$TEST_DIR")" || { echo "RED GATE FAILED: integration tests are missing for the plan's DB and API changes."; exit 1; }
 if tests_pass; then echo "RED GATE FAILED: new tests pass before implementation. See $LOG/tests.log"; exit 1; fi
+if [ "$PLAN_KIND" = required ]; then
+  if [ -n "${CI:-}" ] && [ "${SDLC_INTEGRATION_CI:-}" != "run" ]; then
+    echo "WARNING: TEMPORARY: integration red check skipped in CI. Set SDLC_INTEGRATION_CI=run once CI has a database."
+  else
+    rc=0; bash scripts/sdlc-integration.sh > "$LOG/integration.log" 2>&1 || rc=$?
+    case "$rc" in
+      1) echo " integration tests fail as expected (red)" ;;
+      0) echo "RED GATE FAILED: new integration tests pass before implementation. See $LOG/integration.log"; exit 1 ;;
+      3) echo "ERROR: no database for the integration red check (set DATABASE_URL or start Docker)"; echo "See $LOG/integration.log"; exit 1 ;;
+      *) echo "ERROR: the integration red check could not run (exit $rc). See $LOG/integration.log"; exit 1 ;;
+    esac
+  fi
+fi
 git add "$DOCS" "$TEST_DIR"
 git commit -q -m "test($SLUG): add failing tests and spec/plan docs"
 RED_SHA=$(git rev-parse HEAD)
@@ -151,6 +174,7 @@ If you are convinced a failing test is itself wrong (it contradicts $DOCS/specs-
   if [ -n "$(git diff --name-only "$RED_SHA" -- "$TEST_DIR")" ]; then
     echo "GUARD FAILED: tests were modified during implementation"; git diff --name-only "$RED_SHA" -- "$TEST_DIR"; exit 1
   fi
+  integration_gate || { echo "INTEGRATION TEST GATE FAILED: see the REJECT lines above."; exit 1; }
   if success_check; then echo " tests and integration green"; GREEN=1; break; fi
 done
 if [ "$GREEN" -ne 1 ]; then
@@ -205,6 +229,7 @@ stage "5/6 Review"
 agent review "You are a code reviewer. Review 'git diff $RED_SHA' against $DOCS/specs-1.md for correctness bugs, missed edge cases and security issues.
 Fix real problems in source files (never under $TEST_DIR/). Write a short summary to $DOCS/review-1.md."
 if [ -n "$(git diff --name-only "$RED_SHA" -- "$TEST_DIR")" ]; then echo "GUARD FAILED: review modified tests"; exit 1; fi
+integration_gate || { echo "INTEGRATION TEST GATE FAILED: see the REJECT lines above."; exit 1; }
 success_check || { echo "Checks broke after review. See $FAIL_LOG"; exit 1; }
 
 # 6. SHIP -----------------------------------------------------------------

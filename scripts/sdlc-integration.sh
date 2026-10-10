@@ -2,6 +2,8 @@
 # Run the integration suite (npm run test:integration) the way the SDLC pipeline does.
 # Database: DATABASE_URL from the shell, else from the repo-root .env (local host only), else a throwaway Docker Postgres.
 # Run from the repo root. Env: CI, SDLC_INTEGRATION_CI, SDLC_DB, SDLC_ALLOW_REMOTE_DB (see README.md "SDLC pipeline: integration tests").
+# Exit codes: 0 suite passed (or skipped in CI), 1 tests failed or another error, 3 infrastructure missing
+# (no test:integration script, or neither DATABASE_URL nor docker), so callers can tell "tests are red" from "cannot run".
 set -euo pipefail
 
 # TODO(temporary): remove this skip once CI provides a database
@@ -12,7 +14,7 @@ fi
 
 if ! node -e 'const s=require("./server/package.json").scripts||{}; process.exit(s["test:integration"]?0:1)'; then
   echo "ERROR: no test:integration script in server/package.json (see add-db-integration-tests)"
-  exit 1
+  exit 3
 fi
 
 # Database, first match wins:
@@ -75,7 +77,7 @@ elif command -v docker >/dev/null 2>&1; then
   export DATABASE_URL="postgres://app:${PW}@127.0.0.1:${PORT}/app"
 else
   echo "ERROR: integration tests need DATABASE_URL or docker"
-  exit 1
+  exit 3
 fi
 
 rc=0

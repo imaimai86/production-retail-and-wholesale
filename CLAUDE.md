@@ -29,6 +29,7 @@ ADMIN_TOKEN=secret
 - Run `npm test` from the repo root before committing changes.
 - Use the existing Express server structure when adding endpoints or features.
 - Tests live in `server/__tests__/`, mirroring the code layout.
+- Every database or API change (migration, table, column, model, route) needs integration tests in `server/__tests__/integration/`; the plan lists them under `## DB and API changes` and the pipeline enforces it (see `README.md`).
 - Spec, plan and test docs live in `Docs/backlog/<slug>/`.
 
 ## SDLC pipeline
