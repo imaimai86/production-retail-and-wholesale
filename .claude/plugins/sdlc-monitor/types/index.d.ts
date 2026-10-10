@@ -45,6 +45,9 @@ export type AgentRow = {
   tokens: number
 }
 
+export type ConfigProvider = { endpoint: string; api_key_env: string; models: string[]; effort: boolean; key_set: boolean }
+export type ConfigForm = { provider: string; endpoint: string; keyEnv: string; models: string }
+
 declare module 'claude-code' {
   interface PluginState {
     'sdlc-monitor': {
@@ -63,6 +66,16 @@ declare module 'claude-code' {
       // answers typed for a paused run, keyed `<slug>:<question number>`
       draft: Record<string, string>
       notice: string
+      // the last `model list --json` result; null when never loaded or the last load failed
+      configList: Record<string, ConfigProvider> | null
+      // the message line of a failed `model list --json`; '' otherwise
+      configError: string
+      // the four form values stored by Enter
+      configForm: ConfigForm
+      // the provider whose Remove waits for a second press; '' when none
+      configConfirmProvider: string
+      // the model whose Remove waits for a second press
+      configConfirmModel: { provider: string; model: string } | null
     }
   }
 }

@@ -44,7 +44,11 @@ const PENDING = [
 ]
 
 // A repo with the given pipelines recorded, and every process call captured.
-function world(on: any, runs: RunSpec[] = []) {
+type ModelReply = { exitCode?: number; stdout?: string; stderr?: string } | undefined
+
+function world(on: any, runs: RunSpec[] = [], model?: (argv: string[]) => ModelReply) {
+  const opens: { id: string; title: string }[] = []
+  const toasts: string[] = []
   const calls: string[][] = []
   const envs: Record<string, string>[] = []
   const writes: { path: string; text: string }[] = []
@@ -115,14 +119,28 @@ function world(on: any, runs: RunSpec[] = []) {
       return out(JSON.stringify({ slug: e.argv[3], worktree: WT, changed: c.changed, uncommitted: c.uncommitted, files: [] }))
     }
 
+    if (model && e.argv[1] === 'scripts/sdlc-mod.sh' && e.argv[2] === 'model') {
+      const r = model(e.argv.slice(3))
+      if (r) return { value: { exitCode: r.exitCode ?? 0, stdout: r.stdout ?? '', stderr: r.stderr ?? '', isStdoutTruncated: false } }
+    }
+
     return out('')
   })
   on('agent.list', () => ({ value: [] }))
   on('command.register', () => ({ value: undefined }) as never)
-  on('ui.open', () => ({ value: { isPlaced: true } }) as never)
+  on('ui.open', (_: unknown, e: { id: string; title: string }) => {
+    opens.push({ id: e.id, title: e.title })
+
+    return { value: { isPlaced: true } } as never
+  })
+  on('ui.toast', (_: unknown, e: { message?: string; text?: string }) => {
+    toasts.push(String(e.message ?? e.text ?? ''))
+
+    return { value: undefined } as never
+  })
   on('ui.status', () => ({ value: undefined }) as never)
 
-  return { calls, envs, writes, clock, revive: (slug: string) => gone.delete(slug) }
+  return { calls, envs, writes, opens, toasts, clock, revive: (slug: string) => gone.delete(slug) }
 }
 
 async function open($: any) {
@@ -486,5 +504,218 @@ test('a finished pipeline is not recounted within 10 seconds; a running one is r
   await w.clock.advance(10000)
   await $.command.run({ command: 'sdlc-monitor', args: '' })
   expect(changesCalls(w.calls, 'cc-fin').length).toBeGreaterThan(fin0)
+  await ui.unmount()
+})
+
+
+// ---- CONFIG pane ----
+
+const modelCalls = (calls: string[][]) => calls.filter(c => c[0] === 'bash' && c[1] === 'scripts/sdlc-mod.sh' && c[2] === 'model').map(c => c.slice(3))
+
+async function openConfig($: any) {
+  await $.command.run({ command: 'sdlc-config', args: '' })
+
+  return $.ui.mount({ plugin: 'sdlc-monitor', surface: 'terminal', component: 'Pane', requestId: 'config', props: {} })
+}
+
+type Reg = Record<string, { endpoint: string; api_key_env: string; models: string[]; effort: boolean; key_set: boolean }>
+
+const REGISTRY: Reg = {
+  acme: { endpoint: 'https://a.example', api_key_env: 'ACME_KEY', models: ['fast', 'big'], effort: true, key_set: true },
+  other: { endpoint: 'http://localhost:4000', api_key_env: 'OTHER_KEY', models: ['one'], effort: false, key_set: false },
+}
+
+// A registry in memory that answers like scripts/sdlc-models.cjs; `fail` overrides one subcommand.
+function registry(start: Reg, fail: Record<string, ModelReply> = {}) {
+  const reg: Reg = JSON.parse(JSON.stringify(start))
+
+  return (argv: string[]): ModelReply => {
+    const [cmd] = argv
+    if (fail[cmd]) return fail[cmd]
+    if (cmd === 'list') return { stdout: JSON.stringify({ providers: reg }) + '\n' }
+    if (cmd === 'add') return { stdout: `added ${argv[1]} (${argv[argv.indexOf('--models') + 1].split(',').length} models)\n` }
+    if (cmd === 'remove') return { stdout: `removed ${argv[1]}\n` }
+    if (cmd === 'remove-model') return { stdout: `removed ${argv[1]}/${argv[2]}\n` }
+    if (cmd === 'test') return { stdout: 'ok\n' }
+
+    return undefined
+  }
+}
+
+const type = async (ui: any, key: string, value: string) => {
+  await ui.input({ key, text: value })
+}
+
+test('CONFIG button sits beside SDLC and opens the CONFIG pane', async ($, on) => {
+  const w = world(on)
+  await $.command.run({ command: 'sdlc-monitor', args: '' })
+  const ui = await $.ui.mount({ plugin: 'sdlc-monitor', surface: 'terminal', component: 'AbovePrompt', requestId: 'band', props: {} })
+
+  expect((await ui.find({ key: 'sdlc-open' }))?.props.label).toBe('SDLC')
+  const button = await ui.find({ key: 'config-open' })
+  expect(button?.props.label).toBe('CONFIG')
+  expect(button?.props.variant).toBeUndefined()
+  await ui.press({ key: 'config-open' })
+  expect(w.opens).toContainEqual({ id: 'config', title: 'CONFIG' })
+  await ui.unmount()
+})
+
+test('/sdlc-config opens the pane and the registry is not read before that', async ($, on) => {
+  const w = world(on, [], registry(REGISTRY))
+  await $.command.run({ command: 'sdlc-monitor', args: '' })
+  expect(modelCalls(w.calls)).toEqual([])
+  const r = (await $.command.run({ command: 'sdlc-config', args: '' })) as { text: string }
+
+  expect(r.text.length).toBeGreaterThan(0)
+  expect(w.opens).toContainEqual({ id: 'config', title: 'CONFIG' })
+  expect(modelCalls(w.calls)).toEqual([['list', '--json']])
+})
+
+test('the pane lists providers, key state, models and effort', async ($, on) => {
+  world(on, [], registry(REGISTRY))
+  const ui = await openConfig($)
+
+  for (const re of [/^acme$/, /https:\/\/a\.example/, /^ACME_KEY$/, /^key set$/, /^other$/, /^OTHER_KEY$/, /^key NOT set$/, /^fast$/, /^big$/, /^one$/]) {
+    expect(await text(ui, re)).toBeDefined()
+  }
+  expect(await ui.find({ type: 'Text', text: /^effort$/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('an empty registry shows the note and the four fields', async ($, on) => {
+  world(on, [], registry({}))
+  const ui = await openConfig($)
+
+  expect(await text(ui, /No custom providers/)).toBeDefined()
+  for (const k of ['provider', 'endpoint', 'keyEnv', 'models']) expect(await ui.find({ key: `config-in-${k}` })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a failing list shows its line, keeps the form and gives no toast', async ($, on) => {
+  const w = world(on, [], registry(REGISTRY, { list: { exitCode: 1, stderr: '/x/models.json: not valid JSON\n' } }))
+  const ui = await openConfig($)
+
+  expect(await text(ui, /models\.json: not valid JSON/)).toBeDefined()
+  expect(await ui.find({ key: 'config-in-provider' })).toBeDefined()
+  expect(w.toasts).toEqual([])
+  await ui.unmount()
+})
+
+test('every open reads the registry again, only through the wrapper', async ($, on) => {
+  const w = world(on, [], registry(REGISTRY))
+  const first = await openConfig($)
+  await first.unmount()
+  const second = await openConfig($)
+  await second.unmount()
+
+  expect(modelCalls(w.calls).filter(c => c[0] === 'list').length).toBe(2)
+  expect(w.calls.filter(c => c.join(' ').includes('models.json') || c.join(' ').includes('sdlc-models.cjs'))).toEqual([])
+})
+
+test('a new provider is added when the models field is submitted', async ($, on) => {
+  const w = world(on, [], registry(REGISTRY))
+  const ui = await openConfig($)
+  await type(ui, 'config-in-provider', 'beta')
+  await type(ui, 'config-in-endpoint', 'https://c.example')
+  await type(ui, 'config-in-keyEnv', 'BETA_KEY')
+  expect(modelCalls(w.calls).some(c => c[0] === 'add')).toBe(false)
+  expect(await text(ui, /→ beta/)).toBeDefined()
+  await type(ui, 'config-in-models', 'm1, m2')
+
+  expect(modelCalls(w.calls).find(c => c[0] === 'add')).toEqual(['add', 'beta', '--endpoint', 'https://c.example', '--key-env', 'BETA_KEY', '--models', 'm1, m2'])
+  expect(w.toasts).toContain('added beta (2 models)')
+  expect(await text(ui, /→/)).toBeUndefined()
+  await ui.unmount()
+})
+
+test('adding a model to an existing provider keeps its stored values and effort', async ($, on) => {
+  const w = world(on, [], registry(REGISTRY))
+  const ui = await openConfig($)
+  await type(ui, 'config-in-provider', 'acme')
+  await type(ui, 'config-in-models', 'fresh, fast')
+
+  expect(modelCalls(w.calls).find(c => c[0] === 'add')).toEqual(['add', 'acme', '--endpoint', 'https://a.example', '--key-env', 'ACME_KEY', '--models', 'fast,big,fresh', '--effort'])
+  await ui.unmount()
+})
+
+test('a rejected add shows the line and keeps the typed values', async ($, on) => {
+  const w = world(on, [], registry(REGISTRY, { add: { exitCode: 1, stderr: 'endpoint must be https\n' } }))
+  const ui = await openConfig($)
+  await type(ui, 'config-in-provider', 'beta')
+  await type(ui, 'config-in-endpoint', 'http://c.example')
+  await type(ui, 'config-in-keyEnv', 'BETA_KEY')
+  await type(ui, 'config-in-models', 'm1')
+
+  expect(w.toasts).toContain('endpoint must be https')
+  expect(await text(ui, /→ beta/)).toBeDefined()
+  expect(await text(ui, /→ m1/)).toBeDefined()
+  await ui.unmount()
+})
+
+test('Test reports ok', async ($, on) => {
+  const w = world(on, [], registry(REGISTRY))
+  const ui = await openConfig($)
+  await ui.press({ key: 'config-test:acme/fast' })
+  expect(modelCalls(w.calls).find(c => c[0] === 'test')).toEqual(['test', 'acme/fast'])
+  expect(w.toasts).toContain('acme/fast: ok')
+  await ui.unmount()
+})
+
+test('a failed Test shows the failing line from stdout', async ($, on) => {
+  const w = world(on, [], registry(REGISTRY, { test: { exitCode: 1, stdout: 'HTTP 401: bad key\n' } }))
+  const ui = await openConfig($)
+  await ui.press({ key: 'config-test:other/one' })
+  expect(w.toasts).toContain('other/one: HTTP 401: bad key')
+  await ui.unmount()
+})
+
+test('provider Remove needs a second press and Keep it cancels', async ($, on) => {
+  const w = world(on, [], registry(REGISTRY))
+  const ui = await openConfig($)
+  await ui.press({ key: 'config-remove-provider:acme' })
+  expect(modelCalls(w.calls).some(c => c[0] === 'remove')).toBe(false)
+  expect((await ui.find({ key: 'config-remove-provider:acme' }))?.props.label).toBe('Confirm remove')
+  expect((await ui.find({ key: 'config-remove-provider:other' }))?.props.label).toBe('Remove')
+  await ui.press({ key: 'config-keep-provider' })
+  expect((await ui.find({ key: 'config-remove-provider:acme' }))?.props.label).toBe('Remove')
+  await ui.press({ key: 'config-remove-provider:acme' })
+  await ui.press({ key: 'config-remove-provider:acme' })
+
+  expect(modelCalls(w.calls).find(c => c[0] === 'remove')).toEqual(['remove', 'acme'])
+  expect(w.toasts).toContain('removed acme')
+  await ui.unmount()
+})
+
+test('model Remove needs a second press and shows a refusal as a toast', async ($, on) => {
+  const w = world(on, [], registry(REGISTRY, { 'remove-model': { exitCode: 1, stderr: 'cannot remove the last model\n' } }))
+  const ui = await openConfig($)
+  await ui.press({ key: 'config-remove-model:other/one' })
+  expect((await ui.find({ key: 'config-remove-model:other/one' }))?.props.label).toBe('Confirm remove')
+  await ui.press({ key: 'config-remove-model:other/one' })
+
+  expect(modelCalls(w.calls).find(c => c[0] === 'remove-model')).toEqual(['remove-model', 'other', 'one'])
+  expect(w.toasts).toContain('cannot remove the last model')
+  await ui.unmount()
+})
+
+test('pending confirmations are cleared when the pane is opened again', async ($, on) => {
+  world(on, [], registry(REGISTRY))
+  const ui = await openConfig($)
+  await ui.press({ key: 'config-remove-provider:acme' })
+  await ui.press({ key: 'config-remove-model:acme/fast' })
+  await ui.unmount()
+  const again = await openConfig($)
+
+  expect((await again.find({ key: 'config-remove-provider:acme' }))?.props.label).toBe('Remove')
+  expect((await again.find({ key: 'config-remove-model:acme/fast' }))?.props.label).toBe('Remove')
+  await again.unmount()
+})
+
+test('a failure without a message falls back to the exit code', async ($, on) => {
+  const w = world(on, [], registry(REGISTRY, { test: { exitCode: 3 } }))
+  const ui = await openConfig($)
+  await ui.press({ key: 'config-test:acme/fast' })
+
+  expect(w.toasts).toContain('acme/fast: failed (exit 3)')
   await ui.unmount()
 })
