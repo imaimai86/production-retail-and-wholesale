@@ -11,6 +11,7 @@
 #   scripts/sdlc-mod.sh watch <slug> [--once]   live view of one pipeline: its status.json line, run state, uncommitted files and the
 #                                               tail of run.out, read from its worktree (or the current directory for a run started
 #                                               in place). Refreshes every WATCH_INTERVAL seconds (default 3); --once prints one frame.
+#   scripts/sdlc-mod.sh model list|add|add-model|remove-model|remove|test ...   the model registry (scripts/sdlc-models.cjs)
 # Env: SDLC_MAX_PARALLEL   most pipelines running at once (default 2; exit 3 when full)
 #      SDLC_BASE           ref a new branch starts from (default origin/main, else main, else HEAD)
 #      SDLC_WT_BASE        folder holding the worktrees (default ../<repo>-sdlc)
@@ -22,14 +23,14 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-COMMON="$(git -C "$ROOT" rev-parse --git-common-dir)"
+COMMON="$(git -C "$ROOT" rev-parse --git-common-dir 2>/dev/null)" || COMMON=".git"
 case "$COMMON" in /*) ;; *) COMMON="$ROOT/$COMMON" ;; esac
 REG="$COMMON/sdlc-runs"
 MAX_PARALLEL="${SDLC_MAX_PARALLEL:-2}"
 WT_BASE="${SDLC_WT_BASE:-$(dirname "$ROOT")/$(basename "$ROOT")-sdlc}"
 
 now() { date +%Y-%m-%dT%H:%M:%S; }
-usage() { echo "Usage: $0 run <slug> | stop <slug> | discard <slug> [--yes] [--stop] | restart <slug> [--yes] | status | changes <slug> [--json] | watch <slug> [--once]" >&2; exit 2; }
+usage() { echo "Usage: $0 run <slug> | stop <slug> | discard <slug> [--yes] [--stop] | restart <slug> [--yes] | status | changes <slug> [--json] | watch <slug> [--once] | model list [--json] | model add <provider> --endpoint <url> --key-env <VAR> --models a,b [--effort] | model add-model|remove-model <provider> <model> | model remove <provider> | model test <provider>/<model>" >&2; exit 2; }
 check_slug() { [[ "${1:-}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "Invalid slug '${1:-}': lowercase letters, digits and dashes only" >&2; exit 2; }; }
 json_get() { node -e 'try{const v=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))[process.argv[2]];process.stdout.write(v===undefined||v===null?"":String(v))}catch(e){}' "$1" "$2"; }
 # kill -0 also succeeds on a zombie (a process that has exited but whose parent has not collected it): that is not alive.
@@ -327,5 +328,9 @@ case "${1:-}" in
   status) cmd_status ;;
   changes) { [ $# -eq 2 ] || [ $# -eq 3 ]; } || usage; shift; cmd_changes "$@" ;;
   watch)  { [ $# -eq 2 ] || [ $# -eq 3 ]; } || usage; cmd_watch "$2" "${3:-}" ;;
+  model)  case "${2:-}" in
+            list|add|add-model|remove-model|remove|test) shift; exec node "$ROOT/scripts/sdlc-models.cjs" "$@" ;;
+            *) usage ;;
+          esac ;;
   *)      usage ;;
 esac
