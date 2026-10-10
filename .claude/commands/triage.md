@@ -5,6 +5,7 @@ Turn this report into backlog items that `./scripts/sdlc.sh <slug>` can run with
 ## 1. Understand and split
 - If the report holds several independent problems or features, make one item for each.
 - Classify each as `bug` (existing behaviour is wrong) or `feature` (new behaviour).
+- Never make a backlog item for a documentation-only change (README, CLAUDE.md, AGENTS.md, `server/API.md`, `schema.md`, comments, any `.md` file). The pipeline builds and tests code, and a docs-only item has nothing to test, so it ships docs with no feature. Tell the user which parts of the report are docs-only, create no brief and no index line for them, and say they are better edited directly. If the report mixes code and docs, keep the code part as the item and list the docs under `## Docs`.
 - Never paste secrets (passwords, tokens, full connection strings) into any file. Describe them by name only.
 
 ## 2. Check for duplicates
@@ -21,7 +22,7 @@ The Spec stage stops and asks whenever the brief is ambiguous, so every unanswer
 - Exact behaviour and the error status and body for every failure (the repo uses `{ "error": "<message>" }`).
 - Validation order (400 first, then 404, then 409), and what a failed request must not change.
 - Scope: which files and endpoints are in, and what is explicitly out.
-- Tests: where they live (`server/__tests__/`, mirroring the code layout) and the cases to cover.
+- Tests: where they live (`server/__tests__/`, mirroring the code layout) and the cases to cover. Every case must run the real code. Never plan a test that reads, greps or asserts on documentation (README.md, CLAUDE.md, AGENTS.md, any *.md); documentation goes under `## Docs` and is checked in the Review stage.
 - Docs: which of `server/API.md`, `schema.md`, `README.md` or `AGENTS.md` change.
 - Data and migrations: new migration number, backfill values, and how existing rows are treated.
 
@@ -55,6 +56,7 @@ Source: <where this came from: report, error text without secrets, Engineering/b
 
 ## Tests
 - <file path and the cases to cover>
+- Every case runs the real code (they import or run the code under test). Never list a test that reads or asserts on documentation; put documentation under `## Docs`.
 
 ## Docs
 - <files to update, or "none">
