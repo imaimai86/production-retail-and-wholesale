@@ -34,3 +34,4 @@ Markers: [ ] pending, [x] completed, [!] blocked, [~] parked (skipped by `script
 - [ ] `add-monitor-fullscreen` - Feature: redesign the /sdlc-monitor pane as a large two-column screen (pipeline list, stage rail, input, live output, key hints) and a Files changed view (docs, tests, source) available at any time
 - [ ] `add-model-registry` - Feature: add, list, test and remove custom providers and models from the pane; stored once per user in a cross-OS JSON file, API keys by env variable name only
 - [ ] `add-stage-model-switch` - Feature: choose model and effort per stage from the pane before the stage starts (non-blocking, locked once the stage has started; stop and resume to change it)
+- [ ] `add-requirements-viewer` - Feature: `...More` button on each pending item in the pane's listing opens its brief (requirements) in a read-only screen with section buttons
