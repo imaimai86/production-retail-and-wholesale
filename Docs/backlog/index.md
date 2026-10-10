@@ -35,3 +35,4 @@ Markers: [ ] pending, [x] completed, [!] blocked, [~] parked (skipped by `script
 - [ ] `add-model-registry` - Feature: add, list, test and remove custom providers and models from the pane; stored once per user in a cross-OS JSON file, API keys by env variable name only
 - [ ] `add-stage-model-switch` - Feature: choose model and effort per stage from the pane before the stage starts (non-blocking, locked once the stage has started; stop and resume to change it)
 - [ ] `add-requirements-viewer` - Feature: `...More` button on each pending item in the pane's listing opens its brief (requirements) in a read-only screen with section buttons
+- [ ] `add-answer-notes` - Feature: accept the suggested answer and add a note on the same Spec or Plan question, in the pane and in the orchestrator flow
