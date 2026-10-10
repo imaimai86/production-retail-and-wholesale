@@ -1,9 +1,10 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AgentRow, PendingItem, Question, Run, RunState, Snapshot } from '../types'
+import type { AgentRow, ConfigForm, ConfigProvider, PendingItem, Question, Run, RunState, Snapshot } from '../types'
 
 const PANE = 'sdlc'
+const CONFIG_PANE = 'config'
 const EVERY_MS = 2000
 const PENDING_EVERY_MS = 10000
 const CAP = 2
@@ -35,6 +36,18 @@ const confirmDiscard = atom({ plugin: 'sdlc-monitor', key: 'confirmDiscard' } as
 const launching = atom({ plugin: 'sdlc-monitor', key: 'launching' } as const, {} as Record<string, number>)
 const draft = atom({ plugin: 'sdlc-monitor', key: 'draft' } as const, {} as Record<string, string>)
 const notice = atom({ plugin: 'sdlc-monitor', key: 'notice' } as const, '')
+const EMPTY_FORM: ConfigForm = { provider: '', endpoint: '', keyEnv: '', models: '' }
+const CONFIG_FIELDS: { key: keyof ConfigForm; label: string }[] = [
+  { key: 'provider', label: 'provider name' },
+  { key: 'endpoint', label: 'endpoint' },
+  { key: 'keyEnv', label: 'API key variable NAME (not the key)' },
+  { key: 'models', label: 'models (comma list)' },
+]
+const configList = atom({ plugin: 'sdlc-monitor', key: 'configList' } as const, null as Record<string, ConfigProvider> | null)
+const configError = atom({ plugin: 'sdlc-monitor', key: 'configError' } as const, '')
+const configForm = atom({ plugin: 'sdlc-monitor', key: 'configForm' } as const, EMPTY_FORM)
+const configConfirmProvider = atom({ plugin: 'sdlc-monitor', key: 'configConfirmProvider' } as const, '')
+const configConfirmModel = atom({ plugin: 'sdlc-monitor', key: 'configConfirmModel' } as const, null as { provider: string; model: string } | null)
 
 const GLYPH: Record<RunState, string> = { starting: '◌', running: '●', paused: '⏸', done: '✔', failed: '✘', interrupted: '■', stopped: '✘' }
 const COLOR: Record<RunState, string> = { starting: 'cyan', running: 'cyan', paused: 'yellow', done: 'green', failed: 'red', interrupted: 'yellow', stopped: 'red' }
@@ -373,6 +386,89 @@ async function submitAnswers($: EngineInterface, run: Run) {
   await refresh($)
 }
 
+// ---- CONFIG pane: providers and models of the model registry, through `sdlc-mod.sh model ...` ----
+
+const firstLine = (text: string): string => (text.split('\n').map(l => l.trim()).find(Boolean) ?? '')
+
+// Runs `sdlc-mod.sh model <args>`; `line` is the message line to show: stdout on success, else stderr, else stdout.
+async function runModel($: EngineInterface, args: string[]): Promise<{ ok: boolean; stdout: string; line: string }> {
+  try {
+    const r = await $.process.run(['bash', WRAPPER, 'model', ...args])
+    const ok = r.exitCode === 0
+
+    return { ok, stdout: r.stdout, line: ok ? firstLine(r.stdout) : firstLine(r.stderr) || firstLine(r.stdout) || `failed (exit ${r.exitCode})` }
+  } catch (e) {
+    return { ok: false, stdout: '', line: firstLine(String((e as { message?: string })?.message ?? e)) || 'failed' }
+  }
+}
+
+async function loadConfig($: EngineInterface) {
+  const r = await runModel($, ['list', '--json'])
+  const providers = r.ok ? parse(r.stdout)?.providers : null
+
+  if (providers && typeof providers === 'object' && !Array.isArray(providers)) {
+    const list: Record<string, ConfigProvider> = {}
+    for (const [name, v] of Object.entries(providers as Record<string, Record<string, unknown>>)) {
+      const models = Array.isArray(v?.models) && v.models.every(m => typeof m === 'string') ? (v.models as string[]) : []
+      list[name] = { endpoint: String(v?.endpoint ?? ''), api_key_env: String(v?.api_key_env ?? ''), models, effort: v?.effort === true, key_set: v?.key_set === true }
+    }
+    await update($, configList, () => list)
+    await update($, configError, () => '')
+  } else {
+    await update($, configList, () => null)
+    await update($, configError, () => r.line || 'model list --json: unexpected output')
+  }
+}
+
+async function openConfig($: EngineInterface) {
+  await update($, configConfirmProvider, () => '')
+  await update($, configConfirmModel, () => null)
+  await loadConfig($)
+  await $.ui.open({ id: CONFIG_PANE, title: 'CONFIG' })
+}
+
+// Arguments of `model add` for the typed form; an existing provider keeps its stored values where a field is empty and gains the typed models.
+function addArgs(form: ConfigForm, list: Record<string, ConfigProvider> | null): string[] {
+  const p = list && Object.prototype.hasOwnProperty.call(list, form.provider) ? list[form.provider] : null
+  if (!p) return ['add', form.provider, '--endpoint', form.endpoint, '--key-env', form.keyEnv, '--models', form.models]
+  const typed = form.models === '' ? [] : form.models.split(',').map(x => x.trim())
+  const models = [...p.models]
+  for (const m of typed) if (!models.includes(m)) models.push(m)
+  const args = ['add', form.provider, '--endpoint', form.endpoint || p.endpoint, '--key-env', form.keyEnv || p.api_key_env, '--models', models.join(',')]
+  if (p.effort) args.push('--effort')
+
+  return args
+}
+
+async function submitAdd($: EngineInterface) {
+  const form = await read($, configForm)
+  const list = await read($, configList)
+  const r = await runModel($, addArgs(form, list))
+  $.ui.toast(r.line)
+  if (r.ok) await update($, configForm, () => EMPTY_FORM)
+  await loadConfig($)
+}
+
+async function testModel($: EngineInterface, provider: string, model: string) {
+  const r = await runModel($, ['test', `${provider}/${model}`])
+  $.ui.toast(`${provider}/${model}: ${r.ok ? 'ok' : r.line}`)
+  await loadConfig($)
+}
+
+async function removeModel($: EngineInterface, provider: string, model: string) {
+  const r = await runModel($, ['remove-model', provider, model])
+  $.ui.toast(r.line)
+  await update($, configConfirmModel, () => null)
+  await loadConfig($)
+}
+
+async function removeProvider($: EngineInterface, provider: string) {
+  const r = await runModel($, ['remove', provider])
+  $.ui.toast(r.line)
+  await update($, configConfirmProvider, () => '')
+  await loadConfig($)
+}
+
 // Pipeline stage (as the monitor names it) -> the sdlc.sh stages whose agents run in it.
 const STAGE_AGENTS: Record<string, string[]> = {
   Spec: ['spec'], Plan: ['plan'], 'Red tests': ['red-tests'], Implement: ['implement'], 'Test repair': ['test-repair', 'test-audit'], Review: ['review'],
@@ -459,6 +555,7 @@ let isFirst = true
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'sdlc-monitor', description: 'Open the SDLC control pane: start, watch, answer and stop pipelines' })
+    await $.command.register({ name: 'sdlc-config', description: 'Open the CONFIG pane: providers and models of the model registry' })
     $.clock.every(EVERY_MS, async () => {
       const s = await refresh($)
       await drainQueue($, s)
@@ -491,6 +588,12 @@ export const register: Register = on => {
     return { text: `SDLC control opened: ${summary(s.runs, 0)}, ${s.pending.length} pending.` }
   })
 
+  on('command.run', { command: 'sdlc-config' }, async $ => {
+    await openConfig($)
+
+    return { text: 'CONFIG opened: providers and models.' }
+  })
+
   // Per-agent tool counts, for the session's own subagents (a headless `claude -p` stage is a separate process).
   on('tool.call', async ($, e, next) => {
     if (e.agentId) {
@@ -520,7 +623,7 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // The always-visible entry point: one button above the prompt.
+  // The always-visible entry points: the SDLC and CONFIG buttons above the prompt.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.props.hasSurvey) return next(e)
     const { Box, Button, Text } = $.ui.resolve(e)
@@ -531,6 +634,7 @@ export const register: Register = on => {
     return (
       <Box gap={1}>
         <Button key="sdlc-open" label="SDLC" variant="primary" onPress={() => $.ui.open({ id: PANE, title: 'SDLC control' })} />
+        <Button key="config-open" label="CONFIG" onPress={() => openConfig($)} />
         <Text dimColor>{live.length || q.length ? summary(s.runs, q.length) : `${s.pending.length} pending`}</Text>
       </Box>
     )
@@ -847,6 +951,88 @@ export const register: Register = on => {
             <Text key={`tail-${i}`} dimColor>
               {cut(line, 100)}
             </Text>
+          ))}
+        </Box>
+      </Box>
+    )
+  })
+
+  on('ui.render', { component: 'Pane', requestId: CONFIG_PANE }, async ($, e) => {
+    const { Box, Button, Input, Text } = $.ui.resolve(e)
+    const list = await read($, configList)
+    const error = await read($, configError)
+    const form = await read($, configForm)
+    const pendingProvider = await read($, configConfirmProvider)
+    const pendingModel = await read($, configConfirmModel)
+    const names = list ? Object.keys(list) : []
+
+    return (
+      <Box flexDirection="column" paddingX={1} gap={1}>
+        <Text bold>CONFIG</Text>
+        {error ? <Text color="red">{error}</Text> : null}
+        {!error && list && names.length === 0 && <Text dimColor>No custom providers</Text>}
+        {!error &&
+          list &&
+          names.map(name => {
+            const p = list[name]
+            const removing = pendingProvider === name
+
+            return (
+              <Box key={`config-provider:${name}`} flexDirection="column">
+                <Box gap={1} flexWrap="wrap">
+                  <Text bold>{name}</Text>
+                  <Text dimColor>{p.endpoint}</Text>
+                  <Text dimColor>{p.api_key_env}</Text>
+                  <Text color={p.key_set ? 'green' : 'yellow'}>{p.key_set ? 'key set' : 'key NOT set'}</Text>
+                  <Button
+                    key={`config-remove-provider:${name}`}
+                    label={removing ? 'Confirm remove' : 'Remove'}
+                    variant={removing ? 'primary' : undefined}
+                    onPress={async () => {
+                      if (removing) await removeProvider($, name)
+                      else await update($, configConfirmProvider, () => name)
+                    }}
+                  />
+                  {removing && <Button key="config-keep-provider" label="Keep it" onPress={() => update($, configConfirmProvider, () => '')} />}
+                </Box>
+                {p.models.map(model => {
+                  const removingModel = pendingModel?.provider === name && pendingModel.model === model
+
+                  return (
+                    <Box key={`config-model:${name}/${model}`} gap={1} flexWrap="wrap" paddingLeft={2}>
+                      <Text>{model}</Text>
+                      <Button key={`config-test:${name}/${model}`} label="Test" onPress={() => testModel($, name, model)} />
+                      <Button
+                        key={`config-remove-model:${name}/${model}`}
+                        label={removingModel ? 'Confirm remove' : 'Remove'}
+                        variant={removingModel ? 'primary' : undefined}
+                        onPress={async () => {
+                          if (removingModel) await removeModel($, name, model)
+                          else await update($, configConfirmModel, () => ({ provider: name, model }))
+                        }}
+                      />
+                      {removingModel && <Button key="config-keep-model" label="Keep it" onPress={() => update($, configConfirmModel, () => null)} />}
+                    </Box>
+                  )
+                })}
+                {p.effort && <Text dimColor>effort</Text>}
+              </Box>
+            )
+          })}
+        <Box flexDirection="column">
+          <Text bold>Add a provider or model</Text>
+          {CONFIG_FIELDS.map(f => (
+            <Box key={`config-row-${f.key}`} gap={1} flexWrap="wrap">
+              <Input
+                key={`config-in-${f.key}`}
+                placeholder={f.label}
+                onSubmit={async value => {
+                  await update($, configForm, d => ({ ...d, [f.key]: value.trim() }))
+                  if (f.key === 'models') await submitAdd($)
+                }}
+              />
+              {form[f.key] && <Text color="cyan">→ {form[f.key]}</Text>}
+            </Box>
           ))}
         </Box>
       </Box>
