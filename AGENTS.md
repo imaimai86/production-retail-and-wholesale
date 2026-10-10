@@ -44,6 +44,8 @@ The server reads `DATABASE_URL` to connect. If it is unset or empty, it falls ba
 Run `./install.sh` to install dependencies, apply database migrations (if `DATABASE_URL` is set) and start the server.
 
 ## Development Guidelines
+
+- Tests verify the real code, never documentation: a test must import or run the code under test, and no test may read, grep or assert on README.md, CLAUDE.md, AGENTS.md, any other `.md` file or comments. Documentation is checked in the Review stage. A test that passes while the feature code is missing is a defect.
 - Run `npm test` from the repository root before committing changes. This executes Jest tests within the `server` directory.
 - `npm test` needs no database; `npm run test:integration` needs `DATABASE_URL`.
 - Use the provided Express server structure when adding new endpoints or features.

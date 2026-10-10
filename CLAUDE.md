@@ -29,6 +29,7 @@ ADMIN_TOKEN=secret
 - Run `npm test` from the repo root before committing changes.
 - Use the existing Express server structure when adding endpoints or features.
 - Tests live in `server/__tests__/`, mirroring the code layout.
+- Tests verify the real code, never documentation: a test must import or run the code under test, and no test may read, grep or assert on README.md, CLAUDE.md, AGENTS.md, any other `.md` file or comments. Documentation is checked in the Review stage. A test that passes while the feature code is missing is a defect.
 - Spec, plan and test docs live in `Docs/backlog/<slug>/`.
 
 ## SDLC pipeline
