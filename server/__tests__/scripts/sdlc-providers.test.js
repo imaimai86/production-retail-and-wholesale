@@ -20,7 +20,9 @@ const PROVIDER_ENV = {
 
 function bash(script, env = {}, cwd = os.tmpdir()) {
   const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(SDLC_|MODEL_|EFFORT_|ANTHROPIC_)/.test(k)));
-  return spawnSync('bash', ['-c', `set -euo pipefail\n${fn}\n${script}`], { cwd, env: { ...clean, ...env }, encoding: 'utf8' });
+  // ROOT lets the pipeline block find the registry helper from a temp cwd; the registry file never exists here.
+  const base = { ROOT: root, SDLC_MODELS_FILE: path.join(os.tmpdir(), 'sdlc-no-registry', 'models.json') };
+  return spawnSync('bash', ['-c', `set -euo pipefail\n${fn}\n${script}`], { cwd, env: { ...clean, ...base, ...env }, encoding: 'utf8' });
 }
 
 describe('resolve_provider', () => {
