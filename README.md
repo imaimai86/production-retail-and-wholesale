@@ -123,16 +123,18 @@ Keys added to a git-ignored `.env` during the run are copied, with the placehold
 `scripts/sdlc-mod.sh` runs the normal pipeline (`scripts/sdlc.sh`, unchanged) for one backlog item in its **own git worktree**, so several items can run at once. Two Claude Code plugins in `.claude/plugins/` add the interface and the guard rails.
 
 ```bash
-bash scripts/sdlc-mod.sh run <slug>     # start or resume; worktree at ../<repo>-sdlc/<slug>, branch sdlc/<slug>
+bash scripts/sdlc-mod.sh run <slug> [--base <name>]   # start or resume; worktree at ../<repo>-sdlc/<slug>, branch sdlc/<slug>
 bash scripts/sdlc-mod.sh stop <slug>    # interrupt the pipeline and everything it started
 bash scripts/sdlc-mod.sh status         # one line per run
 bash scripts/sdlc-mod.sh watch <slug>    # live view of one pipeline, read from its worktree (--once prints one frame; WATCH_INTERVAL seconds, default 3)
 bash scripts/sdlc-mod.sh changes <slug> [--json]   # files changed in the pipeline's worktree: "<changed> <uncommitted>"
 bash scripts/sdlc-mod.sh discard <slug> [--yes] [--stop]   # delete its worktree, branch and run record (without --yes: show what would go, exit 6)
-bash scripts/sdlc-mod.sh restart <slug> [--yes]   # stop it if running, discard it, start again from Spec
+bash scripts/sdlc-mod.sh restart <slug> [--yes] [--base <name>]   # stop it if running, discard it, start again from Spec
 ```
 
 `discard` and `restart` throw away the item's worktree, its local branch `sdlc/<slug>` (including unpushed commits and uncommitted files) and its run record, but first save the branch tip in `.git/sdlc-runs/<slug>.discarded`; the command it prints, `git branch sdlc/<slug> <sha>`, brings the work back. `discard` refuses a running pipeline unless `--stop` is given, which stops it first (after `--yes`); `restart` stops it itself. `restart` refuses an item already merged into the base branch (exit 5).
+
+**Base branch.** A new `sdlc/<slug>` starts from `--base <name>`, else `SDLC_BASE`, else `main` (if there is no `main`: the branch `origin/HEAD` points to, then the current `HEAD`). Before the branch is created the wrapper runs `git fetch origin <name>` (20 s at most; a failure is only logged), then uses `origin/<name>` when it is at or ahead of the local `<name>`, otherwise the local branch. A name that is neither a local branch nor on origin exits 7 (`base branch '<name>' not found (local or origin)`), also on a resume, `restart` or `discard`; an invalid name (`--evil`, `a..b`, spaces) exits 2. When `sdlc/<slug>` or its worktree already exists the base is ignored (logged as `base ignored: sdlc/<slug> already exists`). The resolved base is saved in the run record as `base`. `discard` takes no `--base` (it uses `SDLC_BASE` or the default).
 
 At most 2 pipelines run at once (`SDLC_MAX_PARALLEL`, exit code 3 when full). Run records live in `.git/sdlc-runs/`. The wrapper links `server/node_modules`, `graft` and `.env` into each worktree.
 
