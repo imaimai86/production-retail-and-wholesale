@@ -33,7 +33,7 @@ Markers: [ ] pending, [x] completed, [!] blocked, [~] parked (skipped by `script
 - [ ] `add-stage-stop-with-input` - Feature: stop a running stage from the pane, add input for it, and restart that stage in one action
 - [ ] `add-monitor-fullscreen` - Feature: redesign the /sdlc-monitor pane as a large two-column screen (pipeline list, stage rail, input, live output, key hints) and a Files changed view (docs, tests, source) available at any time
 - [x] `add-model-registry` - Feature: add, list, test and remove custom providers and models with `sdlc-mod.sh model` (pane UI: add-config-pane); stored once per user in a cross-OS JSON file, API keys by env variable name only
-- [ ] `add-config-pane` - Feature: [ CONFIG ] button next to [ SDLC ] opens a separate pane to list, add, test and remove providers and models (needs add-model-registry)
+- [x] `add-config-pane` - Feature: [ CONFIG ] button next to [ SDLC ] opens a separate pane to list, add, test and remove providers and models (needs add-model-registry)
 - [ ] `add-stage-model-switch` - Feature: choose model and effort per stage from the pane before the stage starts (non-blocking, locked once the stage has started; stop and resume to change it)
 - [ ] `add-requirements-viewer` - Feature: `...More` button on each pending item in the pane's listing opens its brief (requirements) in a read-only screen with section buttons
 - [ ] `add-answer-notes` - Feature: accept the suggested answer and add a note on the same Spec or Plan question, in the pane and in the orchestrator flow
