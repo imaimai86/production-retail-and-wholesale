@@ -53,6 +53,12 @@ ADMIN_TOKEN=secret
 - Push SDLC work to its own branch `sdlc/<slug>` (not a `claude/...` branch).
 - If that branch name already exists on the remote and the push conflicts, push to `sdlc/<slug>-<n>` instead, where `<n>` is a 5-digit number starting with 1 that increments by one per conflict (`10001`, then `10002`, and so on).
 
+## Git worktrees
+- Every git worktree lives outside the git root, at `../<repo>-sdlc/<slug>` (for this repo `../production-retail-and-wholesale-sdlc/<slug>`), never inside the repository and never under `.claude/`. `scripts/sdlc-mod.sh` already does this (`SDLC_WT_BASE` overrides the base folder).
+- When you need a worktree yourself, including one for a sub agent, create it with `git worktree add -b <branch> ../<repo>-sdlc/<slug> <base>` and give the agent that folder to work in. Do not use the sub agent `isolation: "worktree"` option: it puts the worktree in `.claude/worktrees/agent-<id>`, which shows up as untracked in `git status`.
+- Git has no setting for a default worktree location: the path is the argument of `git worktree add`, so this rule is how the location is kept.
+- Remove a worktree you created when its work is merged or discarded (`git worktree remove <path>`).
+
 ## Working with the user
 - **Times in GST.** Show every time mentioned to the user in GST (Gulf Standard Time, UTC+4), written like `17:21 GST`. Convert UTC timestamps from logs, GitHub, `status.json` and schedulers before showing them.
 - **Status check-ins every minute.** When asked to report on a running SDLC pipeline, schedule the check-ins (`send_later`) every 1 minute until the run is done, failed or paused for questions. With several pipelines running, one check-in covers all of them.
