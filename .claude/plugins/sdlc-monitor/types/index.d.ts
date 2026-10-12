@@ -3,6 +3,8 @@ export type Question = { n: number; title: string; body: string; suggested: stri
 export type RunState = 'starting' | 'running' | 'paused' | 'done' | 'failed' | 'interrupted' | 'stopped'
 
 export type Run = {
+  // the last lines of the failed stage's log, else of run.out; empty unless the run failed or stopped
+  reason: string[]
   slug: string
   worktree: string
   state: RunState
@@ -46,7 +48,7 @@ export type AgentRow = {
 }
 
 export type ConfigProvider = { endpoint: string; api_key_env: string; models: string[]; effort: boolean; key_set: boolean }
-export type ConfigForm = { provider: string; endpoint: string; keyEnv: string; models: string }
+export type ConfigForm = { provider: string; endpoint: string; keyEnv: string; models: string; effort: boolean }
 
 declare module 'claude-code' {
   interface PluginState {
@@ -66,6 +68,10 @@ declare module 'claude-code' {
       // answers typed for a paused run, keyed `<slug>:<question number>`
       draft: Record<string, string>
       notice: string
+      // what a button press is working on; '' when idle
+      busy: string
+      // the spinner frame shown beside it
+      frame: number
       // the last `model list --json` result; null when never loaded or the last load failed
       configList: Record<string, ConfigProvider> | null
       // the message line of a failed `model list --json`; '' otherwise
@@ -73,6 +79,10 @@ declare module 'claude-code' {
       // the four form values stored by Enter
       configForm: ConfigForm
       // the provider whose Remove waits for a second press; '' when none
+      // which CONFIG page is drawn: the provider list or the add / edit form
+      configView: 'list' | 'form'
+      // the provider the form edits; '' for a new one
+      configEditing: string
       configConfirmProvider: string
       // the model whose Remove waits for a second press
       configConfirmModel: { provider: string; model: string } | null

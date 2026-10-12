@@ -26,6 +26,11 @@ describe('sdlc-monitor CONFIG pane code', () => {
     expect(source).not.toMatch(/models\.json|sdlc-models\.cjs/);
   });
 
+  test('has the list page (Add provider, Edit) and the form page (Save, Save and add another, Cancel)', () => {
+    for (const key of ['config-add-new', 'config-edit:', 'config-save"', 'config-save-another', 'config-cancel']) expect(source).toContain(key);
+    for (const key of ['notice-copy', 'notice-dismiss', 'reason-copy', 'did not start']) expect(source).toContain(key);
+  });
+
   test('has the four form fields, the two-press Remove and Test', () => {
     for (const key of ['provider', 'endpoint', 'keyEnv', 'models']) expect(source).toContain(`key: '${key}'`);
     expect(source).toContain('API key variable NAME (not the key)');
@@ -35,7 +40,7 @@ describe('sdlc-monitor CONFIG pane code', () => {
 
   test('types declare the five config state entries', () => {
     const types = read('types/index.d.ts');
-    for (const name of ['configList', 'configError', 'configForm', 'configConfirmProvider', 'configConfirmModel']) {
+    for (const name of ['configList', 'configError', 'configForm', 'configView', 'configEditing', 'configConfirmProvider', 'configConfirmModel']) {
       expect(types).toContain(name);
     }
   });
@@ -43,6 +48,6 @@ describe('sdlc-monitor CONFIG pane code', () => {
   test('the pane tests exist in register.test.ts', () => {
     const tests = read('hooks/register.test.ts');
     expect(tests).toMatch(/CONFIG button sits beside SDLC/);
-    expect(tests).toMatch(/a new provider is added when the models field is submitted/);
+    expect(tests).toMatch(/Add provider opens the form; Save adds the provider and returns to the list/);
   });
 });

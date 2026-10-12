@@ -16,6 +16,10 @@ type RunSpec = {
   files?: string[]
   exitCode?: string
   message?: string
+  // text of logs/plan.log (list it in `files` too)
+  planLog?: string
+  // makes the wrapper's background start fail with this stderr
+  launchError?: string
   // a pipeline started by hand: no wrapper record, only a status.json in the main working tree
   legacy?: boolean
   // what `sdlc-mod.sh changes <slug> --json` reports; null makes the command fail (discarded run, worktree gone)
@@ -46,9 +50,10 @@ const PENDING = [
 // A repo with the given pipelines recorded, and every process call captured.
 type ModelReply = { exitCode?: number; stdout?: string; stderr?: string } | undefined
 
-function world(on: any, runs: RunSpec[] = [], model?: (argv: string[]) => ModelReply) {
+function world(on: any, runs: RunSpec[] = [], model?: (argv: string[]) => ModelReply | Promise<ModelReply>) {
   const opens: { id: string; title: string }[] = []
   const toasts: string[] = []
+  const copies: string[] = []
   const calls: string[][] = []
   const envs: Record<string, string>[] = []
   const writes: { path: string; text: string }[] = []
@@ -92,6 +97,7 @@ function world(on: any, runs: RunSpec[] = [], model?: (argv: string[]) => ModelR
           }),
         }
       }
+      if (e.path.endsWith(`${r.slug}/logs/plan.log`) && r.planLog) return { value: r.planLog }
       if (e.path.endsWith(`${r.slug}/logs/tests.log`) && r.testsLog) return { value: r.testsLog }
       if (e.path.endsWith(`${r.slug}/logs/run.out`)) return { value: '== Implement\n   -> agent: impl-2\n' }
       if (e.path.endsWith(`${r.slug}/questions.md`) && r.questions) return { value: r.questions }
@@ -104,11 +110,15 @@ function world(on: any, runs: RunSpec[] = [], model?: (argv: string[]) => ModelR
 
     return { value: undefined } as never
   })
-  on('process.run', (_: unknown, e: { argv: string[]; init?: { env?: Record<string, string> } }) => {
+  on('process.run', async (_: unknown, e: { argv: string[]; init?: { env?: Record<string, string> } }) => {
     calls.push([...e.argv])
     if (e.argv[2] === 'discard') gone.add(e.argv[3])
     envs.push(e.init?.env ?? {})
     const out = (stdout: string, exitCode = 0) => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false } })
+    if (e.argv[1] === '-c') {
+      const bad = runs.find(r => r.slug === e.argv[e.argv.length - 1] && r.launchError)
+      if (bad) return { value: { exitCode: 1, stdout: '', stderr: bad.launchError, isStdoutTruncated: false } }
+    }
     if (e.argv[0] === 'git') return out('.git\n')
     if (e.argv[0] === 'node') return out(JSON.stringify(PENDING))
     if (e.argv[0] === 'kill') return out('', e.argv[2] === '100' ? 0 : 1)
@@ -120,7 +130,7 @@ function world(on: any, runs: RunSpec[] = [], model?: (argv: string[]) => ModelR
     }
 
     if (model && e.argv[1] === 'scripts/sdlc-mod.sh' && e.argv[2] === 'model') {
-      const r = model(e.argv.slice(3))
+      const r = await model(e.argv.slice(3))
       if (r) return { value: { exitCode: r.exitCode ?? 0, stdout: r.stdout ?? '', stderr: r.stderr ?? '', isStdoutTruncated: false } }
     }
 
@@ -133,6 +143,11 @@ function world(on: any, runs: RunSpec[] = [], model?: (argv: string[]) => ModelR
 
     return { value: { isPlaced: true } } as never
   })
+  on('ui.copy', (_: unknown, e: { text: string }) => {
+    copies.push(e.text)
+
+    return { value: { isCopied: true } } as never
+  })
   on('ui.toast', (_: unknown, e: { message?: string; text?: string }) => {
     toasts.push(String(e.message ?? e.text ?? ''))
 
@@ -140,7 +155,7 @@ function world(on: any, runs: RunSpec[] = [], model?: (argv: string[]) => ModelR
   })
   on('ui.status', () => ({ value: undefined }) as never)
 
-  return { calls, envs, writes, opens, toasts, clock, revive: (slug: string) => gone.delete(slug) }
+  return { calls, envs, writes, opens, toasts, copies, clock, revive: (slug: string) => gone.delete(slug) }
 }
 
 async function open($: any) {
@@ -582,21 +597,22 @@ test('the pane lists providers, key state, models and effort', async ($, on) => 
   await ui.unmount()
 })
 
-test('an empty registry shows the note and the four fields', async ($, on) => {
+test('an empty registry shows the note and an Add provider button, not the form', async ($, on) => {
   world(on, [], registry({}))
   const ui = await openConfig($)
 
   expect(await text(ui, /No custom providers/)).toBeDefined()
-  for (const k of ['provider', 'endpoint', 'keyEnv', 'models']) expect(await ui.find({ key: `config-in-${k}` })).toBeDefined()
+  expect(await ui.find({ key: 'config-add-new' })).toBeDefined()
+  expect(await ui.find({ key: 'config-in-provider' })).toBeUndefined()
   await ui.unmount()
 })
 
-test('a failing list shows its line, keeps the form and gives no toast', async ($, on) => {
+test('a failing list shows its line, keeps Add provider and gives no toast', async ($, on) => {
   const w = world(on, [], registry(REGISTRY, { list: { exitCode: 1, stderr: '/x/models.json: not valid JSON\n' } }))
   const ui = await openConfig($)
 
   expect(await text(ui, /models\.json: not valid JSON/)).toBeDefined()
-  expect(await ui.find({ key: 'config-in-provider' })).toBeDefined()
+  expect(await ui.find({ key: 'config-add-new' })).toBeDefined()
   expect(w.toasts).toEqual([])
   await ui.unmount()
 })
@@ -612,43 +628,121 @@ test('every open reads the registry again, only through the wrapper', async ($, 
   expect(w.calls.filter(c => c.join(' ').includes('models.json') || c.join(' ').includes('sdlc-models.cjs'))).toEqual([])
 })
 
-test('a new provider is added when the models field is submitted', async ($, on) => {
+const fill = async (ui: any, v: { provider?: string; endpoint?: string; keyEnv?: string; models?: string }) => {
+  if (v.provider !== undefined) await type(ui, 'config-in-provider', v.provider)
+  if (v.endpoint !== undefined) await type(ui, 'config-in-endpoint', v.endpoint)
+  if (v.keyEnv !== undefined) await type(ui, 'config-in-keyEnv', v.keyEnv)
+  if (v.models !== undefined) await type(ui, 'config-in-models', v.models)
+}
+
+test('Add provider opens the form; Save adds the provider and returns to the list', async ($, on) => {
   const w = world(on, [], registry(REGISTRY))
   const ui = await openConfig($)
-  await type(ui, 'config-in-provider', 'beta')
-  await type(ui, 'config-in-endpoint', 'https://c.example')
-  await type(ui, 'config-in-keyEnv', 'BETA_KEY')
+  await ui.press({ key: 'config-add-new' })
+  expect(await ui.find({ key: 'config-add-new' })).toBeUndefined()
+  await fill(ui, { provider: 'beta', endpoint: 'https://c.example', keyEnv: 'BETA_KEY', models: 'm1,m2' })
   expect(modelCalls(w.calls).some(c => c[0] === 'add')).toBe(false)
-  expect(await text(ui, /→ beta/)).toBeDefined()
-  await type(ui, 'config-in-models', 'm1, m2')
+  await ui.press({ key: 'config-save' })
 
-  expect(modelCalls(w.calls).find(c => c[0] === 'add')).toEqual(['add', 'beta', '--endpoint', 'https://c.example', '--key-env', 'BETA_KEY', '--models', 'm1, m2'])
+  expect(modelCalls(w.calls).find(c => c[0] === 'add')).toEqual(['add', 'beta', '--endpoint', 'https://c.example', '--key-env', 'BETA_KEY', '--models', 'm1,m2'])
   expect(w.toasts).toContain('added beta (2 models)')
-  expect(await text(ui, /→/)).toBeUndefined()
+  expect(await ui.find({ key: 'config-add-new' })).toBeDefined()
+  expect(await ui.find({ key: 'config-in-provider' })).toBeUndefined()
   await ui.unmount()
 })
 
-test('adding a model to an existing provider keeps its stored values and effort', async ($, on) => {
+test('a mixed-case provider name is saved in lowercase', async ($, on) => {
   const w = world(on, [], registry(REGISTRY))
   const ui = await openConfig($)
-  await type(ui, 'config-in-provider', 'acme')
-  await type(ui, 'config-in-models', 'fresh, fast')
+  await ui.press({ key: 'config-add-new' })
+  await fill(ui, { provider: ' OpenRouter ', endpoint: 'https://openrouter.ai/api', keyEnv: 'OPENROUTER_KEY', models: 'm1' })
+  await ui.press({ key: 'config-save' })
 
-  expect(modelCalls(w.calls).find(c => c[0] === 'add')).toEqual(['add', 'acme', '--endpoint', 'https://a.example', '--key-env', 'ACME_KEY', '--models', 'fast,big,fresh', '--effort'])
+  expect(modelCalls(w.calls).find(c => c[0] === 'add')?.[1]).toBe('openrouter')
   await ui.unmount()
 })
 
-test('a rejected add shows the line and keeps the typed values', async ($, on) => {
+test('Save and add another keeps the form open and empty', async ($, on) => {
+  const w = world(on, [], registry(REGISTRY))
+  const ui = await openConfig($)
+  await ui.press({ key: 'config-add-new' })
+  await fill(ui, { provider: 'beta', endpoint: 'https://c.example', keyEnv: 'BETA_KEY', models: 'm1' })
+  await ui.press({ key: 'config-save-another' })
+
+  expect(modelCalls(w.calls).filter(c => c[0] === 'add').length).toBe(1)
+  expect(await ui.find({ key: 'config-in-provider' })).toBeDefined()
+  expect((await ui.find({ key: 'config-in-provider' }))?.props.value).toBe('')
+  await ui.unmount()
+})
+
+test('a new provider whose name exists is refused and nothing is saved', async ($, on) => {
+  const w = world(on, [], registry(REGISTRY))
+  const ui = await openConfig($)
+  await ui.press({ key: 'config-add-new' })
+  await fill(ui, { provider: 'acme', endpoint: 'https://x.example', keyEnv: 'K', models: 'm' })
+  await ui.press({ key: 'config-save' })
+
+  expect(modelCalls(w.calls).some(c => c[0] === 'add')).toBe(false)
+  expect(w.toasts).toContain('acme already exists: press Edit on it')
+  expect(await ui.find({ key: 'config-in-provider' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('Edit opens the form filled with the stored values and Save replaces them', async ($, on) => {
+  const w = world(on, [], registry(REGISTRY))
+  const ui = await openConfig($)
+  await ui.press({ key: 'config-edit:acme' })
+  expect(await ui.find({ key: 'config-in-provider' })).toBeUndefined()
+  expect((await ui.find({ key: 'config-in-endpoint' }))?.props.value).toBe('https://a.example')
+  expect((await ui.find({ key: 'config-in-keyEnv' }))?.props.value).toBe('ACME_KEY')
+  expect((await ui.find({ key: 'config-in-models' }))?.props.value).toBe('fast,big')
+  expect((await ui.find({ key: 'config-effort' }))?.props.label).toBe('Effort flag: on')
+  expect(await ui.find({ key: 'config-save-another' })).toBeUndefined()
+  await type(ui, 'config-in-models', 'fast,big,huge')
+  await ui.press({ key: 'config-save' })
+
+  expect(modelCalls(w.calls).find(c => c[0] === 'add')).toEqual(['add', 'acme', '--endpoint', 'https://a.example', '--key-env', 'ACME_KEY', '--models', 'fast,big,huge', '--effort'])
+  expect(await ui.find({ key: 'config-add-new' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the effort flag toggles and is passed on Save', async ($, on) => {
+  const w = world(on, [], registry(REGISTRY))
+  const ui = await openConfig($)
+  await ui.press({ key: 'config-edit:other' })
+  expect((await ui.find({ key: 'config-effort' }))?.props.label).toBe('Effort flag: off')
+  await ui.press({ key: 'config-effort' })
+  expect((await ui.find({ key: 'config-effort' }))?.props.label).toBe('Effort flag: on')
+  await ui.press({ key: 'config-save' })
+
+  expect(modelCalls(w.calls).find(c => c[0] === 'add')?.slice(-1)).toEqual(['--effort'])
+  await ui.unmount()
+})
+
+test('Cancel returns to the list without saving', async ($, on) => {
+  const w = world(on, [], registry(REGISTRY))
+  const ui = await openConfig($)
+  await ui.press({ key: 'config-add-new' })
+  await fill(ui, { provider: 'beta' })
+  await ui.press({ key: 'config-cancel' })
+
+  expect(modelCalls(w.calls).some(c => c[0] === 'add')).toBe(false)
+  expect(await ui.find({ key: 'config-add-new' })).toBeDefined()
+  await ui.press({ key: 'config-add-new' })
+  expect((await ui.find({ key: 'config-in-provider' }))?.props.value).toBe('')
+  await ui.unmount()
+})
+
+test('a rejected save shows the line and stays on the form with the typed values', async ($, on) => {
   const w = world(on, [], registry(REGISTRY, { add: { exitCode: 1, stderr: 'endpoint must be https\n' } }))
   const ui = await openConfig($)
-  await type(ui, 'config-in-provider', 'beta')
-  await type(ui, 'config-in-endpoint', 'http://c.example')
-  await type(ui, 'config-in-keyEnv', 'BETA_KEY')
-  await type(ui, 'config-in-models', 'm1')
+  await ui.press({ key: 'config-add-new' })
+  await fill(ui, { provider: 'beta', endpoint: 'http://c.example', keyEnv: 'BETA_KEY', models: 'm1' })
+  await ui.press({ key: 'config-save' })
 
   expect(w.toasts).toContain('endpoint must be https')
-  expect(await text(ui, /→ beta/)).toBeDefined()
-  expect(await text(ui, /→ m1/)).toBeDefined()
+  expect((await ui.find({ key: 'config-in-endpoint' }))?.props.value).toBe('http://c.example')
+  expect((await ui.find({ key: 'config-in-provider' }))?.props.value).toBe('beta')
   await ui.unmount()
 })
 
@@ -717,5 +811,47 @@ test('a failure without a message falls back to the exit code', async ($, on) =>
   await ui.press({ key: 'config-test:acme/fast' })
 
   expect(w.toasts).toContain('acme/fast: failed (exit 3)')
+  await ui.unmount()
+})
+
+test('a refused Resume shows the wrapper error in the notice, and Copy puts it on the clipboard', async ($, on) => {
+  const w = world(on, [{ slug: 'alpha', state: 'failed', stage: 'Plan', launchError: 'cap reached: 2 pipelines are running' }])
+  const ui = await open($)
+  await ui.press({ key: 'open-alpha' })
+  await ui.press({ key: 'resume' })
+
+  expect(await text(ui, /alpha did not start: .*cap reached/s)).toBeDefined()
+  expect(w.toasts.some(t => /did not start/.test(t))).toBe(true)
+  await ui.press({ key: 'notice-copy' })
+  expect(w.copies).toHaveLength(1)
+  expect(w.copies[0]).toMatch(/cap reached/)
+  await ui.press({ key: 'notice-dismiss' })
+  expect(await ui.find({ key: 'notice-copy' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a failed stage shows the end of its own log as the reason, with Copy', async ($, on) => {
+  const w = world(on, [{ slug: 'alpha', state: 'failed', stage: 'Plan', files: ['plan.log'], planLog: 'reading specs\nPermission denied: edit of .claude/plugins\nplan agent exited 1\n' }])
+  const ui = await open($)
+  await ui.press({ key: 'open-alpha' })
+
+  expect(await text(ui, /Why it failed \(Plan\)/)).toBeDefined()
+  expect(await text(ui, /Permission denied: edit of \.claude\/plugins/)).toBeDefined()
+  await ui.press({ key: 'reason-copy' })
+  expect(w.copies[0]).toContain('plan agent exited 1')
+  await ui.unmount()
+})
+
+test('the Test button shows what it is waiting for until the answer comes', async ($, on) => {
+  let release: (v: ModelReply) => void = () => {}
+  const w = world(on, [], argv => (argv[0] === 'test' ? new Promise<ModelReply>(r => (release = r)) : registry(REGISTRY)(argv)))
+  const ui = await openConfig($)
+  const pressing = ui.press({ key: 'config-test:acme/fast' })
+  await new Promise(r => setTimeout(r, 20))
+  expect(await text(ui, /Testing acme\/fast/)).toBeDefined()
+  release({ stdout: 'ok' })
+  await pressing
+  expect(await text(ui, /Testing acme\/fast/)).toBeUndefined()
+  expect(w.toasts.some(t => /acme\/fast/.test(t))).toBe(true)
   await ui.unmount()
 })
