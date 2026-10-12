@@ -55,6 +55,8 @@ DOCS="Docs/backlog/$SLUG"
 BRANCH="sdlc/$SLUG"
 LOG="$DOCS/logs"; mkdir -p "$LOG"
 FAIL_LOG="$LOG/tests.log"
+# Repository-wide allow rules live in the main working tree, so every worktree run sees them.
+PERM_REPO="$(git worktree list --porcelain | awk '/^worktree /{print substr($0,10); exit}')/.claude/sdlc-permissions.json"
 
 ALLOWED=(Read Write Edit Glob Grep mcp__graft
   "Bash(npm test:*)" "Bash(npm run lint:*)" "Bash(npm run generate-spec:*)" "Bash(graft:*)"
@@ -187,9 +189,20 @@ agent() {
   echo "   -> agent: $name"
   stage_flags "$pstage"
   CUR_AGENT="$name"; AGENT_STARTED="$(date +%Y-%m-%dT%H:%M:%S)"; set_status
-  ( apply_provider_env; exec claude -p "$prompt" "${STAGE_FLAGS[@]}" --permission-mode acceptEdits --allowedTools "${ALLOWED[@]}" \
-    --max-turns "$MAX_TURNS" ) > "$LOG/$name.log" 2>&1 \
-    || { echo "   !! agent '$name' failed, see $LOG/$name.log"; [ "$pstage" = test-repair ] && resume_hint || true; exit 1; }
+  # Rules the developer granted (this run's and the repository's) are added; a protected-path grant runs this stage without permission checks.
+  local allowed=("${ALLOWED[@]}") mode rule rc=0 pending
+  while IFS= read -r rule; do [ -z "$rule" ] || allowed+=("$rule"); done < <(node scripts/sdlc-permissions.cjs args "$DOCS" "$pstage" "$PERM_REPO")
+  mode="$(node scripts/sdlc-permissions.cjs mode "$DOCS" "$pstage")"
+  [ "$mode" = acceptEdits ] || echo "   (permission checks are off for this stage: you allowed a protected path)"
+  ( apply_provider_env; exec claude -p "$prompt" "${STAGE_FLAGS[@]}" --permission-mode "$mode" --allowedTools "${allowed[@]}" \
+    --output-format json --max-turns "$MAX_TURNS" ) > "$LOG/$name.json" 2> "$LOG/$name.err" || rc=$?
+  # The result text goes to the usual log; what the agent was refused is recorded for the developer to allow or deny.
+  pending="$(node scripts/sdlc-permissions.cjs extract "$LOG/$name.json" "$LOG/$name.log" "$LOG/permissions.json" "$pstage" "$ROOT" "$LOG/$name.err" || echo 0)"
+  if [ "${pending:-0}" -gt 0 ]; then
+    echo "   !! agent '$name' was refused $pending action(s): allow or deny them in the pane (or: bash scripts/sdlc-mod.sh permit $SLUG allow|always|deny all), then resume at $pstage"
+    exit 2
+  fi
+  [ "$rc" -eq 0 ] || { echo "   !! agent '$name' failed, see $LOG/$name.log"; [ "$pstage" = test-repair ] && resume_hint || true; exit 1; }
 }
 # manual_input <stage>: the developer's text from the "## <stage>" section of manual-inputs.md, as a prompt suffix.
 manual_input() {

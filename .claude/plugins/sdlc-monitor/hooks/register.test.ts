@@ -18,6 +18,8 @@ type RunSpec = {
   message?: string
   // text of logs/plan.log (list it in `files` too)
   planLog?: string
+  // logs/permissions.json: the actions the agent was refused and nobody decided yet
+  permissions?: { stage: string; tool: string; detail: string; rule: string; protected: boolean }[]
   // makes the wrapper's background start fail with this stderr
   launchError?: string
   // a pipeline started by hand: no wrapper record, only a status.json in the main working tree
@@ -61,6 +63,8 @@ function world(on: any, runs: RunSpec[] = [], model?: (argv: string[]) => ModelR
   const pidOf = (r: RunSpec) => (r.alive === false ? 999 : 100)
   // slugs whose run record the wrapper has deleted (discard); revive() brings one back, as a new start would
   const gone = new Set<string>()
+  // how many one-by-one `permit` calls were made, so the stub can answer how many asks are left
+  let decided = 0
 
   const clock = mock.clock(on, { now: NOW })
   on('fs.list', (_: unknown, e: { path: string }) => {
@@ -97,6 +101,7 @@ function world(on: any, runs: RunSpec[] = [], model?: (argv: string[]) => ModelR
           }),
         }
       }
+      if (e.path.endsWith(`${r.slug}/logs/permissions.json`) && r.permissions) return { value: JSON.stringify({ pending: r.permissions, allow: [], bypass: [], denied: [] }) }
       if (e.path.endsWith(`${r.slug}/logs/plan.log`) && r.planLog) return { value: r.planLog }
       if (e.path.endsWith(`${r.slug}/logs/tests.log`) && r.testsLog) return { value: r.testsLog }
       if (e.path.endsWith(`${r.slug}/logs/run.out`)) return { value: '== Implement\n   -> agent: impl-2\n' }
@@ -118,6 +123,12 @@ function world(on: any, runs: RunSpec[] = [], model?: (argv: string[]) => ModelR
     if (e.argv[1] === '-c') {
       const bad = runs.find(r => r.slug === e.argv[e.argv.length - 1] && r.launchError)
       if (bad) return { value: { exitCode: 1, stdout: '', stderr: bad.launchError, isStdoutTruncated: false } }
+    }
+    if (e.argv[2] === 'permit') {
+      const n = runs.find(r => r.slug === e.argv[3])?.permissions?.length ?? 0
+      decided += 1
+
+      return out(e.argv[5] === 'all' ? '0' : String(Math.max(0, n - decided)))
     }
     if (e.argv[0] === 'git') return out('.git\n')
     if (e.argv[0] === 'node') return out(JSON.stringify(PENDING))
@@ -853,5 +864,56 @@ test('the Test button shows what it is waiting for until the answer comes', asyn
   await pressing
   expect(await text(ui, /Testing acme\/fast/)).toBeUndefined()
   expect(w.toasts.some(t => /acme\/fast/.test(t))).toBe(true)
+  await ui.unmount()
+})
+
+const ASKS = [
+  { stage: 'implement', tool: 'Bash', detail: 'git push origin main', rule: 'Bash(git push:*)', protected: false },
+  { stage: 'implement', tool: 'Edit', detail: '.claude/plugins/p/f.tsx', rule: 'Edit(./.claude/plugins/p/f.tsx)', protected: true },
+]
+
+test('a paused run lists what the agent was refused; Allow always is offered only for a path that a rule can open', async ($, on) => {
+  world(on, [{ slug: 'alpha', state: 'paused', stage: 'Implement', permissions: ASKS }])
+  const ui = await open($)
+  await ui.press({ key: 'open-alpha' })
+
+  expect(await text(ui, /agent was refused 2 action/)).toBeDefined()
+  expect(await text(ui, /Bash: git push origin main/)).toBeDefined()
+  expect(await text(ui, /Protected path: allowing it runs the whole implement stage with permission checks off/)).toBeDefined()
+  expect(await ui.find({ key: 'perm-always:0' })).toBeDefined()
+  expect(await ui.find({ key: 'perm-always:1' })).toBeUndefined()
+  expect(await text(ui, /questions.md has no questions/)).toBeUndefined()
+  await ui.unmount()
+})
+
+test('Allow sends the decision to the wrapper; the run resumes at the refused stage once none is left', async ($, on) => {
+  const w = world(on, [{ slug: 'alpha', state: 'paused', stage: 'Implement', permissions: ASKS }])
+  const ui = await open($)
+  await ui.press({ key: 'open-alpha' })
+  const permits = () => w.calls.filter(c => c[2] === 'permit')
+  const launches = () => w.calls.filter(c => c[1] === '-c')
+
+  await ui.press({ key: 'perm-allow:0' })
+  expect(permits()[0]).toEqual(['bash', 'scripts/sdlc-mod.sh', 'permit', 'alpha', 'allow', '0'])
+  expect(w.toasts).toContain('Allowed: 1 more to decide')
+  expect(launches()).toHaveLength(0)
+
+  await ui.press({ key: 'perm-allow:0' })
+  expect(launches()).toHaveLength(1)
+  expect(w.envs[w.calls.indexOf(launches()[0])].FROM).toBe('implement')
+  await ui.unmount()
+})
+
+test('Deny all and Allow always use the wrapper choices deny and always', async ($, on) => {
+  const w = world(on, [{ slug: 'alpha', state: 'paused', stage: 'Spec', permissions: [{ ...ASKS[0], stage: 'spec' }, { ...ASKS[0], stage: 'spec', detail: 'curl x' }] }])
+  const ui = await open($)
+  await ui.press({ key: 'open-alpha' })
+
+  await ui.press({ key: 'perm-always:0' })
+  expect(w.calls.find(c => c[2] === 'permit')?.slice(4)).toEqual(['always', '0'])
+  await ui.press({ key: 'perm-deny-all' })
+  expect(w.calls.filter(c => c[2] === 'permit')[1].slice(4)).toEqual(['deny', 'all'])
+  // spec restarts from the beginning: no FROM
+  expect(w.envs[w.calls.findIndex(c => c[1] === '-c')].FROM).toBeUndefined()
   await ui.unmount()
 })

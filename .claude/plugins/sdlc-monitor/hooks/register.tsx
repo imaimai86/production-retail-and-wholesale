@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AgentRow, ConfigForm, ConfigProvider, PendingItem, Question, Run, RunState, Snapshot } from '../types'
+import type { AgentRow, ConfigForm, ConfigProvider, PendingItem, PermissionAsk, Question, Run, RunState, Snapshot } from '../types'
 
 const PANE = 'sdlc'
 const CONFIG_PANE = 'config'
@@ -235,6 +235,34 @@ async function loadChanges($: EngineInterface, slug: string, state: RunState, ma
   return value
 }
 
+// The undecided asks in logs/permissions.json (an unreadable or malformed file reads as none).
+function parsePermissions(text: string | null): PermissionAsk[] {
+  const j = parse(text)
+  const list = j && Array.isArray(j.pending) ? j.pending : []
+
+  return list
+    .filter((a): a is Record<string, unknown> => !!a && typeof a === 'object' && typeof (a as Record<string, unknown>).tool === 'string')
+    .map(a => ({ stage: String(a.stage ?? ''), tool: String(a.tool), detail: String(a.detail ?? ''), rule: String(a.rule ?? ''), protected: a.protected === true }))
+}
+
+// The stage to resume at once every ask of a stage is decided; spec starts from the beginning, and the audit step resumes at implement.
+const resumeKey = (stage: string) => (stage === 'spec' ? '' : stage === 'test-audit' ? 'implement' : stage)
+
+// Decides one ask (or all) through the wrapper; when none is left, the run resumes at the stage that was refused.
+async function decidePermission($: EngineInterface, run: Run, which: string, choice: 'allow' | 'always' | 'deny') {
+  const r = await withBusy($, `Saving your answer for ${run.slug}`, () => $.process.run(['bash', WRAPPER, 'permit', run.slug, choice, which]))
+  if (r.exitCode !== 0) {
+    await notify($, firstLine(r.stderr) || `permit failed (exit ${r.exitCode})`)
+
+    return
+  }
+  const left = Number(firstLine(r.stdout))
+  const stage = run.permissions[which === 'all' ? 0 : Number(which)]?.stage ?? ''
+  await notify($, `${choice === 'deny' ? 'Denied' : 'Allowed'}${left > 0 ? `: ${left} more to decide` : ''}`)
+  await refresh($)
+  if (left === 0) await launchWithNotice($, run.slug, resumeKey(stage))
+}
+
 // Why a stage failed: the last lines of that stage's own log (plan.log, review.log, the newest spec-N.log or impl-N.log), else of run.out.
 async function failureReason($: EngineInterface, docs: string, stage: string, runOut: string): Promise<string[]> {
   const logs = (await names($, `${docs}/logs`)).filter(f => f.kind === 'file').map(f => f.name)
@@ -289,6 +317,7 @@ async function loadRun($: EngineInterface, slug: string, worktree: string, reg: 
     files,
     tests: testCounts(await readText($, `${docs}/logs/tests.log`)),
     tail: runOut.split('\n').filter(l => l.trim()).slice(-8),
+    permissions: parsePermissions(await readText($, `${docs}/logs/permissions.json`)),
     reason: state === 'failed' || state === 'stopped' ? await failureReason($, docs, stageName, runOut) : [],
     questions: questionsText ? parseQuestions(questionsText) : [],
     managed: reg !== null,
@@ -1080,7 +1109,33 @@ export const register: Register = on => {
             )}
           </Box>
         )}
-        {run.state === 'paused' && run.questions.length === 0 && <Text color="yellow">Paused, but questions.md has no questions I can read: open Docs/backlog/{run.slug}/questions.md.</Text>}
+        {run.state === 'paused' && run.permissions.length > 0 && (
+          <Box flexDirection="column" gap={1}>
+            <Text bold color="yellow">
+              The {run.permissions[0].stage} agent was refused {run.permissions.length} action(s). Allow or deny each; the stage restarts when none is left.
+            </Text>
+            {run.permissions.map((a, i) => (
+              <Box key={`perm-${i}`} flexDirection="column">
+                <Text>
+                  {a.tool}: {cut(a.detail, 90)}
+                </Text>
+                {a.protected && <Text dimColor>Protected path: allowing it runs the whole {a.stage} stage with permission checks off.</Text>}
+                <Box gap={1} flexWrap="wrap">
+                  <Button key={`perm-allow:${i}`} label={a.protected ? 'Allow (stage runs unchecked)' : `Allow this run (${cut(a.rule, 40)})`} variant="primary" onPress={() => decidePermission($, run, String(i), 'allow')} />
+                  {!a.protected && <Button key={`perm-always:${i}`} label="Allow always" onPress={() => decidePermission($, run, String(i), 'always')} />}
+                  <Button key={`perm-deny:${i}`} label="Deny" onPress={() => decidePermission($, run, String(i), 'deny')} />
+                </Box>
+              </Box>
+            ))}
+            {run.permissions.length > 1 && (
+              <Box gap={1}>
+                <Button key="perm-allow-all" label="Allow all" onPress={() => decidePermission($, run, 'all', 'allow')} />
+                <Button key="perm-deny-all" label="Deny all" onPress={() => decidePermission($, run, 'all', 'deny')} />
+              </Box>
+            )}
+          </Box>
+        )}
+        {run.state === 'paused' && run.questions.length === 0 && run.permissions.length === 0 && <Text color="yellow">Paused, but questions.md has no questions I can read: open Docs/backlog/{run.slug}/questions.md.</Text>}
 
         <Box flexDirection="column">
           <Text bold>Recent output</Text>
