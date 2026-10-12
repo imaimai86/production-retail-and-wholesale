@@ -1,0 +1,47 @@
+# add-test-framework-registry
+
+Type: feature
+Priority: P2 (normal)
+Source: user request in the triage conversation: "extend support for multiple test framework other than jest. Each framework support should be an npm install -g with package and config should be able to list all supported test framework and use them dynamically. Also the test path should be configurable, and all these should be supported in the pane. Can we support installing any test framework by selecting the right package and clicking deploy - always support only one test framework per repo or per mutually exclusive directory". This is the first of three items: this one (registry, config, install), then `use-configured-test-runner`, then `add-framework-config-pane`.
+
+## Problem
+The SDLC pipeline is hard-wired to Jest: `scripts/sdlc.sh:43-44` sets `TEST_CMD="npm test"` and `TEST_DIR="server/__tests__"`, and `scripts/sdlc-testcheck.cjs:16` repeats the test directory. There is no list of supported frameworks, no place to say which framework or test path a repo uses, and no way to install one. Verified by reading `scripts/sdlc.sh`, `scripts/sdlc-testcheck.cjs` and `scripts/sdlc-integration.sh`; nothing was run.
+
+## Expected behaviour
+A user lists the supported test frameworks, installs one with `npm install -g <package>`, and records, per repo, which framework runs the tests under which path. A framework is chosen per directory and two frameworks never claim overlapping directories. The data layer and the commands exist and are tested here; the pipeline uses them in `use-configured-test-runner` and the pane in `add-framework-config-pane`.
+
+## Decisions
+- Catalog (the allow-list): a constant in the new `scripts/sdlc-frameworks.cjs`, shipped with the repo, not user-editable. Entries: `jest` (package `jest`), `vitest` (package `vitest`), `mocha` (package `mocha`). Adding a framework later is a code change (a catalog entry plus an adapter) reviewed in a PR; there is no "install any package typed by the user" path. Each entry holds: `id`, `label`, `package`, `version` (an npm range pinned in the catalog; for `jest` the major used by `server/package.json`, for the others the current stable major chosen at Implement), `bin`, argv templates (arrays, never shell strings) for `runAll`, `runFile` and `runName`, and `adapter` (the id of its result parser).
+- Machine-readable result: every catalog entry names how to get a JSON file: `jest` `--json --outputFile=<out>`, `vitest` `run --reporter=json --outputFile=<out>`, `mocha` `--reporter json` (stdout written to `<out>` by the helper). The helper command `normalize <framework> <raw.json>` converts it to one framework-neutral shape: `{ "framework": "<id>", "tests": [ { "file": "<repo-relative path>", "name": "<full name>", "status": "passed|failed|skipped" } ], "suiteErrors": [ { "file": "<repo-relative path>" } ] }`. Names are normalised exactly as `norm` in `scripts/sdlc-testcheck.cjs` does today. A suite that fails to load is a `suiteErrors` entry. Mocha prints nothing parseable when a file fails to load: a non-zero run with unparseable output yields one suite error with file `<all>`.
+- Per-repo config: `.sdlc/test-frameworks.json`, committed to the repo, holding only `{ "tests": [ { "framework": "<id>", "path": "<repo-relative dir>", "cwd": "<repo-relative dir, default .>" } ] }`. It is created by the first `use`. With no file the effective config is the built-in default: one entry `jest`, path `server/__tests__`, cwd `server`, so a repo that never touches this behaves as today.
+- Path rules (exit 1, stderr message, nothing written): relative, no `..` segment, no leading `/` or drive letter, only `A-Za-z0-9._/-`, must exist as a directory, and its real path (symlinks resolved) must stay inside the repo. `cwd` follows the same rules and must contain the path.
+- One framework per directory: two entries conflict when their normalised paths are equal or one is an ancestor of the other. `use` on a conflicting path exits 1 naming both entries and changes nothing. Different frameworks on disjoint directories (for example `server/__tests__` and `web/tests`) are allowed; the same framework on two disjoint directories is allowed. Running `use` on the exact path of an existing entry replaces that entry's framework (this is how a user switches framework).
+- Helper (`node scripts/sdlc-frameworks.cjs <command>`), one line or JSON on stdout, exit 0 on success:
+  - `catalog [--json]`: every catalog entry with `installed` (true when `<bin>` is found on `PATH` or in a `node_modules/.bin` of the repo or of an entry's `cwd`) and the version found.
+  - `list [--json]`: the effective config, each entry with its framework label and `installed`.
+  - `use <framework> --path <dir> [--cwd <dir>]`: validate, check overlap, write.
+  - `remove --path <dir>`: remove one entry; removing the last entry is allowed and restores the built-in default.
+  - `install <framework> [--yes]`: runs `npm install -g <package>@<version>` for a catalog entry only, with no shell (`execFile`), printing the exact command first. Without `--yes` it prints the command and exits 1 ("confirmation required"). An unknown framework exits 1 without running anything. On `EACCES` it prints npm's message and a hint to check `npm config get prefix`, and never runs `sudo`. The npm binary comes from `SDLC_NPM_BIN` when set (so tests use a stub), else `npm`.
+  - `normalize <framework> <raw.json>`: described above; prints the neutral JSON.
+- Writes are atomic (temp file in the same folder, then rename). A config that is invalid JSON, has the wrong shape, names a framework not in the catalog, or has overlapping paths makes every command except `catalog` exit 1 naming the file; it is never overwritten or ignored silently.
+- Wrapper: `scripts/sdlc-mod.sh framework catalog|list|use|remove|install ...` passes arguments and exit code through, and the usage text lists it (same pattern as the `model` command, `scripts/sdlc-mod.sh:331-332`).
+- Security: installing a global package runs third-party code (npm lifecycle scripts) on the machine, so (1) only catalog packages can be installed; (2) the command is shown in full and needs an explicit confirmation (`--yes` on the CLI; a second press in the pane); (3) the catalog and the config hold package names, versions, argv templates and paths only; (4) no environment variable value and no token is read, written or printed; (5) paths and package names are never interpolated into a shell string.
+- Out of the box nothing changes: the pipeline does not read any of this until `use-configured-test-runner`.
+
+## Scope
+- In: `scripts/sdlc-frameworks.cjs` (new), `scripts/sdlc-mod.sh` (`framework` command, usage), `.sdlc/test-frameworks.json` (written by the helper, not created by this item).
+- Out of scope: any change to `scripts/sdlc.sh`, `scripts/sdlc-testcheck.cjs`, the prompts or the pane (the next two items); the integration suite and its database handling; frameworks outside the catalog; non-Node test runners; uninstalling a framework.
+
+## Tests
+- `server/__tests__/scripts/sdlc-frameworks.test.js`: `catalog` lists the three entries and marks `installed` from a fake `PATH` directory containing a stub bin; the default config is returned when no file exists; `use` writes the file, replaces an entry on the same path, and rejects each path rule (absolute, `..`, bad characters, missing directory, symlink escaping the repo, `cwd` not containing path) with nothing written; overlap: equal, ancestor and descendant are rejected, and disjoint directories with different frameworks are accepted; unknown framework rejected; `remove` of one entry and of the last entry; atomic write leaves no temp file; corrupt, wrong-shape, unknown-framework and overlapping-path config files exit 1 and stay untouched; `install` without `--yes` exits 1 and does not run the stub npm, with `--yes` runs the stub with the exact argv `install -g <package>@<version>` and no shell, an unknown framework never runs it, `EACCES` output includes the prefix hint; no command prints any environment variable value.
+- `server/__tests__/scripts/sdlc-frameworks-normalize.test.js`: `normalize` on raw outputs (JSON fixtures written by the test) for jest, vitest and mocha, each with a pass, a fail, a skip and a suite that fails to load; paths come out repo-relative; the jest case yields the same keys as `collect` in `scripts/sdlc-testcheck.cjs` does for the same input.
+- `server/__tests__/scripts/sdlc-mod.test.js` (extend): `framework` subcommands pass arguments and exit codes through; usage lists `framework`.
+- Every case runs the real code. Integration tests: none, there is no database or API change.
+
+## Docs
+- `README.md`: a "Test frameworks" paragraph: the catalog, the config file, the one-framework-per-directory rule, the install confirmation and the security note.
+- `CLAUDE.md`: add `framework catalog|list|use|remove|install` to the `scripts/sdlc-mod.sh` command row.
+
+## Open questions
+- Is a three-entry catalog (jest, vitest, mocha) enough for the first version? Recommended: yes; each further framework needs an adapter and a result fixture, so it is added one PR at a time.
+- Should users be able to add their own catalog entries (any package, any command)? Recommended: no, because a global install runs arbitrary code; revisit if a framework outside the catalog is really needed. The brief above assumes no.

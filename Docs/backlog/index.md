@@ -37,3 +37,6 @@ Markers: [ ] pending, [x] completed, [!] blocked, [~] parked (skipped by `script
 - [ ] `add-stage-model-switch` - Feature: choose model and effort per stage from the pane before the stage starts (non-blocking, locked once the stage has started; stop and resume to change it)
 - [ ] `add-requirements-viewer` - Feature: `...More` button on each pending item in the pane's listing opens its brief (requirements) in a read-only screen with section buttons
 - [ ] `add-answer-notes` - Feature: accept the suggested answer and add a note on the same Spec or Plan question, in the pane and in the orchestrator flow
+- [ ] `add-test-framework-registry` - Feature: catalog of supported test frameworks (jest, vitest, mocha), per-repo config with configurable test paths (one framework per directory, no overlap), `sdlc-mod.sh framework` commands incl. confirmed `npm install -g`
+- [ ] `use-configured-test-runner` - Feature: the SDLC gates (Red tests, Implement, Test repair, flaky retry) run the configured framework and test paths instead of Jest and server/__tests__; needs add-test-framework-registry
+- [ ] `add-framework-config-pane` - Feature: CONFIG pane screen to pick a framework package, set the test path and Deploy (install and save); needs add-test-framework-registry
