@@ -36,9 +36,14 @@ const confirmDiscard = atom({ plugin: 'sdlc-monitor', key: 'confirmDiscard' } as
 const launching = atom({ plugin: 'sdlc-monitor', key: 'launching' } as const, {} as Record<string, number>)
 const draft = atom({ plugin: 'sdlc-monitor', key: 'draft' } as const, {} as Record<string, string>)
 const notice = atom({ plugin: 'sdlc-monitor', key: 'notice' } as const, '')
-const EMPTY_FORM: ConfigForm = { provider: '', endpoint: '', keyEnv: '', models: '' }
-const CONFIG_FIELDS: { key: keyof ConfigForm; label: string }[] = [
-  { key: 'provider', label: 'provider name' },
+// What a button press is working on ('' when idle), and the spinner frame drawn beside it.
+const busy = atom({ plugin: 'sdlc-monitor', key: 'busy' } as const, '')
+const frame = atom({ plugin: 'sdlc-monitor', key: 'frame' } as const, 0)
+const SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+const SPIN_MS = 250
+const EMPTY_FORM: ConfigForm = { provider: '', endpoint: '', keyEnv: '', models: '', effort: false }
+const CONFIG_FIELDS: { key: 'provider' | 'endpoint' | 'keyEnv' | 'models'; label: string }[] = [
+  { key: 'provider', label: 'provider name (saved in lowercase)' },
   { key: 'endpoint', label: 'endpoint' },
   { key: 'keyEnv', label: 'API key variable NAME (not the key)' },
   { key: 'models', label: 'models (comma list)' },
@@ -46,6 +51,9 @@ const CONFIG_FIELDS: { key: keyof ConfigForm; label: string }[] = [
 const configList = atom({ plugin: 'sdlc-monitor', key: 'configList' } as const, null as Record<string, ConfigProvider> | null)
 const configError = atom({ plugin: 'sdlc-monitor', key: 'configError' } as const, '')
 const configForm = atom({ plugin: 'sdlc-monitor', key: 'configForm' } as const, EMPTY_FORM)
+// 'list' is the provider list; 'form' is the add / edit form. configEditing is the provider being edited, '' for a new one.
+const configView = atom({ plugin: 'sdlc-monitor', key: 'configView' } as const, 'list' as 'list' | 'form')
+const configEditing = atom({ plugin: 'sdlc-monitor', key: 'configEditing' } as const, '')
 const configConfirmProvider = atom({ plugin: 'sdlc-monitor', key: 'configConfirmProvider' } as const, '')
 const configConfirmModel = atom({ plugin: 'sdlc-monitor', key: 'configConfirmModel' } as const, null as { provider: string; model: string } | null)
 
@@ -227,6 +235,18 @@ async function loadChanges($: EngineInterface, slug: string, state: RunState, ma
   return value
 }
 
+// Why a stage failed: the last lines of that stage's own log (plan.log, review.log, the newest spec-N.log or impl-N.log), else of run.out.
+async function failureReason($: EngineInterface, docs: string, stage: string, runOut: string): Promise<string[]> {
+  const logs = (await names($, `${docs}/logs`)).filter(f => f.kind === 'file').map(f => f.name)
+  const key = stage.toLowerCase().replace(/[^a-z]/g, '')
+  const prefix = key === 'redtests' ? 'red' : key === 'implement' ? 'impl' : key === 'spec' ? 'spec' : key
+  const own = logs.filter(f => f === `${prefix}.log` || new RegExp(`^${prefix}-\\d+\\.log$`).test(f)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+  const text = prefix && own.length ? await readText($, `${docs}/logs/${own[own.length - 1]}`) : null
+  const lines = (text ?? runOut).split('\n').filter(l => l.trim())
+
+  return lines.slice(-12)
+}
+
 // One pipeline: the wrapper's record, the pipeline's own status.json, and what it has written so far.
 async function loadRun($: EngineInterface, slug: string, worktree: string, reg: Record<string, unknown> | null, now: number): Promise<Run> {
   const root = worktree || '.'
@@ -237,6 +257,7 @@ async function loadRun($: EngineInterface, slug: string, worktree: string, reg: 
     ...(await names($, `${docs}/logs`)).filter(f => /^(impl|spec)-\d+\.log$/.test(f.name)).map(f => f.name),
   ]
   const runOut = (await readText($, `${docs}/logs/run.out`)) ?? ''
+  const stageName = String(status?.stage ?? '')
   const questionsText = await readText($, `${docs}/questions.md`)
   const pid = Number(reg?.pid ?? status?.pid ?? 0)
   const alive = await isAlive($, pid)
@@ -268,6 +289,7 @@ async function loadRun($: EngineInterface, slug: string, worktree: string, reg: 
     files,
     tests: testCounts(await readText($, `${docs}/logs/tests.log`)),
     tail: runOut.split('\n').filter(l => l.trim()).slice(-8),
+    reason: state === 'failed' || state === 'stopped' ? await failureReason($, docs, stageName, runOut) : [],
     questions: questionsText ? parseQuestions(questionsText) : [],
     managed: reg !== null,
     message: String(reg?.message ?? ''),
@@ -306,10 +328,47 @@ async function collect($: EngineInterface): Promise<Snapshot> {
 }
 
 // Starts (or resumes) a pipeline in the background: it outlives this pane and this session.
-async function launch($: EngineInterface, slug: string, from: string) {
+// Waits 3 seconds: a wrapper that refuses or crashes by then is reported, with the last lines of its output. Returns '' or that error.
+const LAUNCH_SCRIPT =
+  `out="\${TMPDIR:-/tmp}/sdlc-launch-$0.out"; nohup bash ${WRAPPER} run "$0" </dev/null >"$out" 2>&1 & pid=$!; sleep 3; ` +
+  'if ! kill -0 $pid 2>/dev/null; then wait $pid; rc=$?; if [ $rc -ne 0 ] && [ $rc -ne 2 ]; then tail -5 "$out" >&2; echo "exit $rc" >&2; exit $rc; fi; fi'
+
+async function launch($: EngineInterface, slug: string, from: string): Promise<string> {
   const env: Record<string, string> = { SDLC_MAX_PARALLEL: String(CAP) }
   if (from) env.FROM = from
-  await $.process.run(['bash', '-c', `nohup bash ${WRAPPER} run "$0" </dev/null >/dev/null 2>&1 &`, slug], { env })
+  try {
+    const r = await $.process.run(['bash', '-c', LAUNCH_SCRIPT, slug], { env })
+    if (r.exitCode === 0) return ''
+
+    return `${slug} did not start: ${(r.stderr || r.stdout || `exit ${r.exitCode}`).trim()}`
+  } catch (e) {
+    return `${slug} did not start: ${String((e as { message?: string })?.message ?? e)}`
+  }
+}
+
+// Shows a message in the toast and keeps it in the notice row, which has a Copy button, until it is dismissed.
+async function notify($: EngineInterface, text: string) {
+  await update($, notice, () => text)
+  $.ui.toast(text)
+}
+
+// Runs `work` with a loader line (label plus spinner) shown until it ends.
+async function withBusy<T>($: EngineInterface, label: string, work: () => Promise<T>): Promise<T> {
+  await update($, busy, () => label)
+  try {
+    return await work()
+  } finally {
+    await update($, busy, () => '')
+  }
+}
+
+// Starts or resumes one run and reports a refusal; used by every Start / Resume button.
+async function launchWithNotice($: EngineInterface, slug: string, from: string): Promise<boolean> {
+  const err = await withBusy($, `Starting ${slug}${from ? ` at ${from}` : ''}`, () => launch($, slug, from))
+  if (err) await notify($, err)
+  await refresh($)
+
+  return !err
 }
 
 async function stopRun($: EngineInterface, slug: string) {
@@ -324,7 +383,7 @@ async function discardRun($: EngineInterface, slug: string) {
 async function startRun($: EngineInterface, slug: string) {
   const now = await $.clock.now()
   await update($, launching, l => ({ ...l, [slug]: now }))
-  await launch($, slug, '')
+  await launchWithNotice($, slug, '')
 }
 
 const resumeFrom = (run: Run) => (RESUME_AT_IMPLEMENT.includes(run.stage) ? 'implement' : '')
@@ -347,10 +406,11 @@ async function runSelected($: EngineInterface) {
   const s = await read($, snapshot)
   const running = s.runs.filter(r => r.state === 'running' || r.state === 'starting').length
   const free = Math.max(0, CAP - running)
-  for (const slug of slugs.slice(0, free)) await launch($, slug, '')
+  let refused = false
+  for (const slug of slugs.slice(0, free)) if (!(await launchWithNotice($, slug, ''))) refused = true
   await update($, queue, q => [...q, ...slugs.slice(free).filter(x => !q.includes(x))])
   await update($, selected, () => ({}))
-  await update($, notice, () => `Started ${Math.min(free, slugs.length)}, queued ${Math.max(0, slugs.length - free)} (at most ${CAP} run at once).`)
+  if (!refused) await notify($, `Started ${Math.min(free, slugs.length)}, queued ${Math.max(0, slugs.length - free)} (at most ${CAP} run at once).`)
   await refresh($)
 }
 
@@ -362,14 +422,14 @@ async function drainQueue($: EngineInterface, s: Snapshot) {
   if (running >= CAP) return
   const next = waiting[0]
   await update($, queue, q => q.filter(x => x !== next))
-  await launch($, next, '')
+  await launchWithNotice($, next, '')
 }
 
 // Saves the developer's text for one stage; the pipeline hands it to that stage's agent.
 async function saveManualInput($: EngineInterface, run: Run, key: string, value: string) {
   const path = `${run.worktree}/Docs/backlog/${run.slug}/manual-inputs.md`
   await $.fs.write(path, setManualInput((await readText($, path)) ?? '', key, value))
-  await update($, notice, () => `Input saved for ${key} of ${run.slug}.`)
+  await notify($, `Input saved for ${key} of ${run.slug}.`)
 }
 
 async function submitAnswers($: EngineInterface, run: Run) {
@@ -381,8 +441,8 @@ async function submitAnswers($: EngineInterface, run: Run) {
   for (const q of run.questions) answers[q.n] = drafts[`${run.slug}:${q.n}`] ?? ''
   await $.fs.write(path, fillAnswers(text, answers))
   await update($, draft, d => Object.fromEntries(Object.entries(d).filter(([k]) => !k.startsWith(`${run.slug}:`))))
-  await launch($, run.slug, '')
-  await update($, notice, () => `Answers saved, ${run.slug} resumed.`)
+  await launchWithNotice($, run.slug, '')
+  await notify($, `Answers saved, ${run.slug} resumed.`)
   await refresh($)
 }
 
@@ -421,50 +481,76 @@ async function loadConfig($: EngineInterface) {
 }
 
 async function openConfig($: EngineInterface) {
+  await update($, configView, () => 'list')
+  await update($, configEditing, () => '')
   await update($, configConfirmProvider, () => '')
   await update($, configConfirmModel, () => null)
   await loadConfig($)
   await $.ui.open({ id: CONFIG_PANE, title: 'CONFIG' })
 }
 
-// Arguments of `model add` for the typed form; an existing provider keeps its stored values where a field is empty and gains the typed models.
-function addArgs(form: ConfigForm, list: Record<string, ConfigProvider> | null): string[] {
-  const p = list && Object.prototype.hasOwnProperty.call(list, form.provider) ? list[form.provider] : null
-  if (!p) return ['add', form.provider, '--endpoint', form.endpoint, '--key-env', form.keyEnv, '--models', form.models]
-  const typed = form.models === '' ? [] : form.models.split(',').map(x => x.trim())
-  const models = [...p.models]
-  for (const m of typed) if (!models.includes(m)) models.push(m)
-  const args = ['add', form.provider, '--endpoint', form.endpoint || p.endpoint, '--key-env', form.keyEnv || p.api_key_env, '--models', models.join(',')]
-  if (p.effort) args.push('--effort')
+// Arguments of `model add` for the form. `add` replaces the provider's stored endpoint, key variable, models and effort flag with these.
+const addArgs = (form: ConfigForm): string[] => [
+  'add', form.provider, '--endpoint', form.endpoint, '--key-env', form.keyEnv, '--models', form.models,
+  ...(form.effort ? ['--effort'] : []),
+]
 
-  return args
+async function showForm($: EngineInterface, provider: string) {
+  const list = await read($, configList)
+  const p = provider && list && Object.prototype.hasOwnProperty.call(list, provider) ? list[provider] : null
+  await update($, configForm, () => (p ? { provider, endpoint: p.endpoint, keyEnv: p.api_key_env, models: p.models.join(','), effort: p.effort } : EMPTY_FORM))
+  await update($, configEditing, () => (p ? provider : ''))
+  await update($, configView, () => 'form')
 }
 
-async function submitAdd($: EngineInterface) {
-  const form = await read($, configForm)
-  const list = await read($, configList)
-  const r = await runModel($, addArgs(form, list))
-  $.ui.toast(r.line)
-  if (r.ok) await update($, configForm, () => EMPTY_FORM)
+async function showList($: EngineInterface) {
+  await update($, configView, () => 'list')
+  await update($, configEditing, () => '')
+  await update($, configForm, () => EMPTY_FORM)
   await loadConfig($)
 }
 
+// Saves the form. A new provider whose name is taken is refused (it would overwrite the stored one: use Edit).
+// `another` stays on an empty form for the next provider; otherwise the pane goes back to the list. A rejected save stays on the form.
+async function saveForm($: EngineInterface, another: boolean) {
+  const typed = await read($, configForm)
+  // The registry only takes lowercase names: OpenRouter is stored as openrouter.
+  const form = { ...typed, provider: typed.provider.trim().toLowerCase() }
+  const editing = await read($, configEditing)
+  const list = await read($, configList)
+  if (!editing && list && Object.prototype.hasOwnProperty.call(list, form.provider)) {
+    await notify($, `${form.provider} already exists: press Edit on it`)
+
+    return
+  }
+  const r = await withBusy($, `Saving ${editing || form.provider}`, () => runModel($, addArgs({ ...form, provider: editing || form.provider })))
+  await notify($, r.line)
+  if (!r.ok) return
+  await loadConfig($)
+  if (another) {
+    await update($, configForm, () => EMPTY_FORM)
+    await update($, configEditing, () => '')
+  } else {
+    await showList($)
+  }
+}
+
 async function testModel($: EngineInterface, provider: string, model: string) {
-  const r = await runModel($, ['test', `${provider}/${model}`])
-  $.ui.toast(`${provider}/${model}: ${r.ok ? 'ok' : r.line}`)
+  const r = await withBusy($, `Testing ${provider}/${model}: waiting for the provider to answer (up to 10 s)`, () => runModel($, ['test', `${provider}/${model}`]))
+  await notify($, `${provider}/${model}: ${r.ok ? 'ok' : r.line}`)
   await loadConfig($)
 }
 
 async function removeModel($: EngineInterface, provider: string, model: string) {
   const r = await runModel($, ['remove-model', provider, model])
-  $.ui.toast(r.line)
+  await notify($, r.line)
   await update($, configConfirmModel, () => null)
   await loadConfig($)
 }
 
 async function removeProvider($: EngineInterface, provider: string) {
   const r = await runModel($, ['remove', provider])
-  $.ui.toast(r.line)
+  await notify($, r.line)
   await update($, configConfirmProvider, () => '')
   await loadConfig($)
 }
@@ -549,6 +635,53 @@ async function sweepAgents($: EngineInterface) {
   })
 }
 
+// Copies `text` to the clipboard of the surface that was pressed, and says whether it worked.
+async function copyText($: EngineInterface, text: string, surface: unknown) {
+  const r = await $.ui.copy({ text, surface } as never)
+  $.ui.toast(r.isCopied ? 'Copied' : `Could not copy (${r.reason})`)
+}
+
+// The loader line (while a button press is working) and the last notice with Copy and Dismiss; both stay until they are gone.
+async function feedback($: EngineInterface, els: { Box: any; Text: any; Button: any }) {
+  const { Box, Text, Button } = els
+  const label = await read($, busy)
+  const spin = SPIN[(await read($, frame)) % SPIN.length]
+  const message = await read($, notice)
+  if (!label && !message) return null
+
+  return (
+    <Box flexDirection="column">
+      {label && <Text color="yellow">{spin} {label}...</Text>}
+      {message && (
+        <Box gap={1} flexWrap="wrap">
+          <Text color="cyan">{message}</Text>
+          <Button key="notice-copy" label="Copy" onPress={(press: { surface?: unknown }) => copyText($, message, press?.surface)} />
+          <Button key="notice-dismiss" label="Dismiss" onPress={() => update($, notice, () => '')} />
+        </Box>
+      )}
+    </Box>
+  )
+}
+
+// Why a failed run failed, with a Copy button.
+function reasonBox($: EngineInterface, els: { Box: any; Text: any; Button: any }, run: Run) {
+  const { Box, Text, Button } = els
+  if (!run.reason.length) return null
+  const text = run.reason.join('\n')
+
+  return (
+    <Box flexDirection="column">
+      <Box gap={1}>
+        <Text bold color="red">Why it failed{run.stage ? ` (${run.stage})` : ''}</Text>
+        <Button key="reason-copy" label="Copy" onPress={(press: { surface?: unknown }) => copyText($, text, press?.surface)} />
+      </Box>
+      {run.reason.map((line, i) => (
+        <Text key={`reason-${i}`} dimColor>{line}</Text>
+      ))}
+    </Box>
+  )
+}
+
 let previous: Record<string, RunState> = {}
 let isFirst = true
 
@@ -556,6 +689,9 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'sdlc-monitor', description: 'Open the SDLC control pane: start, watch, answer and stop pipelines' })
     await $.command.register({ name: 'sdlc-config', description: 'Open the CONFIG pane: providers and models of the model registry' })
+    $.clock.every(SPIN_MS, async () => {
+      if (await read($, busy)) await update($, frame, n => n + 1)
+    })
     $.clock.every(EVERY_MS, async () => {
       const s = await refresh($)
       await drainQueue($, s)
@@ -564,9 +700,9 @@ export const register: Register = on => {
       for (const r of s.runs) {
         now[r.slug] = r.state
         if (!isFirst && previous[r.slug] && previous[r.slug] !== r.state) {
-          if (r.state === 'paused') $.ui.toast(`${r.slug} is paused: ${r.questions.length} question(s) need answers`)
-          else if (r.state === 'failed' || r.state === 'stopped') $.ui.toast(`${r.slug} failed at ${r.stage || 'start'}`)
-          else if (r.state === 'done') $.ui.toast(`${r.slug} is done`)
+          if (r.state === 'paused') await notify($, `${r.slug} is paused: ${r.questions.length} question(s) need answers`)
+          else if (r.state === 'failed' || r.state === 'stopped') await notify($, `${r.slug} failed at ${r.stage || 'start'}`)
+          else if (r.state === 'done') await notify($, `${r.slug} is done`)
         }
       }
       previous = now
@@ -632,10 +768,13 @@ export const register: Register = on => {
     const live = s.runs.filter(r => r.state === 'running' || r.state === 'starting' || r.state === 'paused')
 
     return (
-      <Box gap={1}>
-        <Button key="sdlc-open" label="SDLC" variant="primary" onPress={() => $.ui.open({ id: PANE, title: 'SDLC control' })} />
-        <Button key="config-open" label="CONFIG" onPress={() => openConfig($)} />
-        <Text dimColor>{live.length || q.length ? summary(s.runs, q.length) : `${s.pending.length} pending`}</Text>
+      <Box flexDirection="column">
+        <Box gap={1}>
+          <Button key="sdlc-open" label="SDLC" variant="primary" onPress={() => $.ui.open({ id: PANE, title: 'SDLC control' })} />
+          <Button key="config-open" label="CONFIG" onPress={() => openConfig($)} />
+          <Text dimColor>{live.length || q.length ? summary(s.runs, q.length) : `${s.pending.length} pending`}</Text>
+        </Box>
+        {await feedback($, { Box, Text, Button })}
       </Box>
     )
   })
@@ -649,7 +788,6 @@ export const register: Register = on => {
     if (!run && !current) {
       const pick = await read($, selected)
       const waiting = await read($, queue)
-      const message = await read($, notice)
       const rows = Object.values(await read($, agents))
       const chosen = Object.keys(pick).filter(k => pick[k]).length
       const running = s.runs.filter(r => r.state === 'running' || r.state === 'starting').length
@@ -659,7 +797,7 @@ export const register: Register = on => {
           <Text bold>
             SDLC control <Text dimColor> {summary(s.runs, waiting.length)} · up to {CAP} at once</Text>
           </Text>
-          {message && <Text color="cyan">{message}</Text>}
+          {await feedback($, { Box, Text, Button })}
 
           <Box flexDirection="column">
             <Text bold>Pending ({s.pending.length}): select one or more</Text>
@@ -795,8 +933,7 @@ export const register: Register = on => {
               label={resumeFrom(run) ? 'Resume from Implement' : 'Resume'}
               variant="primary"
               onPress={async () => {
-                await launch($, run.slug, resumeFrom(run))
-                await refresh($)
+                await launchWithNotice($, run.slug, resumeFrom(run))
               }}
             />
           )}
@@ -811,7 +948,7 @@ export const register: Register = on => {
                   await update($, confirmStop, () => '')
                   await update($, draft, d => Object.fromEntries(Object.entries(d).filter(([k]) => !k.startsWith(`${run.slug}:`))))
                   await discardRun($, run.slug)
-                  await update($, notice, () => `Discarded ${run.slug}.`)
+                  await notify($, `Discarded ${run.slug}.`)
                   await refresh($)
                 } else {
                   await update($, confirmDiscard, () => run.slug)
@@ -831,6 +968,8 @@ export const register: Register = on => {
           <Text color="yellow">Started outside the wrapper, so Stop and Resume are not available here. Resume it in the main working tree with ./scripts/sdlc.sh {run.slug}.</Text>
         )}
         {run.message && <Text color="red">{run.message}</Text>}
+        {await feedback($, { Box, Text, Button })}
+        {reasonBox($, { Box, Text, Button }, run)}
 
         <Box flexDirection="column">
           <Text bold>
@@ -893,8 +1032,7 @@ export const register: Register = on => {
                   key={`resume-at-${st.key}`}
                   label={`Resume at ${st.label}`}
                   onPress={async () => {
-                    await launch($, run.slug, st.key === 'spec' ? '' : st.key)
-                    await refresh($)
+                    await launchWithNotice($, run.slug, st.key === 'spec' ? '' : st.key)
                   }}
                 />
               </Box>
@@ -959,16 +1097,55 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: CONFIG_PANE }, async ($, e) => {
     const { Box, Button, Input, Text } = $.ui.resolve(e)
+    const view = await read($, configView)
+    const editing = await read($, configEditing)
+    const form = await read($, configForm)
+
+    if (view === 'form') {
+      return (
+        <Box flexDirection="column" paddingX={1} gap={1}>
+          <Text bold>{editing ? `Edit ${editing}` : 'Add a provider'}</Text>
+          {await feedback($, { Box, Text, Button })}
+          {CONFIG_FIELDS.filter(f => !(editing && f.key === 'provider')).map(f => (
+            <Input
+              key={`config-in-${f.key}`}
+              label={`${f.label}: `}
+              placeholder={f.label}
+              value={form[f.key]}
+              onInput={value => update($, configForm, d => ({ ...d, [f.key]: value.trim() }))}
+              onSubmit={value => update($, configForm, d => ({ ...d, [f.key]: value.trim() }))}
+            />
+          ))}
+          <Box gap={1} flexWrap="wrap">
+            <Button
+              key="config-effort"
+              label={form.effort ? 'Effort flag: on' : 'Effort flag: off'}
+              onPress={() => update($, configForm, d => ({ ...d, effort: !d.effort }))}
+            />
+            <Text dimColor>models: comma list; the effort flag passes --effort, which many models reject</Text>
+          </Box>
+          <Box gap={1} flexWrap="wrap">
+            <Button key="config-save" label="Save" variant="primary" onPress={() => saveForm($, false)} />
+            {!editing && <Button key="config-save-another" label="Save and add another" onPress={() => saveForm($, true)} />}
+            <Button key="config-cancel" label="Cancel" onPress={() => showList($)} />
+          </Box>
+        </Box>
+      )
+    }
+
     const list = await read($, configList)
     const error = await read($, configError)
-    const form = await read($, configForm)
     const pendingProvider = await read($, configConfirmProvider)
     const pendingModel = await read($, configConfirmModel)
     const names = list ? Object.keys(list) : []
 
     return (
       <Box flexDirection="column" paddingX={1} gap={1}>
-        <Text bold>CONFIG</Text>
+        <Box gap={1} flexWrap="wrap">
+          <Text bold>CONFIG</Text>
+          <Button key="config-add-new" label="Add provider" variant="primary" onPress={() => showForm($, '')} />
+        </Box>
+        {await feedback($, { Box, Text, Button })}
         {error ? <Text color="red">{error}</Text> : null}
         {!error && list && names.length === 0 && <Text dimColor>No custom providers</Text>}
         {!error &&
@@ -984,6 +1161,7 @@ export const register: Register = on => {
                   <Text dimColor>{p.endpoint}</Text>
                   <Text dimColor>{p.api_key_env}</Text>
                   <Text color={p.key_set ? 'green' : 'yellow'}>{p.key_set ? 'key set' : 'key NOT set'}</Text>
+                  <Button key={`config-edit:${name}`} label="Edit" onPress={() => showForm($, name)} />
                   <Button
                     key={`config-remove-provider:${name}`}
                     label={removing ? 'Confirm remove' : 'Remove'}
@@ -1019,22 +1197,6 @@ export const register: Register = on => {
               </Box>
             )
           })}
-        <Box flexDirection="column">
-          <Text bold>Add a provider or model</Text>
-          {CONFIG_FIELDS.map(f => (
-            <Box key={`config-row-${f.key}`} gap={1} flexWrap="wrap">
-              <Input
-                key={`config-in-${f.key}`}
-                placeholder={f.label}
-                onSubmit={async value => {
-                  await update($, configForm, d => ({ ...d, [f.key]: value.trim() }))
-                  if (f.key === 'models') await submitAdd($)
-                }}
-              />
-              {form[f.key] && <Text color="cyan">→ {form[f.key]}</Text>}
-            </Box>
-          ))}
-        </Box>
       </Box>
     )
   })
