@@ -40,3 +40,4 @@ Markers: [ ] pending, [x] completed, [!] blocked, [~] parked (skipped by `script
 - [ ] `add-test-framework-registry` - Feature: catalog of supported test frameworks (jest, vitest, mocha), per-repo config with configurable test paths (one framework per directory, no overlap), `sdlc-mod.sh framework` commands incl. confirmed `npm install -g`
 - [ ] `use-configured-test-runner` - Feature: the SDLC gates (Red tests, Implement, Test repair, flaky retry) run the configured framework and test paths instead of Jest and server/__tests__; needs add-test-framework-registry
 - [ ] `add-framework-config-pane` - Feature: CONFIG pane screen to pick a framework package, set the test path and Deploy (install and save); needs add-test-framework-registry
+- [x] `add-permission-prompts` - Feature: a refused agent action pauses the run; the pane offers Allow this run, Allow always or Deny, then resumes the stage

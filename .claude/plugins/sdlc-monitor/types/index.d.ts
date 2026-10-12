@@ -2,7 +2,21 @@ export type Question = { n: number; title: string; body: string; suggested: stri
 
 export type RunState = 'starting' | 'running' | 'paused' | 'done' | 'failed' | 'interrupted' | 'stopped'
 
+// An action the pipeline's agent was refused (from Docs/backlog/<slug>/logs/permissions.json).
+export type PermissionAsk = {
+  stage: string
+  tool: string
+  detail: string
+  rule: string
+  // a path under .claude/: no allow rule lifts that refusal, only running the stage without permission checks
+  protected: boolean
+}
+
 export type Run = {
+  // files each stage changed, by stage name (from logs/stage-files.json); empty for a run that predates it
+  stageFiles: Record<string, string[]>
+  // actions refused and not decided yet; a paused run with these waits for Allow or Deny, then resumes at the stage
+  permissions: PermissionAsk[]
   // the last lines of the failed stage's log, else of run.out; empty unless the run failed or stopped
   reason: string[]
   slug: string

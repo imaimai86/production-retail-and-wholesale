@@ -55,6 +55,8 @@ DOCS="Docs/backlog/$SLUG"
 BRANCH="sdlc/$SLUG"
 LOG="$DOCS/logs"; mkdir -p "$LOG"
 FAIL_LOG="$LOG/tests.log"
+# Repository-wide allow rules live in the main working tree, so every worktree run sees them.
+PERM_REPO="$(git worktree list --porcelain | awk '/^worktree /{print substr($0,10); exit}')/.claude/sdlc-permissions.json"
 
 ALLOWED=(Read Write Edit Glob Grep mcp__graft
   "Bash(npm test:*)" "Bash(npm run lint:*)" "Bash(npm run generate-spec:*)" "Bash(graft:*)"
@@ -70,8 +72,11 @@ set_status() {
     "$SLUG" "$RUN_STATE" "$CUR_STAGE" "$CUR_AGENT" "$CUR_MODEL" "$CUR_EFFORT" "$MODELS_JSON" "$CUR_ATTEMPT" "$AGENT_STARTED" "$RUN_STARTED" "$(date +%Y-%m-%dT%H:%M:%S)" "$$" \
     > "$STATUS.tmp" && mv "$STATUS.tmp" "$STATUS"
 }
+# Files each stage changed (shown per stage in the pane): the stage that ends is credited with what changed since the last mark.
+STAGE_FILES="$LOG/stage-files.json"
+mark_stage() { node scripts/sdlc-changes.cjs mark "$STAGE_FILES" "${1:-}" 2>/dev/null || true; }
 # Final state on any exit: done (0), paused for answers (2), failed (anything else).
-trap 'rc=$?; case $rc in 0) RUN_STATE=done;; 2) RUN_STATE=paused;; *) RUN_STATE=failed;; esac; CUR_AGENT=""; CUR_MODEL=""; CUR_EFFORT=""; set_status' EXIT
+trap 'rc=$?; mark_stage "$CUR_STAGE"; case $rc in 0) RUN_STATE=done;; 2) RUN_STATE=paused;; *) RUN_STATE=failed;; esac; CUR_AGENT=""; CUR_MODEL=""; CUR_EFFORT=""; set_status' EXIT
 
 # Default per stage (no limit; override for any run with MODEL_<STAGE> / EFFORT_<STAGE>): "<model> <effort>". See the header.
 stage_defaults() {
@@ -187,9 +192,20 @@ agent() {
   echo "   -> agent: $name"
   stage_flags "$pstage"
   CUR_AGENT="$name"; AGENT_STARTED="$(date +%Y-%m-%dT%H:%M:%S)"; set_status
-  ( apply_provider_env; exec claude -p "$prompt" "${STAGE_FLAGS[@]}" --permission-mode acceptEdits --allowedTools "${ALLOWED[@]}" \
-    --max-turns "$MAX_TURNS" ) > "$LOG/$name.log" 2>&1 \
-    || { echo "   !! agent '$name' failed, see $LOG/$name.log"; [ "$pstage" = test-repair ] && resume_hint || true; exit 1; }
+  # Rules the developer granted (this run's and the repository's) are added; a protected-path grant runs this stage without permission checks.
+  local allowed=("${ALLOWED[@]}") mode rule rc=0 pending
+  while IFS= read -r rule; do [ -z "$rule" ] || allowed+=("$rule"); done < <(node scripts/sdlc-permissions.cjs args "$DOCS" "$pstage" "$PERM_REPO")
+  mode="$(node scripts/sdlc-permissions.cjs mode "$DOCS" "$pstage")"
+  [ "$mode" = acceptEdits ] || echo "   (permission checks are off for this stage: you allowed a protected path)"
+  ( apply_provider_env; exec claude -p "$prompt" "${STAGE_FLAGS[@]}" --permission-mode "$mode" --allowedTools "${allowed[@]}" \
+    --output-format json --max-turns "$MAX_TURNS" ) > "$LOG/$name.json" 2> "$LOG/$name.err" || rc=$?
+  # The result text goes to the usual log; what the agent was refused is recorded for the developer to allow or deny.
+  pending="$(node scripts/sdlc-permissions.cjs extract "$LOG/$name.json" "$LOG/$name.log" "$LOG/permissions.json" "$pstage" "$ROOT" "$LOG/$name.err" || echo 0)"
+  if [ "${pending:-0}" -gt 0 ]; then
+    echo "   !! agent '$name' was refused $pending action(s): allow or deny them in the pane (or: bash scripts/sdlc-mod.sh permit $SLUG allow|always|deny all), then resume at $pstage"
+    exit 2
+  fi
+  [ "$rc" -eq 0 ] || { echo "   !! agent '$name' failed, see $LOG/$name.log"; [ "$pstage" = test-repair ] && resume_hint || true; exit 1; }
 }
 # manual_input <stage>: the developer's text from the "## <stage>" section of manual-inputs.md, as a prompt suffix.
 manual_input() {
@@ -206,7 +222,7 @@ success_check() {
   if ! tests_pass; then FAIL_LOG="$LOG/tests.log"; return 1; fi
   if ! integration_check; then FAIL_LOG="$LOG/integration.log"; return 1; fi
 }
-stage() { echo; echo "== $1"; CUR_STAGE="$(echo "$1" | sed -E 's/^[0-9a-z]+(\/[0-9]+)? //; s/ \(.*//')"; CUR_AGENT=""; CUR_ATTEMPT=""; set_status; }
+stage() { echo; echo "== $1"; mark_stage "$CUR_STAGE"; CUR_STAGE="$(echo "$1" | sed -E 's/^[0-9a-z]+(\/[0-9]+)? //; s/ \(.*//')"; CUR_AGENT=""; CUR_ATTEMPT=""; set_status; }
 # jest_json_at <sha> <out> [files...]: run the suite on <sha>'s source, optionally overlaying test files from the working tree.
 jest_json_at() {
   local sha="$1" out="$2"; shift 2

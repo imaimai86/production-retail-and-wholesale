@@ -30,7 +30,7 @@ MAX_PARALLEL="${SDLC_MAX_PARALLEL:-2}"
 WT_BASE="${SDLC_WT_BASE:-$(dirname "$ROOT")/$(basename "$ROOT")-sdlc}"
 
 now() { date +%Y-%m-%dT%H:%M:%S; }
-usage() { echo "Usage: $0 run <slug> | stop <slug> | discard <slug> [--yes] [--stop] | restart <slug> [--yes] | status | changes <slug> [--json] | watch <slug> [--once] | model list [--json] | model add <provider> --endpoint <url> --key-env <VAR> --models a,b [--effort] | model add-model|remove-model <provider> <model> | model remove <provider> | model test <provider>/<model>" >&2; exit 2; }
+usage() { echo "Usage: $0 run <slug> | stop <slug> | discard <slug> [--yes] [--stop] | restart <slug> [--yes] | status | changes <slug> [--json] | watch <slug> [--once] | permit <slug> allow|always|deny [n|all] | model list [--json] | model add <provider> --endpoint <url> --key-env <VAR> --models a,b [--effort] | model add-model|remove-model <provider> <model> | model remove <provider> | model test <provider>/<model>" >&2; exit 2; }
 check_slug() { [[ "${1:-}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "Invalid slug '${1:-}': lowercase letters, digits and dashes only" >&2; exit 2; }; }
 json_get() { node -e 'try{const v=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))[process.argv[2]];process.stdout.write(v===undefined||v===null?"":String(v))}catch(e){}' "$1" "$2"; }
 # kill -0 also succeeds on a zombie (a process that has exited but whose parent has not collected it): that is not alive.
@@ -320,7 +320,20 @@ cmd_changes() {
   rm -f "$tc" "$ts"
 }
 
+# permit <slug> <allow|always|deny> [n|all]: decide the actions the pipeline's agent was refused (see Docs/backlog/<slug>/logs/permissions.json).
+# Prints how many are still pending; resume the run afterwards (FROM=<stage> bash scripts/sdlc-mod.sh run <slug>).
+cmd_permit() {
+  local slug="$1" choice="$2" which="${3:-all}" f wt
+  check_slug "$slug"
+  f="$REG/$slug.json"
+  wt="$(json_get "$f" worktree 2>/dev/null || true)"
+  if [ -z "$wt" ] || [ ! -d "$wt" ]; then wt="$WT_BASE/$slug"; fi
+  [ -d "$wt" ] || { echo "No pipeline for $slug" >&2; exit 1; }
+  node "$ROOT/scripts/sdlc-permissions.cjs" decide "$wt/Docs/backlog/$slug/logs/permissions.json" "$which" "$choice" "$ROOT/.claude/sdlc-permissions.json"
+}
+
 case "${1:-}" in
+  permit) { [ $# -eq 3 ] || [ $# -eq 4 ]; } || usage; cmd_permit "$2" "$3" "${4:-all}" ;;
   run)    [ $# -eq 2 ] || usage; cmd_run "$2" ;;
   stop)   [ $# -eq 2 ] || usage; cmd_stop "$2" ;;
   discard) [ $# -ge 2 ] || usage; slug="$2"; shift 2; cmd_discard "$slug" "$@" ;;
