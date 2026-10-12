@@ -23,6 +23,8 @@ const INPUT_STAGES = [
   { key: 'implement', label: 'Implement' },
   { key: 'review', label: 'Review' },
 ]
+// Files listed per stage in the run view before "+N more".
+const FILES_SHOWN = 8
 const RESUME_AT_IMPLEMENT = ['Implement', 'Test repair', 'Review', 'Commit']
 
 const EMPTY: Snapshot = { now: 0, runs: [], pending: [], discarded: {} }
@@ -235,6 +237,18 @@ async function loadChanges($: EngineInterface, slug: string, state: RunState, ma
   return value
 }
 
+// The files each stage changed, from logs/stage-files.json (written by scripts/sdlc.sh; an unreadable file reads as none).
+function parseStageFiles(text: string | null): Record<string, string[]> {
+  const stages = parse(text)?.stages
+  if (!stages || typeof stages !== 'object') return {}
+  const out: Record<string, string[]> = {}
+  for (const [name, list] of Object.entries(stages as Record<string, unknown>)) {
+    if (Array.isArray(list)) out[name] = list.filter((f): f is string => typeof f === 'string')
+  }
+
+  return out
+}
+
 // The undecided asks in logs/permissions.json (an unreadable or malformed file reads as none).
 function parsePermissions(text: string | null): PermissionAsk[] {
   const j = parse(text)
@@ -317,6 +331,7 @@ async function loadRun($: EngineInterface, slug: string, worktree: string, reg: 
     files,
     tests: testCounts(await readText($, `${docs}/logs/tests.log`)),
     tail: runOut.split('\n').filter(l => l.trim()).slice(-8),
+    stageFiles: parseStageFiles(await readText($, `${docs}/logs/stage-files.json`)),
     permissions: parsePermissions(await readText($, `${docs}/logs/permissions.json`)),
     reason: state === 'failed' || state === 'stopped' ? await failureReason($, docs, stageName, runOut) : [],
     questions: questionsText ? parseQuestions(questionsText) : [],
@@ -400,13 +415,24 @@ async function launchWithNotice($: EngineInterface, slug: string, from: string):
   return !err
 }
 
+// Runs a wrapper command that changes a run; returns '' on success, else the line to show (its error, or the exit code).
+async function wrapperChange($: EngineInterface, args: string[]): Promise<string> {
+  try {
+    const r = await $.process.run(['bash', WRAPPER, ...args])
+
+    return r.exitCode === 0 ? '' : firstLine(r.stderr) || firstLine(r.stdout) || `failed (exit ${r.exitCode})`
+  } catch (e) {
+    return firstLine(String((e as { message?: string })?.message ?? e)) || 'failed'
+  }
+}
+
 async function stopRun($: EngineInterface, slug: string) {
-  await $.process.run(['bash', WRAPPER, 'stop', slug])
+  return wrapperChange($, ['stop', slug])
 }
 
 // Stops the pipeline if it runs, then deletes its worktree, branch and run record (the branch tip is saved).
 async function discardRun($: EngineInterface, slug: string) {
-  await $.process.run(['bash', WRAPPER, 'discard', slug, '--yes', '--stop'])
+  return wrapperChange($, ['discard', slug, '--yes', '--stop'])
 }
 
 async function startRun($: EngineInterface, slug: string) {
@@ -946,8 +972,9 @@ export const register: Register = on => {
               variant={stopping ? 'primary' : undefined}
               onPress={async () => {
                 if (stopping) {
-                  await stopRun($, run.slug)
                   await update($, confirmStop, () => '')
+                  const err = await withBusy($, `Stopping ${run.slug}`, () => stopRun($, run.slug))
+                  await notify($, err ? `Could not stop ${run.slug}: ${err}` : `Stopped ${run.slug}.`)
                   await refresh($)
                 } else {
                   await update($, confirmStop, () => run.slug)
@@ -976,8 +1003,8 @@ export const register: Register = on => {
                   await update($, confirmDiscard, () => '')
                   await update($, confirmStop, () => '')
                   await update($, draft, d => Object.fromEntries(Object.entries(d).filter(([k]) => !k.startsWith(`${run.slug}:`))))
-                  await discardRun($, run.slug)
-                  await notify($, `Discarded ${run.slug}.`)
+                  const err = await withBusy($, `Discarding ${run.slug} (stopping it and deleting its worktree)`, () => discardRun($, run.slug))
+                  await notify($, err ? `Could not discard ${run.slug}: ${err}` : `Discarded ${run.slug}.`)
                   await refresh($)
                 } else {
                   await update($, confirmDiscard, () => run.slug)
@@ -1019,6 +1046,29 @@ export const register: Register = on => {
             </Box>
           ))}
         </Box>
+
+        {Object.keys(run.stageFiles).length > 0 && (
+          <Box flexDirection="column">
+            <Text bold>Files changed per stage</Text>
+            {[...STAGES.filter(n => run.stageFiles[n]), ...Object.keys(run.stageFiles).filter(n => !STAGES.includes(n))].map(name => {
+              const files = run.stageFiles[name]
+
+              return (
+                <Box key={`files-${name}`} flexDirection="column">
+                  <Text>
+                    {name} <Text dimColor>({files.length})</Text>
+                  </Text>
+                  {files.slice(0, FILES_SHOWN).map(f => (
+                    <Text key={`file-${name}-${f}`} dimColor>
+                      {'  '}{cut(f, 100)}
+                    </Text>
+                  ))}
+                  {files.length > FILES_SHOWN && <Text dimColor>{'  '}+{files.length - FILES_SHOWN} more</Text>}
+                </Box>
+              )
+            })}
+          </Box>
+        )}
 
         {run.state === 'running' && run.agent && (
           <Box flexDirection="column">

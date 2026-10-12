@@ -72,8 +72,11 @@ set_status() {
     "$SLUG" "$RUN_STATE" "$CUR_STAGE" "$CUR_AGENT" "$CUR_MODEL" "$CUR_EFFORT" "$MODELS_JSON" "$CUR_ATTEMPT" "$AGENT_STARTED" "$RUN_STARTED" "$(date +%Y-%m-%dT%H:%M:%S)" "$$" \
     > "$STATUS.tmp" && mv "$STATUS.tmp" "$STATUS"
 }
+# Files each stage changed (shown per stage in the pane): the stage that ends is credited with what changed since the last mark.
+STAGE_FILES="$LOG/stage-files.json"
+mark_stage() { node scripts/sdlc-changes.cjs mark "$STAGE_FILES" "${1:-}" 2>/dev/null || true; }
 # Final state on any exit: done (0), paused for answers (2), failed (anything else).
-trap 'rc=$?; case $rc in 0) RUN_STATE=done;; 2) RUN_STATE=paused;; *) RUN_STATE=failed;; esac; CUR_AGENT=""; CUR_MODEL=""; CUR_EFFORT=""; set_status' EXIT
+trap 'rc=$?; mark_stage "$CUR_STAGE"; case $rc in 0) RUN_STATE=done;; 2) RUN_STATE=paused;; *) RUN_STATE=failed;; esac; CUR_AGENT=""; CUR_MODEL=""; CUR_EFFORT=""; set_status' EXIT
 
 # Default per stage (no limit; override for any run with MODEL_<STAGE> / EFFORT_<STAGE>): "<model> <effort>". See the header.
 stage_defaults() {
@@ -219,7 +222,7 @@ success_check() {
   if ! tests_pass; then FAIL_LOG="$LOG/tests.log"; return 1; fi
   if ! integration_check; then FAIL_LOG="$LOG/integration.log"; return 1; fi
 }
-stage() { echo; echo "== $1"; CUR_STAGE="$(echo "$1" | sed -E 's/^[0-9a-z]+(\/[0-9]+)? //; s/ \(.*//')"; CUR_AGENT=""; CUR_ATTEMPT=""; set_status; }
+stage() { echo; echo "== $1"; mark_stage "$CUR_STAGE"; CUR_STAGE="$(echo "$1" | sed -E 's/^[0-9a-z]+(\/[0-9]+)? //; s/ \(.*//')"; CUR_AGENT=""; CUR_ATTEMPT=""; set_status; }
 # jest_json_at <sha> <out> [files...]: run the suite on <sha>'s source, optionally overlaying test files from the working tree.
 jest_json_at() {
   local sha="$1" out="$2"; shift 2

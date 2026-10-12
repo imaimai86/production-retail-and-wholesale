@@ -16,10 +16,14 @@ type RunSpec = {
   files?: string[]
   exitCode?: string
   message?: string
+  // logs/stage-files.json: files each stage changed
+  stageFiles?: Record<string, string[]>
   // text of logs/plan.log (list it in `files` too)
   planLog?: string
   // logs/permissions.json: the actions the agent was refused and nobody decided yet
   permissions?: { stage: string; tool: string; detail: string; rule: string; protected: boolean }[]
+  // makes the wrapper's stop command fail with this stderr
+  stopError?: string
   // makes the wrapper's background start fail with this stderr
   launchError?: string
   // a pipeline started by hand: no wrapper record, only a status.json in the main working tree
@@ -51,6 +55,9 @@ const PENDING = [
 
 // A repo with the given pipelines recorded, and every process call captured.
 type ModelReply = { exitCode?: number; stdout?: string; stderr?: string } | undefined
+
+// A test can hold the wrapper's stop / discard call open to look at the pane while it works.
+const gate: { wait: Promise<void> } = { wait: Promise.resolve() }
 
 function world(on: any, runs: RunSpec[] = [], model?: (argv: string[]) => ModelReply | Promise<ModelReply>) {
   const opens: { id: string; title: string }[] = []
@@ -101,6 +108,7 @@ function world(on: any, runs: RunSpec[] = [], model?: (argv: string[]) => ModelR
           }),
         }
       }
+      if (e.path.endsWith(`${r.slug}/logs/stage-files.json`) && r.stageFiles) return { value: JSON.stringify({ stages: r.stageFiles }) }
       if (e.path.endsWith(`${r.slug}/logs/permissions.json`) && r.permissions) return { value: JSON.stringify({ pending: r.permissions, allow: [], bypass: [], denied: [] }) }
       if (e.path.endsWith(`${r.slug}/logs/plan.log`) && r.planLog) return { value: r.planLog }
       if (e.path.endsWith(`${r.slug}/logs/tests.log`) && r.testsLog) return { value: r.testsLog }
@@ -123,6 +131,11 @@ function world(on: any, runs: RunSpec[] = [], model?: (argv: string[]) => ModelR
     if (e.argv[1] === '-c') {
       const bad = runs.find(r => r.slug === e.argv[e.argv.length - 1] && r.launchError)
       if (bad) return { value: { exitCode: 1, stdout: '', stderr: bad.launchError, isStdoutTruncated: false } }
+    }
+    if (e.argv[2] === 'stop' || e.argv[2] === 'discard') await gate.wait
+    if (e.argv[2] === 'stop') {
+      const bad = runs.find(r => r.slug === e.argv[3] && r.stopError)
+      if (bad) return { value: { exitCode: 3, stdout: '', stderr: `${bad.stopError}\n`, isStdoutTruncated: false } }
     }
     if (e.argv[2] === 'permit') {
       const n = runs.find(r => r.slug === e.argv[3])?.permissions?.length ?? 0
@@ -915,5 +928,72 @@ test('Deny all and Allow always use the wrapper choices deny and always', async 
   expect(w.calls.filter(c => c[2] === 'permit')[1].slice(4)).toEqual(['deny', 'all'])
   // spec restarts from the beginning: no FROM
   expect(w.envs[w.calls.findIndex(c => c[1] === '-c')].FROM).toBeUndefined()
+  await ui.unmount()
+})
+
+test('the run view lists the files each stage changed, with a count and "+N more" past the first eight', async ($, on) => {
+  const many = Array.from({ length: 10 }, (_, i) => `server/f${i}.js`)
+  world(on, [{ slug: 'alpha', state: 'running', stage: 'Implement', stageFiles: { Spec: ['Docs/backlog/alpha/specs-1.md'], Implement: many } }])
+  const ui = await open($)
+  await ui.press({ key: 'open-alpha' })
+
+  expect(await text(ui, /Files changed per stage/)).toBeDefined()
+  expect(await text(ui, /Spec \(1\)/)).toBeDefined()
+  expect(await text(ui, /Docs\/backlog\/alpha\/specs-1\.md/)).toBeDefined()
+  expect(await text(ui, /Implement \(10\)/)).toBeDefined()
+  expect(await text(ui, /server\/f7\.js/)).toBeDefined()
+  expect(await text(ui, /server\/f8\.js/)).toBeUndefined()
+  expect(await text(ui, /\+2 more/)).toBeDefined()
+  await ui.unmount()
+})
+
+test('a run with no stage-files.json shows no files section', async ($, on) => {
+  world(on, [{ slug: 'alpha', state: 'running', stage: 'Plan' }])
+  const ui = await open($)
+  await ui.press({ key: 'open-alpha' })
+
+  expect(await text(ui, /Files changed per stage/)).toBeUndefined()
+  await ui.unmount()
+})
+
+test('Stop and Discard show what they are doing until the wrapper returns', async ($, on) => {
+  let release: () => void = () => {}
+  const w = world(on, [{ slug: 'alpha', state: 'running', stage: 'Plan' }])
+  const ui = await open($)
+  await ui.press({ key: 'open-alpha' })
+
+  await ui.press({ key: 'stop' })
+  gate.wait = new Promise<void>(r => (release = r))
+  const pressing = ui.press({ key: 'stop' })
+  await new Promise(r => setTimeout(r, 20))
+  expect(await text(ui, /Stopping alpha/)).toBeDefined()
+  release()
+  await pressing
+  gate.wait = Promise.resolve()
+  expect(await text(ui, /Stopping alpha/)).toBeUndefined()
+  expect(w.toasts).toContain('Stopped alpha.')
+  expect(w.calls.some(c => c[2] === 'stop' && c[3] === 'alpha')).toBe(true)
+
+  await ui.press({ key: 'discard' })
+  gate.wait = new Promise<void>(r => (release = r))
+  const discarding = ui.press({ key: 'discard' })
+  await new Promise(r => setTimeout(r, 20))
+  expect(await text(ui, /Discarding alpha \(stopping it/)).toBeDefined()
+  release()
+  await discarding
+  gate.wait = Promise.resolve()
+  expect(w.toasts).toContain('Discarded alpha.')
+  await ui.unmount()
+})
+
+test('a failed Stop says why instead of reporting success', async ($, on) => {
+  const w = world(on, [{ slug: 'alpha', state: 'running', stage: 'Plan', stopError: 'could not kill pid 100' }])
+  const ui = await open($)
+  await ui.press({ key: 'open-alpha' })
+  await ui.press({ key: 'stop' })
+  await ui.press({ key: 'stop' })
+
+  expect(w.toasts).toContain('Could not stop alpha: could not kill pid 100')
+  expect(w.toasts).not.toContain('Stopped alpha.')
   await ui.unmount()
 })

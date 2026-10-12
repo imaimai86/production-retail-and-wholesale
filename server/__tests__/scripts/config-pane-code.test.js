@@ -28,7 +28,7 @@ describe('sdlc-monitor CONFIG pane code', () => {
 
   test('has the list page (Add provider, Edit) and the form page (Save, Save and add another, Cancel)', () => {
     for (const key of ['config-add-new', 'config-edit:', 'config-save"', 'config-save-another', 'config-cancel']) expect(source).toContain(key);
-    for (const key of ['notice-copy', 'notice-dismiss', 'reason-copy', 'did not start', 'perm-allow:', 'perm-always:', 'perm-deny:', "'permit'"]) expect(source).toContain(key);
+    for (const key of ['notice-copy', 'notice-dismiss', 'reason-copy', 'did not start', 'perm-allow:', 'perm-always:', 'perm-deny:', "'permit'", 'Files changed per stage', 'stage-files.json', 'Stopping ${run.slug}', 'Discarding ${run.slug}']) expect(source).toContain(key);
   });
 
   test('has the four form fields, the two-press Remove and Test', () => {

@@ -13,6 +13,8 @@ export type PermissionAsk = {
 }
 
 export type Run = {
+  // files each stage changed, by stage name (from logs/stage-files.json); empty for a run that predates it
+  stageFiles: Record<string, string[]>
   // actions refused and not decided yet; a paused run with these waits for Allow or Deny, then resumes at the stage
   permissions: PermissionAsk[]
   // the last lines of the failed stage's log, else of run.out; empty unless the run failed or stopped

@@ -3,6 +3,7 @@
 //   node scripts/sdlc-changes.cjs snapshot <baseline.json>   record every dirty path and its content hash
 //   node scripts/sdlc-changes.cjs mirror   <baseline.json>   copy keys the cycle added to .env into .env.example
 //   node scripts/sdlc-changes.cjs changed  <baseline.json>   print { include, skipped, envMirror } as JSON
+//   node scripts/sdlc-changes.cjs mark <stage-files.json> [stage]  attribute what changed since the last mark to <stage> (no stage: only reset the mark)
 // Run it from the repository root.
 const fs = require('fs');
 const path = require('path');
@@ -112,11 +113,35 @@ function mirror(baselineFile) {
   }
 }
 
-const [cmd, file] = process.argv.slice(2);
-if (cmd === 'snapshot' && file) snapshot(file);
+// Files each stage changed, for the control pane. `marker` is the dirty state and HEAD at the last mark; what differs now is credited to
+// the stage that just ended. A file committed during a stage counts for it, but one a later commit merely collects (Ship) does not.
+function mark(target, stage) {
+  let state = { marker: null, stages: {} };
+  try { state = { ...state, ...JSON.parse(fs.readFileSync(target, 'utf8')) }; } catch (e) { /* first mark */ }
+  const now = currentState();
+  const head = git(['rev-parse', 'HEAD']).trim();
+  if (stage && state.marker) {
+    const before = state.marker.files;
+    const credited = new Set(Object.values(state.stages).flat());
+    const files = new Set();
+    for (const f of Object.keys(now)) if (!Object.prototype.hasOwnProperty.call(before, f) || before[f] !== now[f]) files.add(f);
+    if (state.marker.head !== head) {
+      for (const f of git(['diff', '--name-only', '-z', state.marker.head, head]).split('\0')) if (f && !credited.has(f)) files.add(f);
+    }
+    const listed = [...files].filter(f => !skipReason(f, false)).sort();
+    if (listed.length) state.stages[stage] = [...new Set([...(state.stages[stage] || []), ...listed])].sort();
+  }
+  state.marker = { files: now, head };
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, JSON.stringify(state));
+}
+
+const [cmd, file, stageArg] = process.argv.slice(2);
+if (cmd === 'mark' && file) mark(file, stageArg || '');
+else if (cmd === 'snapshot' && file) snapshot(file);
 else if (cmd === 'mirror' && file) mirror(file);
 else if (cmd === 'changed' && file) process.stdout.write(JSON.stringify(changed(file)) + '\n');
 else {
-  console.error('usage: sdlc-changes.cjs snapshot|mirror|changed <baseline.json>');
+  console.error('usage: sdlc-changes.cjs snapshot|mirror|changed <baseline.json> | mark <stage-files.json> [stage]');
   process.exit(1);
 }
