@@ -5,7 +5,7 @@ const { spawnSync } = require('child_process');
 
 const root = path.resolve(__dirname, '../../..');
 const helper = path.join(root, 'scripts/sdlc-config.cjs');
-const { detect, resolve, testDir, allowedTools, worktreeBase, shellEnv } = require(helper);
+const { detect, suggest, setupPlan, provision, resolve, testDir, allowedTools, worktreeBase, shellEnv } = require(helper);
 
 // A throwaway project: { 'path/file': text or object (written as JSON) }.
 function project(files) {
@@ -252,5 +252,143 @@ describe('command line', () => {
 
     expect(cli('frobnicate').status).toBe(2);
     expect(cli('show', '/no/such/dir').status).toBe(2);
+  });
+});
+
+describe('suggestions for a project without tests', () => {
+  const runners = s => s.suggestions.map(x => x.runner);
+
+  test('ranks by what the project uses: Vite and React, NestJS, ES modules with a Node that runs TypeScript', () => {
+    const vite = suggest(project({ 'package.json': { dependencies: { react: '^18' }, devDependencies: { vite: '^5', typescript: '^5' } }, 'src/a.ts': '' }));
+    expect(vite.status).toBe('suggestions');
+    expect(runners(vite)).toEqual(['vitest', 'jest', 'mocha', 'node-test']);
+    expect(vite.suggestions[0]).toMatchObject({ recommended: true, install: 'npm install -D vitest jsdom' });
+    expect(vite.suggestions[0].why).toContain('the project uses Vite: Vitest reuses vite.config');
+    expect(vite.suggestions[3].caveats).toContain('no browser DOM for react components');
+    expect(vite.suggestions[0].adds).toEqual({ script: 'vitest run', files: ['src/example.test.ts'] });
+
+    expect(runners(suggest(project({ 'package.json': { dependencies: { '@nestjs/core': '^10' }, devDependencies: { typescript: '^5' } } })))[0]).toBe('jest');
+
+    const esm = suggest(project({ 'package.json': { type: 'module', engines: { node: '>=22.18' }, devDependencies: { typescript: '^5' } } }));
+    expect(runners(esm).slice(0, 2)).toEqual(['vitest', 'node-test']);
+    const nodeTest = esm.suggestions.find(x => x.runner === 'node-test');
+    expect(nodeTest).toMatchObject({ install: null, adds: { script: 'node --test "test/**/*.test.ts"' } });
+    expect(esm.project).toMatchObject({ language: 'typescript', module: 'esm', node: '22.18 (engines.node)' });
+
+    const old = suggest(project({ 'package.json': { engines: { node: '^20' } }, 'tsconfig.json': '{}', 'pnpm-lock.yaml': '' }));
+    expect(old.suggestions.find(x => x.runner === 'node-test')).toMatchObject({ install: 'pnpm add -D tsx', adds: { script: 'tsx --test "test/**/*.test.ts"' } });
+  });
+
+  test('says why it picked the language, and takes a corrected language', () => {
+    const dir = project({ 'package.json': { devDependencies: { express: '^4' } } });
+    const s = suggest(dir);
+    expect(s.project).toMatchObject({ language: 'javascript', languageSource: 'detected' });
+    expect(s.project.languageEvidence).toEqual(['no tsconfig.json and no typescript dependency']);
+    const ts = suggest(dir, dir, { language: 'typescript' });
+    expect(ts.project).toMatchObject({ language: 'typescript', languageSource: 'confirmed' });
+    expect(ts.suggestions.find(x => x.runner === 'jest').install).toBe('npm install -D jest ts-jest @types/jest');
+    expect(suggest(project({ 'package.json': {}, 'tsconfig.json': '{}' })).project.languageEvidence).toEqual(['tsconfig.json']);
+  });
+
+  test('does not suggest when tests exist, or for a project that is not Node', () => {
+    expect(suggest(project({ 'package.json': { scripts: { test: 'jest' } } }))).toMatchObject({ status: 'has-tests', existing: [{ dir: '.', runner: 'jest' }] });
+    const py = suggest(project({ 'pyproject.toml': '' }));
+    expect(py.status).toBe('unsupported');
+    expect(py.reason).toContain('pyproject.toml: Python');
+    expect(suggest(project({ 'a.txt': '' })).reason).toContain('no package.json here');
+  });
+});
+
+describe('setting up the chosen framework', () => {
+  const plain = () => project({ 'package.json': '{\n    "name": "p",\n    "scripts": { "test": "echo \\"Error: no test specified\\" && exit 1" }\n}\n' });
+
+  test('each framework writes its script and files, and detection then finds it', () => {
+    for (const [runner, files] of [['jest', ['jest.config.js', 'test/example.test.js']], ['vitest', ['test/example.test.js']],
+      ['node-test', ['test/example.test.js']], ['mocha', ['.mocharc.json', 'test/example.test.js']]]) {
+      const dir = plain();
+      const r = provision(dir, runner, { install: false });
+      expect(r).toMatchObject({ ok: true, written: [...files, 'package.json (scripts.test)'], skipped: [] });
+      const raw = fs.readFileSync(path.join(dir, 'package.json'), 'utf8');
+      expect(raw).toMatch(/^\{\n {4}"name"/);
+      expect(raw.endsWith('}\n')).toBe(true);
+      expect(JSON.parse(raw).scripts.test).toBe(r.plan.script);
+      expect(detect(dir).map(f => f.runner)).toEqual([runner]);
+    }
+  });
+
+  test('TypeScript and ES modules get their own setup', () => {
+    const p = suggest(project({ 'package.json': { type: 'module' }, 'tsconfig.json': '{}' })).project;
+    const jest = setupPlan(p, 'jest');
+    expect(jest.script).toBe('node --experimental-vm-modules node_modules/jest/bin/jest.js');
+    expect(jest.files[0].content).toContain("export default {\n  preset: 'ts-jest/presets/default-esm',");
+    expect(JSON.parse(setupPlan(p, 'mocha').files[0].content)).toEqual({ spec: 'test/**/*.test.ts', 'node-option': ['import=tsx'] });
+    expect(setupPlan(p, 'node-test').files[0].content).toContain("import { describe, it } from 'node:test';");
+    expect(setupPlan({ ...p, frontend: ['react'] }, 'vitest').files[0]).toEqual(expect.objectContaining({ path: 'vitest.config.ts' }));
+  });
+
+  test('keeps existing files, refuses a real test script, existing tests and unknown frameworks; a dry run writes nothing', () => {
+    const dir = plain();
+    fs.mkdirSync(path.join(dir, 'test'));
+    fs.writeFileSync(path.join(dir, 'test/example.test.js'), 'mine\n');
+    expect(provision(dir, 'vitest', { install: false })).toMatchObject({ ok: true, skipped: ['test/example.test.js'] });
+    expect(fs.readFileSync(path.join(dir, 'test/example.test.js'), 'utf8')).toBe('mine\n');
+
+    expect(provision(dir, 'jest', { install: false }).error).toContain('tests are already set up');
+    expect(provision(project({ 'package.json': { scripts: { test: 'node run-tests.js' } } }), 'jest', { install: false }).error)
+      .toContain('package.json already has a test script ("node run-tests.js")');
+    expect(provision(plain(), 'karma', { install: false }).error).toContain('unknown framework "karma"');
+
+    const dry = plain();
+    const before = fs.readFileSync(path.join(dry, 'package.json'), 'utf8');
+    expect(provision(dry, 'jest', { dryRun: true })).toMatchObject({ ok: true, dryRun: true, written: [] });
+    expect(fs.readFileSync(path.join(dry, 'package.json'), 'utf8')).toBe(before);
+    expect(fs.readdirSync(dry)).toEqual(['package.json']);
+  });
+
+  test('installs first and changes nothing when the install fails; runs the example test after', () => {
+    const dir = plain();
+    const before = fs.readFileSync(path.join(dir, 'package.json'), 'utf8');
+    const calls = [];
+    const failing = (cmd, args) => { calls.push(args[1]); return { status: 1, stdout: '', stderr: 'E404' }; };
+    const r = provision(dir, 'jest', { run: failing });
+    expect(r).toMatchObject({ ok: false, error: 'installing failed: npm install -D jest', written: [] });
+    expect(calls).toEqual(['npm install -D jest']);
+    expect(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).toBe(before);
+    expect(fs.readdirSync(dir)).toEqual(['package.json']);
+
+    // node:test needs no packages: the example test really runs
+    const real = provision(plain(), 'node-test');
+    expect(real.ok).toBe(true);
+    expect(real.steps.map(s => [s.cmd, s.status])).toEqual([['npm test', 0]]);
+  });
+
+  test('init-tests asks for a framework and the language when it cannot prompt, and applies with --runner, --language and --yes', () => {
+    const dir = plain();
+    const list = cli('init-tests', dir);
+    expect(list.status).toBe(2);
+    expect(list.stdout).toContain('Detected language: JavaScript (no tsconfig.json and no typescript dependency)');
+    expect(list.stdout).not.toContain('1. jest');
+    expect(list.stderr).toContain('confirm the language with --language javascript|typescript');
+
+    const pick = cli('init-tests', dir, '--language', 'javascript');
+    expect(pick.status).toBe(2);
+    expect(pick.stderr).toContain('pick one with --runner <name>');
+    expect(pick.stdout).toContain('Supported test frameworks for JavaScript, best first:\n\n1. jest (recommended)');
+
+    const noYes = cli('init-tests', dir, '--language', 'javascript', '--runner', 'node-test');
+    expect(noYes.status).toBe(2);
+    expect(noYes.stderr).toContain('confirm with --yes');
+
+    const dry = cli('init-tests', dir, '--language', 'typescript', '--runner', 'node-test', '--dry-run');
+    expect(dry.status).toBe(0);
+    expect(dry.stdout).toContain('test/example.test.ts');
+    expect(dry.stdout).toContain('Dry run: nothing was changed.');
+    expect(fs.readdirSync(dir)).toEqual(['package.json']);
+
+    const done = cli('init-tests', dir, '--language', 'javascript', '--runner', 'node-test', '--yes');
+    expect(done.stdout).toContain('node-test is set up and the example test passes.');
+    expect(done.status).toBe(0);
+    expect(cli('init-tests', dir, '--language', 'javascript', '--runner', 'jest', '--yes').stderr).toContain('tests are already set up');
+    expect(cli('init-tests', dir, '--language', 'cobol').status).toBe(2);
   });
 });
