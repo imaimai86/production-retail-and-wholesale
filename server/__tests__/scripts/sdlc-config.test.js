@@ -82,6 +82,64 @@ describe('detection', () => {
   });
 });
 
+describe('detection in real-world layouts', () => {
+  test('follows the scripts a test script runs, and finds a runner called by its path', () => {
+    const [s] = detect(project({ 'package.json': {
+      scripts: { test: 'npm run lint && npm run cover', cover: 'istanbul cover ../../node_modules/mocha/bin/_mocha -- --recursive', lint: 'eslint .' },
+    } }));
+    expect(s).toMatchObject({ runner: 'mocha', testCmd: 'npm test' });
+    expect(s.evidence).toEqual(['mocha: scripts.cover runs mocha']);
+
+    const [y] = detect(project({ 'package.json': { scripts: { test: 'yarn _test', _test: 'TZ=UTC jest --no-cache' } }, 'yarn.lock': '' }));
+    expect(y).toMatchObject({ runner: 'jest', testCmd: 'yarn test' });
+  });
+
+  test('a monorepo root with only a hoisted dependency is not a suite; workspace folders are found at any depth', () => {
+    const dir = project({
+      'package.json': { devDependencies: { mocha: '^10' }, workspaces: ['packages/instruments/*'] },
+      'packages/instruments/a/package.json': { scripts: { test: 'vitest run' } },
+    });
+    expect(detect(dir).map(f => [f.dir, f.runner])).toEqual([['packages/instruments/a', 'vitest']]);
+
+    const pnpm = project({
+      'package.json': {}, 'pnpm-workspace.yaml': "packages:\n  - 'tools/**'\n",
+      'tools/x/y/z/package.json': { scripts: { test: 'jest' } },
+    });
+    expect(detect(pnpm).map(f => [f.dir, f.testCmd])).toEqual([['tools/x/y/z', 'pnpm --dir tools/x/y/z test']]);
+  });
+
+  test('a root jest config with projects covers the jest packages under it, not packages using another runner', () => {
+    const dir = project({
+      'package.json': { scripts: { test: 'jest' } },
+      'jest.config.js': "module.exports = { projects: ['<rootDir>/packages/**/jest.config.js'] };\n",
+      'packages/a/package.json': {}, 'packages/a/jest.config.js': 'module.exports = {};\n',
+      'packages/b/package.json': { scripts: { test: 'mocha' } },
+    });
+    const found = detect(dir);
+    expect(found.map(f => [f.dir, f.runner])).toEqual([['.', 'jest'], ['packages/b', 'mocha']]);
+    expect(found[0].covers).toEqual(['packages/a']);
+  });
+
+  test('an unrecognised runner is reported and skipped with a warning; a script that only hands off to a sub-folder is not', () => {
+    const dir = project({
+      'package.json': { scripts: { test: 'npm run test --prefix server' } },
+      'server/package.json': { scripts: { test: 'jest' } },
+      'e2e/package.json': { scripts: { test: 'playwright test' } },
+    });
+    const found = detect(dir);
+    expect(found.map(f => [f.dir, f.runner, Boolean(f.unknown)])).toEqual([['e2e', null, true], ['server', 'jest', false]]);
+    const r = resolve(dir, { env: noGraft });
+    expect(r.errors).toEqual([]);
+    expect(r.config.suites.map(s => s.dir)).toEqual(['server']);
+    expect(r.warnings).toEqual([expect.stringContaining('e2e: skipped, its test script uses a runner that is not recognised (scripts.test: playwright test)')]);
+    fs.writeFileSync(path.join(dir, 'sdlc.config.json'), JSON.stringify({ suites: [{ dir: 'e2e' }] }));
+    expect(errorsOf(dir)).toContain('suites[0]: the test script in e2e uses a runner that is not recognised; set "runner"');
+    const out = cli('detect', dir);
+    expect(out.status).toBe(0);
+    expect(out.stdout).toContain('e2e: test runner not recognised');
+  });
+});
+
 describe('settings', () => {
   test('without a file: detected suites plus defaults', () => {
     const dir = project({ 'package.json': { scripts: { test: 'jest' } }, 'package-lock.json': '{}' });

@@ -23,12 +23,18 @@ const CONFIG_FILES = {
   vitest: /^vitest\.(config|workspace)\.(js|cjs|mjs|ts|cts|mts)$/,
   mocha: /^\.mocharc\.(js|cjs|json|jsonc|yml|yaml)$/,
 };
+// A runner named as a command or by path (node_modules/mocha/bin/_mocha, node_modules/.bin/jest).
 const SCRIPT_PATTERNS = {
-  jest: /(^|[\s/;&|(])jest(\s|$|;|&|\|)/,
-  vitest: /(^|[\s/;&|(])vitest(\s|$|;|&|\|)/,
-  mocha: /(^|[\s/;&|(])mocha(\s|$|;|&|\|)/,
+  jest: /(^|[\s/;&|(=])jest([\s/;&|)]|$)/,
+  vitest: /(^|[\s/;&|(=])vitest([\s/;&|)]|$)/,
+  mocha: /(^|[\s/;&|(=])_?mocha([\s/;&|)]|$)/,
   'node-test': /(^|[\s;&|(])(node|tsx|ts-node)\s[^;&|]*--test(\s|$|=)/,
 };
+const PLACEHOLDER_TEST = /no test specified/;
+// A test script that runs other packages' tests (found there on their own): --prefix, cd, workspaces, lerna, nx, turbo.
+const DELEGATES = /--prefix\b|--dir\b|--cwd\b|(^|[\s;&|(])cd\s|--workspaces?\b|(^|\s)-w\s|(^|\s)(lerna|nx|turbo)\s/;
+// Other package scripts a script runs: npm run x, npm test, pnpm x, yarn x, bun run x.
+const SCRIPT_REF = /(?:^|[\s;&|(])(?:npm|pnpm|bun)\s+(?:run(?:-script)?\s+)?([\w:.-]+)|(?:^|[\s;&|(])yarn\s+(?:run\s+)?([\w:.-]+)/g;
 const DEPENDENCIES = { jest: ['jest', 'ts-jest', '@jest/core'], vitest: ['vitest'], mocha: ['mocha'] };
 const DEFAULT_GLOBS = {
   jest: ['**/__tests__/**/*.[jt]s?(x)', '**/?(*.)+(spec|test).[jt]s?(x)'],
@@ -49,7 +55,7 @@ function packageManager(dir, root) {
       const field = readJson(path.join(d, 'package.json')).packageManager;
       if (typeof field === 'string' && /^(npm|pnpm|yarn|bun)@/.test(field)) return field.split('@')[0];
     } catch { /* no package.json here */ }
-    if (exists(path.join(d, 'pnpm-lock.yaml'))) return 'pnpm';
+    if (exists(path.join(d, 'pnpm-lock.yaml')) || exists(path.join(d, 'pnpm-workspace.yaml'))) return 'pnpm';
     if (exists(path.join(d, 'yarn.lock'))) return 'yarn';
     if (exists(path.join(d, 'bun.lockb')) || exists(path.join(d, 'bun.lock'))) return 'bun';
     if (exists(path.join(d, 'package-lock.json'))) return 'npm';
@@ -82,16 +88,23 @@ function detectPackage(dir, root) {
   }
   if (pkg.jest && typeof pkg.jest === 'object') add('jest', 'config', 'package.json "jest" key');
   if (pkg.mocha && typeof pkg.mocha === 'object') add('mocha', 'config', 'package.json "mocha" key');
-  const testScript = (pkg.scripts && typeof pkg.scripts.test === 'string') ? pkg.scripts.test : '';
+  const scripts = pkg.scripts && typeof pkg.scripts === 'object' ? pkg.scripts : {};
+  const hasTestScript = typeof scripts.test === 'string' && scripts.test.trim() !== '' && !PLACEHOLDER_TEST.test(scripts.test);
+  const testScripts = hasTestScript ? expandScript(scripts, 'test') : [];
   for (const [runner, re] of Object.entries(SCRIPT_PATTERNS)) {
-    if (re.test(testScript)) add(runner, 'script', `scripts.test runs ${runner === 'node-test' ? 'node --test' : runner}`);
+    const via = testScripts.find(n => re.test(scripts[n]));
+    if (via) add(runner, 'script', `scripts.${via} runs ${runner === 'node-test' ? 'node --test' : runner}`);
   }
   const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
   for (const [runner, names] of Object.entries(DEPENDENCIES)) {
     const hit = names.find(n => Object.prototype.hasOwnProperty.call(deps, n));
     if (hit) add(runner, 'dependency', `dependency ${hit}`);
   }
-  if (!evidence.length) return null;
+  const dirRel = rel(root, dir);
+  // A test script whose runner is not recognised: reported, so the user can set the runner.
+  if (!evidence.length) return hasTestScript && !testScripts.some(n => DELEGATES.test(scripts[n])) ? { dir: dirRel, name: dirRel, runner: null, candidates: [], unknown: true, evidence: [`scripts.test: ${scripts.test}`] } : null;
+  // A dependency alone, with no test script, is a tool installed for others (a monorepo root), not a suite.
+  if (!hasTestScript && evidence.every(e => e.kind === 'dependency')) return null;
 
   const scores = {};
   for (const e of evidence) scores[e.runner] = (scores[e.runner] || 0) + e.weight;
@@ -99,7 +112,6 @@ function detectPackage(dir, root) {
   const strong = Object.keys(scores).filter(r => evidence.some(e => e.runner === r && e.kind !== 'dependency'));
   const ranked = (strong.length ? strong : Object.keys(scores)).sort((a, b) => scores[b] - scores[a]);
   const top = ranked.filter(r => scores[r] === scores[ranked[0]]);
-  const dirRel = rel(root, dir);
   const pm = packageManager(dir, root);
   const language = isTypeScript(dir, root, deps) ? 'typescript' : 'javascript';
   const result = {
@@ -108,11 +120,30 @@ function detectPackage(dir, root) {
     evidence: evidence.map(e => `${e.runner}: ${e.reason}`),
   };
   if (result.runner) {
-    const fromScript = evidence.some(e => e.runner === result.runner && e.kind === 'script');
-    result.testCmd = fromScript ? scriptCommand(pm, dirRel) : runnerCommand(result.runner, pm, dirRel);
+    result.aggregates = aggregates(result.runner, pkg, dir, files);
+    result.testCmd = hasTestScript ? scriptCommand(pm, dirRel) : runnerCommand(result.runner, pm, dirRel);
     result.testGlobs = packageGlobs(result.runner, pkg, dir) || DEFAULT_GLOBS[result.runner];
   }
   return result;
+}
+
+// Does this package's runner config run other packages too (jest "projects", a vitest workspace)?
+function aggregates(runner, pkg, dir, files) {
+  const text = re => files.filter(f => re.test(f)).some(f => {
+    try { return /\bprojects\s*:|\bworkspace\s*:/.test(fs.readFileSync(path.join(dir, f), 'utf8')); } catch { return false; }
+  });
+  if (runner === 'jest') return Boolean(pkg.jest && pkg.jest.projects) || text(CONFIG_FILES.jest);
+  if (runner === 'vitest') return files.some(f => /^vitest\.workspace\./.test(f)) || text(CONFIG_FILES.vitest);
+  return false;
+}
+
+// <name> and every package script it runs, at most four levels deep.
+function expandScript(scripts, name, depth = 0, seen = new Set()) {
+  if (seen.has(name) || typeof scripts[name] !== 'string' || depth > 3) return [];
+  seen.add(name);
+  const names = [name];
+  for (const m of scripts[name].matchAll(SCRIPT_REF)) names.push(...expandScript(scripts, m[1] || m[2], depth + 1, seen));
+  return names;
 }
 
 function isTypeScript(dir, root, deps) {
@@ -135,22 +166,56 @@ function packageGlobs(runner, pkg, dir) {
   return null;
 }
 
-// Every folder (the root and up to SCAN_DEPTH levels down) whose package.json shows a test runner.
+const subdirs = dir => {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true })
+      .filter(e => e.isDirectory() && !e.name.startsWith('.') && !SKIP_DIRS.has(e.name)).map(e => path.join(dir, e.name));
+  } catch { return []; }
+};
+
+// The folders the root's workspaces name (package.json "workspaces", pnpm-workspace.yaml), at any depth.
+function workspaceDirs(root) {
+  let patterns = [];
+  try {
+    const ws = readJson(path.join(root, 'package.json')).workspaces;
+    patterns = Array.isArray(ws) ? ws : (ws && Array.isArray(ws.packages) ? ws.packages : []);
+  } catch { /* none */ }
+  try {
+    const yaml = fs.readFileSync(path.join(root, 'pnpm-workspace.yaml'), 'utf8');
+    for (const m of yaml.matchAll(/^\s*-\s*['"]?([^'"#\n]+?)['"]?\s*$/gm)) patterns.push(m[1]);
+  } catch { /* none */ }
+  const out = new Set();
+  const expand = (dir, parts, depth) => {
+    if (!parts.length) { out.add(dir); return; }
+    const [p, ...rest] = parts;
+    if (p === '**') {
+      expand(dir, rest, depth);
+      if (depth < 6) for (const d of subdirs(dir)) expand(d, parts, depth + 1);
+    } else if (/[*?]/.test(p)) {
+      const re = new RegExp(`^${p.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`);
+      for (const d of subdirs(dir)) if (re.test(path.basename(d))) expand(d, rest, depth + 1);
+    } else if (exists(path.join(dir, p))) expand(path.join(dir, p), rest, depth + 1);
+  };
+  for (const p of patterns) if (typeof p === 'string' && !p.startsWith('!')) expand(root, p.replace(/^\.\//, '').split('/').filter(Boolean), 0);
+  return [...out];
+}
+
+// Every folder whose package.json shows its tests: the root, up to SCAN_DEPTH levels down, and every workspace.
 function detect(root) {
   root = path.resolve(root);
-  const found = [];
-  const walk = (dir, depth) => {
-    const r = detectPackage(dir, root);
-    if (r) found.push(r);
-    if (depth >= SCAN_DEPTH) return;
-    let entries = [];
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-    for (const e of entries) {
-      if (e.isDirectory() && !e.name.startsWith('.') && !SKIP_DIRS.has(e.name)) walk(path.join(dir, e.name), depth + 1);
-    }
-  };
+  const dirs = new Set();
+  const walk = (dir, depth) => { dirs.add(dir); if (depth < SCAN_DEPTH) for (const d of subdirs(dir)) walk(d, depth + 1); };
   walk(root, 0);
-  return found;
+  for (const d of workspaceDirs(root)) dirs.add(d);
+  const found = [...dirs].map(d => detectPackage(d, root)).filter(Boolean)
+    .sort((a, b) => (a.dir === '.' ? -1 : b.dir === '.' ? 1 : a.dir < b.dir ? -1 : a.dir > b.dir ? 1 : 0));
+  // A suite whose runner config runs its sub-packages (jest projects, vitest workspace) covers their suites of that runner.
+  const inside = (outer, inner) => outer === '.' || inner.startsWith(`${outer}/`);
+  for (const a of found.filter(f => f.aggregates)) {
+    a.covers = found.filter(b => b !== a && b.runner === a.runner && inside(a.dir, b.dir)).map(b => b.dir);
+  }
+  const covered = new Set(found.flatMap(f => f.covers || []));
+  return found.filter(f => !covered.has(f.dir));
 }
 
 // --- Settings --------------------------------------------------------------------------------------------------------
@@ -213,6 +278,7 @@ function completeSuite(s, i, root, errors) {
   let runner = s.runner || 'auto';
   if (runner === 'auto') {
     if (!found) { errors.push(`${where}: no test runner found in ${dir}; set "runner"`); return null; }
+    if (found.unknown) { errors.push(`${where}: the test script in ${dir} uses a runner that is not recognised; set "runner"`); return null; }
     if (!found.runner) { errors.push(`${where}: ${dir} matches ${found.candidates.join(' and ')} equally; set "runner"`); return null; }
     runner = found.runner;
   }
@@ -233,17 +299,18 @@ function completeSuite(s, i, root, errors) {
   };
 }
 
-// The resolved settings for the project at <root>: { config, errors, file }. errors is empty when the settings are usable.
+// The resolved settings for the project at <root>: { config, errors, warnings, file }. errors is empty when the settings are usable.
 function resolve(root, { env = process.env } = {}) {
   root = path.resolve(root);
   const errors = [];
+  const warnings = [];
   const fileName = path.join(root, CONFIG_FILE);
   let file = {};
   const hasFile = exists(fileName);
   if (hasFile) {
-    try { file = readJson(fileName); } catch (e) { return { config: null, errors: [`${CONFIG_FILE}: not valid JSON (${e.message})`], file: fileName }; }
+    try { file = readJson(fileName); } catch (e) { return { config: null, errors: [`${CONFIG_FILE}: not valid JSON (${e.message})`], warnings, file: fileName }; }
     validate(file, SCHEMA, '', errors);
-    if (errors.length) return { config: null, errors: errors.map(e => `${CONFIG_FILE}: ${e}`), file: fileName };
+    if (errors.length) return { config: null, errors: errors.map(e => `${CONFIG_FILE}: ${e}`), warnings, file: fileName };
   }
 
   let suites;
@@ -251,11 +318,15 @@ function resolve(root, { env = process.env } = {}) {
     suites = file.suites.map((s, i) => completeSuite(s, i, root, errors));
   } else {
     const found = detect(root);
-    if (!found.length) errors.push(`no test suite found; add "suites" to ${CONFIG_FILE}`);
-    for (const f of found) {
+    const known = found.filter(f => !f.unknown);
+    for (const f of found.filter(f => f.unknown)) {
+      warnings.push(`${f.dir}: skipped, its test script uses a runner that is not recognised (${f.evidence[0]}); add it to "suites" with a "runner"`);
+    }
+    if (!known.length) errors.push(`no test suite found; add "suites" to ${CONFIG_FILE}`);
+    for (const f of known) {
       if (!f.runner) errors.push(`${f.dir} matches ${f.candidates.join(' and ')} equally; set its "runner" in ${CONFIG_FILE}`);
     }
-    suites = found.filter(f => f.runner).map((f, i) => completeSuite({ dir: f.dir, runner: f.runner, name: f.name }, i, root, errors));
+    suites = known.filter(f => f.runner).map((f, i) => completeSuite({ dir: f.dir, runner: f.runner, name: f.name }, i, root, errors));
   }
   suites = suites.filter(Boolean);
   const names = suites.map(s => s.name);
@@ -292,7 +363,7 @@ function resolve(root, { env = process.env } = {}) {
     ui,
   };
   if (config.integration && !config.integration.cmd) errors.push('integration.cmd: must be set when "integration" is present');
-  return { config: errors.length ? null : config, errors, file: hasFile ? fileName : null };
+  return { config: errors.length ? null : config, errors, warnings, file: hasFile ? fileName : null };
 }
 
 // --- Derived values --------------------------------------------------------------------------------------------------
@@ -379,15 +450,18 @@ if (require.main === module) {
     else if (!found.length) console.log('No test suite found.');
     else {
       for (const f of found) {
+        if (f.unknown) { console.log(`${f.dir}: test runner not recognised (set it in ${CONFIG_FILE})\n  evidence:     ${f.evidence[0]}`); continue; }
         console.log(`${f.dir}: ${f.runner || `ambiguous (${f.candidates.join(', ')})`} · ${f.language} · ${f.packageManager}`);
         if (f.runner) console.log(`  test command: ${f.testCmd}\n  test files:   ${f.testGlobs.join(', ')}`);
+        if (f.covers && f.covers.length) console.log(`  also runs:    ${f.covers.join(', ')}`);
         console.log(`  evidence:     ${f.evidence.join('; ')}`);
       }
     }
-    process.exit(found.some(f => !f.runner) ? 1 : 0);
+    process.exit(found.some(f => !f.runner && !f.unknown) ? 1 : 0);
   }
 
-  const { config, errors } = resolve(dir);
+  const { config, errors, warnings } = resolve(dir);
+  for (const w of warnings) console.error(`WARNING: ${w}`);
   if (errors.length) { for (const e of errors) console.error(`ERROR: ${e}`); process.exit(1); }
   if (cmd === 'show') process.stdout.write(JSON.stringify({ ...config, testDirs: config.suites.map(testDir), allowedTools: allowedTools(config) }, null, 2) + '\n');
   else process.stdout.write(shellEnv(config));
