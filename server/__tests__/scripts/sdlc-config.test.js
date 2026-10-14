@@ -144,7 +144,7 @@ describe('settings', () => {
   test('without a file: detected suites plus defaults', () => {
     const dir = project({ 'package.json': { scripts: { test: 'jest' } }, 'package-lock.json': '{}' });
     const c = ok(dir);
-    expect(c.suites).toEqual([expect.objectContaining({ dir: '.', runner: 'jest', testCmd: 'npm test', sourceGlobs: ['**'], setup: null })]);
+    expect(c.suites).toEqual([expect.objectContaining({ dir: '.', runner: 'jest', testCmd: 'npm test', sourceGlobs: ['**'], setup: null, report: null })]);
     expect(c).toMatchObject({
       backlogDir: 'Docs/backlog', integration: null, lint: null,
       worktree: { base: '../{repo}-sdlc', link: ['node_modules'] },
@@ -184,7 +184,7 @@ describe('settings', () => {
     expect(errorsOf(project({ 'x/a.txt': '', 'sdlc.config.json': { suites: [{ dir: 'x' }] } }))).toContain('suites[0]: no test runner found in x; set "runner"');
     expect(errorsOf(project({ 'x/package.json': { scripts: { test: 'jest; mocha' } }, 'sdlc.config.json': { suites: [{ dir: 'x' }] } })))
       .toMatch(/suites\[0\]: x matches (jest and mocha|mocha and jest) equally; set "runner"/);
-    expect(errorsOf(project({ 'sdlc.config.json': { suites: [{ runner: 'generic-junit' }] } }))).toContain('needs "testCmd"');
+    expect(errorsOf(project({ 'sdlc.config.json': { suites: [{ runner: 'generic-junit', testCmd: 'make test' }] } }))).toContain('needs "testCmd" and "report"');
     expect(errorsOf(project({ 'package.json': { scripts: { test: 'jest' } }, 'sdlc.config.json': { ui: { timezone: 'Mars/Base' } } })))
       .toContain('ui.timezone: unknown time zone "Mars/Base"');
     expect(errorsOf(project({ 'package.json': { scripts: { test: 'jest' } }, 'sdlc.config.json': { suites: [{ name: 'a' }, { name: 'a' }] } })))

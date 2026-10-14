@@ -1,0 +1,22 @@
+{"event":"start","name":"/project/test/broken.test.js","nesting":0,"file":"/project/test/broken.test.js","suite":false,"skip":false,"todo":false,"failureType":null,"message":null}
+{"event":"fail","name":"/project/test/broken.test.js","nesting":0,"file":"/project/test/broken.test.js","suite":false,"skip":false,"todo":false,"failureType":"testCodeFailure","message":"test failed"}
+{"event":"start","name":"math","nesting":0,"file":"/project/test/math.test.js","suite":false,"skip":false,"todo":false,"failureType":null,"message":null}
+{"event":"start","name":"adds","nesting":1,"file":"/project/test/math.test.js","suite":false,"skip":false,"todo":false,"failureType":null,"message":null}
+{"event":"pass","name":"adds","nesting":1,"file":"/project/test/math.test.js","suite":false,"skip":false,"todo":false,"failureType":null,"message":null}
+{"event":"start","name":"fails","nesting":1,"file":"/project/test/math.test.js","suite":false,"skip":false,"todo":false,"failureType":null,"message":null}
+{"event":"fail","name":"fails","nesting":1,"file":"/project/test/math.test.js","suite":false,"skip":false,"todo":false,"failureType":"testCodeFailure","message":"Expected values to be strictly equal:\n\n1 !== 2\n"}
+{"event":"start","name":"inner","nesting":1,"file":"/project/test/math.test.js","suite":false,"skip":false,"todo":false,"failureType":null,"message":null}
+{"event":"start","name":"deep","nesting":2,"file":"/project/test/math.test.js","suite":false,"skip":false,"todo":false,"failureType":null,"message":null}
+{"event":"pass","name":"deep","nesting":2,"file":"/project/test/math.test.js","suite":false,"skip":false,"todo":false,"failureType":null,"message":null}
+{"event":"pass","name":"inner","nesting":1,"file":"/project/test/math.test.js","suite":true,"skip":false,"todo":false,"failureType":null,"message":null}
+{"event":"start","name":"skipped one","nesting":1,"file":"/project/test/math.test.js","suite":false,"skip":false,"todo":false,"failureType":null,"message":null}
+{"event":"pass","name":"skipped one","nesting":1,"file":"/project/test/math.test.js","suite":false,"skip":true,"todo":false,"failureType":null,"message":null}
+{"event":"start","name":"later","nesting":1,"file":"/project/test/math.test.js","suite":false,"skip":false,"todo":false,"failureType":null,"message":null}
+{"event":"pass","name":"later","nesting":1,"file":"/project/test/math.test.js","suite":false,"skip":false,"todo":true,"failureType":null,"message":null}
+{"event":"fail","name":"math","nesting":0,"file":"/project/test/math.test.js","suite":true,"skip":false,"todo":false,"failureType":"subtestsFailed","message":"1 subtest failed"}
+{"event":"start","name":"parent","nesting":0,"file":"/project/test/math.test.js","suite":false,"skip":false,"todo":false,"failureType":null,"message":null}
+{"event":"start","name":"child ok","nesting":1,"file":"/project/test/math.test.js","suite":false,"skip":false,"todo":false,"failureType":null,"message":null}
+{"event":"pass","name":"child ok","nesting":1,"file":"/project/test/math.test.js","suite":false,"skip":false,"todo":false,"failureType":null,"message":null}
+{"event":"pass","name":"parent","nesting":0,"file":"/project/test/math.test.js","suite":false,"skip":false,"todo":false,"failureType":null,"message":null}
+{"event":"start","name":"top level","nesting":0,"file":"/project/test/math.test.js","suite":false,"skip":false,"todo":false,"failureType":null,"message":null}
+{"event":"pass","name":"top level","nesting":0,"file":"/project/test/math.test.js","suite":false,"skip":false,"todo":false,"failureType":null,"message":null}

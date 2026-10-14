@@ -454,7 +454,7 @@ function provision(dir, runner, { root = dir, language, install = true, dryRun =
 
 const SUITE_SCHEMA = {
   name: 'string', dir: 'string', runner: [...RUNNERS, 'auto'], testCmd: 'string',
-  testGlobs: 'string[]', sourceGlobs: 'string[]', setup: 'string',
+  testGlobs: 'string[]', sourceGlobs: 'string[]', setup: 'string', report: 'string',
 };
 const SCHEMA = {
   $schema: 'string',
@@ -514,7 +514,7 @@ function completeSuite(s, i, root, errors) {
     if (!found.runner) { errors.push(`${where}: ${dir} matches ${found.candidates.join(' and ')} equally; set "runner"`); return null; }
     runner = found.runner;
   }
-  if (runner === 'generic-junit' && !s.testCmd) { errors.push(`${where}: runner generic-junit needs "testCmd"`); return null; }
+  if (runner === 'generic-junit' && (!s.testCmd || !s.report)) { errors.push(`${where}: runner generic-junit needs "testCmd" and "report" (the JUnit XML file it writes)`); return null; }
   const pm = found ? found.packageManager : packageManager(abs, root);
   const sameRunner = found && found.runner === runner;
   let pkg = {};
@@ -528,6 +528,7 @@ function completeSuite(s, i, root, errors) {
     testGlobs: s.testGlobs || (sameRunner ? found.testGlobs : (packageGlobs(runner, pkg, abs) || DEFAULT_GLOBS[runner])),
     sourceGlobs: s.sourceGlobs || ['**'],
     setup: s.setup || null,
+    report: s.report || null,
   };
 }
 
