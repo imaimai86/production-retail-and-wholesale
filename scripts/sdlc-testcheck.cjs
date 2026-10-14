@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Mechanical checks for the Test repair stage of scripts/sdlc.sh. Exit 0 = pass, 1 = reject (reasons on stderr).
+// Result files: Jest's --json output, or a RunResult from scripts/sdlc-runners.cjs (any runner; { tests, suiteErrors }).
 //   precheck  <jest.json> <test-issues.md> <max>   failing tests must all be claimed; claims capped and real
 //   diffcheck <red_sha> <test-issues.md>           only claimed files changed; no skips; no weaker assertions
 //   namecheck <red.json> <now.json>                every test that existed at red still exists
@@ -20,8 +21,25 @@ const fail = msgs => { console.error(msgs.map(m => 'REJECT: ' + m).join('\n')); 
 const fileOf = f => rel(path.relative(path.join(process.cwd(), 'server'), f.name) || f.name);
 const readJson = file => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
 
+const isRunResult = j => Boolean(j) && Array.isArray(j.tests);
+const isResult = j => Boolean(j) && (Array.isArray(j.testResults) || isRunResult(j));
+
 function collect(j) {
   const all = new Set(), failed = new Set(), passed = new Set(), passedFiles = new Set();
+  if (isRunResult(j)) {
+    // RunResult files are relative to the project root; keys use the same form as for Jest (server/ stripped).
+    const fileFailed = new Set();
+    for (const e of j.suiteErrors || []) { const file = rel(e.file || '<unknown>'); failed.add(`${file}::<suite failed to run>`); fileFailed.add(file); }
+    for (const t of j.tests) {
+      const file = rel(t.file || '<unknown>');
+      const key = `${file}::${norm(t.name)}`;
+      all.add(key);
+      if (t.status === 'failed') { failed.add(key); fileFailed.add(file); }
+      if (t.status === 'passed') { passed.add(key); passedFiles.add(file); }
+    }
+    for (const f of fileFailed) passedFiles.delete(f);
+    return { all, failed, passed, passedFiles };
+  }
   for (const f of j.testResults) {
     const file = fileOf(f);
     if (f.status === 'passed') passedFiles.add(file);
@@ -84,13 +102,16 @@ if (cmd === 'claimed') {
 } else if (cmd === 'merge-retry') {
   if (!a || !b || !c) usage('merge-retry <now.json> <test-issues.md> <flaky-tests.md> <retry.json>...');
   const keys = retrySet(a, b);
-  const reruns = process.argv.slice(6).map(readJson).filter(j => j && Array.isArray(j.testResults)).map(collect);
+  const reruns = process.argv.slice(6).map(readJson).filter(isResult).map(collect);
   const flaky = keys.filter(k => k.endsWith('::<suite failed to run>')
     ? reruns.some(r => r.passedFiles.has(k.slice(0, k.lastIndexOf('::'))))
     : reruns.some(r => r.passed.has(k)) && !reruns.some(r => r.failed.has(k)));
   if (flaky.length) {
     const set = new Set(flaky), j = JSON.parse(fs.readFileSync(a, 'utf8'));
-    for (const f of j.testResults) {
+    if (isRunResult(j)) {
+      j.suiteErrors = (j.suiteErrors || []).filter(e => !set.has(`${rel(e.file || '<unknown>')}::<suite failed to run>`));
+      for (const t of j.tests) if (set.has(`${rel(t.file || '<unknown>')}::${norm(t.name)}`)) t.status = 'passed';
+    } else for (const f of j.testResults) {
       const file = fileOf(f);
       if (set.has(`${file}::<suite failed to run>`)) f.status = 'passed';
       for (const t of f.assertionResults) if (set.has(`${file}::${norm(t.fullName)}`)) t.status = 'passed';

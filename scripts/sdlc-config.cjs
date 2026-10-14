@@ -3,8 +3,10 @@
 //   node scripts/sdlc-config.cjs detect [dir] [--json]   the test suites detection finds; writes nothing
 //   node scripts/sdlc-config.cjs show   [dir]            the resolved settings as JSON (file, then detection, then defaults)
 //   node scripts/sdlc-config.cjs env    [dir]            the resolved settings as shell assignments (SDLC_*), for the scripts
-//   node scripts/sdlc-config.cjs suggest [dir] [--json]  for a project without tests: supported test frameworks, best first; writes nothing
-//   node scripts/sdlc-config.cjs init-tests [dir] [--language javascript|typescript] [--runner <name>] [--yes] [--dry-run] [--no-install]
+//   node scripts/sdlc-config.cjs suggest [dir] [--test-dir <folder>] [--json]  for a project without tests: supported test frameworks, best first; writes nothing
+//   node scripts/sdlc-config.cjs init-tests [dir] [--test-dir <folder>] [--language javascript|typescript] [--runner <name>] [--yes] [--dry-run] [--no-install]
+//        --test-dir: where the tests go, from [dir] (e.g. __tests__, server/__tests__, client/_test); the package set up is the
+//        nearest folder at or above it with a package.json. Without it a terminal asks, with src/ or test/ as the default.
 //        set one up: shows the detected language and asks to confirm it (or --language), asks which framework (or --runner), shows the changes, asks to confirm (or --yes), then writes scripts.test,
 //        a config file and an example test, installs the packages first and runs the tests once. Existing files are kept.
 // Exit codes: 0 ok, 1 invalid or ambiguous settings (reasons on stderr), 2 usage.
@@ -273,7 +275,21 @@ function describeProject(dir, root, pkg) {
     backend: BACKEND.filter(has),
     chai: has('chai') || has('sinon'),
     srcDir: exists(path.join(dir, 'src')),
+    e2eDirs: e2eDirs(dir, files, has),
   };
+}
+
+// Folders of browser end-to-end tests (Playwright, Cypress): unit test runners must leave them alone.
+function e2eDirs(dir, files, has) {
+  const out = [];
+  const pw = files.find(f => /^playwright\.config\.[cm]?[jt]s$/.test(f));
+  if (pw || has('@playwright/test')) {
+    let testDir = null;
+    try { testDir = (fs.readFileSync(path.join(dir, pw || ''), 'utf8').match(/testDir\s*:\s*['"`]([^'"`]+)['"`]/) || [])[1]; } catch { /* none */ }
+    out.push(testDir ? testDir.replace(/^\.\//, '').replace(/\/+$/, '') : 'e2e');
+  }
+  if (files.some(f => /^cypress\.config\.[cm]?[jt]s$/.test(f)) || has('cypress')) out.push('cypress');
+  return [...new Set(out)];
 }
 
 const installCmd = (pm, deps) => !deps.length ? null
@@ -334,7 +350,7 @@ function rankRunners(p) {
 // status: 'has-tests' (detection already finds a suite), 'unsupported' (not a Node project), 'suggestions'.
 // language: the language the user confirmed ('javascript' or 'typescript'), used instead of the detected one.
 const LANGUAGES = ['javascript', 'typescript'];
-function suggest(dir, root = dir, { language } = {}) {
+function suggest(dir, root = dir, { language, testDir } = {}) {
   dir = path.resolve(dir); root = path.resolve(root);
   let pkg = null;
   try { pkg = readJson(path.join(dir, 'package.json')); } catch { /* none */ }
@@ -342,7 +358,8 @@ function suggest(dir, root = dir, { language } = {}) {
     const other = OTHER_ECOSYSTEMS.filter(([f]) => exists(path.join(dir, f)));
     return { status: 'unsupported', dir: rel(root, dir), reason: other.length
       ? `only Node/TypeScript projects are supported for now (found ${other.map(([f, l]) => `${f}: ${l}`).join(', ')})`
-      : 'no package.json here; only Node/TypeScript projects are supported for now' };
+      : `no package.json here; only Node/TypeScript projects are supported for now${packagesBelow(dir).length
+        ? `. Packages below: ${packagesBelow(dir).join(', ')} (run it there, or pass --test-dir <folder inside one of them>)` : ''}` };
   }
   const existing = (dir === root ? detect(root) : [detectPackage(dir, root)].filter(Boolean)).filter(f => f.runner);
   if (existing.length) return { status: 'has-tests', dir: rel(root, dir), existing: existing.map(f => ({ dir: f.dir, runner: f.runner })) };
@@ -350,7 +367,7 @@ function suggest(dir, root = dir, { language } = {}) {
   if (language) Object.assign(project, { language, languageSource: 'confirmed' });
   const ranked = rankRunners(project);
   ranked[0].recommended = true;
-  for (const x of ranked) { const plan = setupPlan(project, x.runner); x.adds = { script: plan.script, files: plan.files.map(f => f.path) }; }
+  for (const x of ranked) { const plan = setupPlan(project, x.runner, { testDir }); x.adds = { script: plan.script, files: plan.files.map(f => f.path) }; }
   return { status: 'suggestions', dir: project.dir, project, suggestions: ranked };
 }
 
@@ -359,7 +376,8 @@ function suggest(dir, root = dir, { language } = {}) {
 const SAMPLE_NOTE = 'Example test added by sdlc-config init-tests: replace it with tests for your code.';
 
 // The files, script and packages that set up <runner> in this project. Nothing is written here.
-function setupPlan(p, runner) {
+// testDir: the folder for tests, relative to the package (default: src/ for vitest and jest when it exists, else test/).
+function setupPlan(p, runner, { testDir } = {}) {
   const ts = p.language === 'typescript';
   const esm = p.module === 'esm';
   const dom = p.frontend.length > 0;
@@ -370,43 +388,86 @@ function setupPlan(p, runner) {
   const notes = [];
   let script;
   let sample;
+  const folder = d => testDir || d;
+  const glob = d => `${folder(d)}/**/*.test.${ext}`;
   const imports = (names, from) => esm || ts ? `import { ${names} } from '${from}';` : `const { ${names} } = require('${from}');`;
 
   if (runner === 'vitest') {
-    sample = `${p.srcDir ? 'src' : 'test'}/example.test.${ext}`;
+    sample = `${folder(p.srcDir ? 'src' : 'test')}/example.test.${ext}`;
     script = 'vitest run';
-    if (dom && p.vite) notes.push("add test: { environment: 'jsdom' } to your vite.config to test components");
-    else if (dom) files.push({ path: `vitest.config.${ts ? 'ts' : 'mjs'}`, content: "import { defineConfig } from 'vitest/config';\n\nexport default defineConfig({\n  test: { environment: 'jsdom' },\n});\n" });
+    const e2e = p.e2eDirs.map(d => `'${d}/**'`);
+    const include = testDir ? `'${testDir}/**/*.{test,spec}.?(c|m)[jt]s?(x)'` : null;
+    if (p.vite && (dom || e2e.length || include)) {
+      if (dom) notes.push("add test: { environment: 'jsdom' } to your vite.config to test components");
+      if (include) notes.push(`add test: { include: [${include}] } to your vite.config so Vitest looks in ${testDir}`);
+      if (e2e.length) notes.push(`add test: { exclude: [...configDefaults.exclude, ${e2e.join(', ')}] } to your vite.config so Vitest leaves the end-to-end tests alone`);
+    } else if (dom || e2e.length || include) {
+      const opts = [dom ? "environment: 'jsdom'" : null, include ? `include: [${include}]` : null,
+        e2e.length ? `exclude: [...configDefaults.exclude, ${e2e.join(', ')}]` : null].filter(Boolean);
+      files.push({ path: `vitest.config.${ts ? 'ts' : 'mjs'}`,
+        content: `import { ${e2e.length ? 'configDefaults, ' : ''}defineConfig } from 'vitest/config';\n\nexport default defineConfig({\n  test: {\n${opts.map(o => `    ${o},`).join('\n')}\n  },\n});\n` });
+    }
     files.push({ path: sample, content: `// ${SAMPLE_NOTE}\nimport { describe, it, expect } from 'vitest';\n\ndescribe('example', () => {\n  it('adds numbers', () => {\n    expect(1 + 1).toBe(2);\n  });\n});\n` });
   } else if (runner === 'jest') {
-    sample = `${p.srcDir ? 'src' : 'test'}/example.test.${ext}`;
+    sample = `${folder(p.srcDir ? 'src' : 'test')}/example.test.${ext}`;
     script = esm ? 'node --experimental-vm-modules node_modules/jest/bin/jest.js' : 'jest';
     const conf = [
       ts ? `  preset: '${esm ? 'ts-jest/presets/default-esm' : 'ts-jest'}',` : null,
+      testDir ? `  roots: ['<rootDir>/${testDir}'],` : null,
       `  testEnvironment: '${dom ? 'jsdom' : 'node'}',`,
-      "  testPathIgnorePatterns: ['/node_modules/', '/dist/'],",
+      `  testPathIgnorePatterns: [${['/node_modules/', '/dist/', ...p.e2eDirs.map(d => `/${d}/`)].map(x => `'${x}'`).join(', ')}],`,
     ].filter(Boolean).join('\n');
     files.push({ path: 'jest.config.js', content: `/** @type {import('jest').Config} */\n${esm ? 'export default' : 'module.exports ='} {\n${conf}\n};\n` });
     files.push({ path: sample, content: `// ${SAMPLE_NOTE}\ndescribe('example', () => {\n  test('adds numbers', () => {\n    expect(1 + 1).toBe(2);\n  });\n});\n` });
   } else if (runner === 'node-test') {
-    sample = `test/example.test.${ext}`;
+    sample = `${folder('test')}/example.test.${ext}`;
     // Node 21+ expands the pattern itself; Node 18/20 take a folder (searched for .js test files) or the shell's list.
     const globs = p.nodeVersion[0] >= 21;
-    if (ts && !stripTypes) script = globs ? 'tsx --test "test/**/*.test.ts"' : 'tsx --test test/*.test.ts';
-    else script = globs ? `node --test "test/**/*.test.${ext}"` : 'node --test test/';
+    if (ts && !stripTypes) script = globs ? `tsx --test "${glob('test')}"` : `tsx --test ${folder('test')}/*.test.ts`;
+    else script = globs ? `node --test "${glob('test')}"` : `node --test ${folder('test')}/`;
     files.push({ path: sample, content: `// ${SAMPLE_NOTE}\n${imports('describe, it', 'node:test')}\n${esm || ts ? "import assert from 'node:assert/strict';" : "const assert = require('node:assert/strict');"}\n\ndescribe('example', () => {\n  it('adds numbers', () => {\n    assert.equal(1 + 1, 2);\n  });\n});\n` });
   } else if (runner === 'mocha') {
-    sample = `test/example.test.${ext}`;
+    sample = `${folder('test')}/example.test.${ext}`;
     script = 'mocha';
-    files.push({ path: '.mocharc.json', content: JSON.stringify(ts ? { spec: 'test/**/*.test.ts', 'node-option': ['import=tsx'] } : { spec: `test/**/*.test.${ext}` }, null, 2) + '\n' });
+    files.push({ path: '.mocharc.json', content: JSON.stringify(ts ? { spec: glob('test'), 'node-option': ['import=tsx'] } : { spec: glob('test') }, null, 2) + '\n' });
     files.push({ path: sample, content: `// ${SAMPLE_NOTE}\n${esm || ts ? "import assert from 'node:assert/strict';" : "const assert = require('node:assert/strict');"}\n\ndescribe('example', () => {\n  it('adds numbers', () => {\n    assert.equal(1 + 1, 2);\n  });\n});\n` });
   }
   return { runner, script, devDependencies: ranked.devDependencies, install: ranked.install, files, notes };
 }
 
+// Where a test folder given from <root> (e.g. "__tests__", "server/__tests__", "client/_test") belongs: the nearest folder at
+// or above it, inside <root>, with a package.json. Returns { pkgDir, testDir } (testDir relative to the package) or { error }.
+function locateTestDir(root, testDir) {
+  root = path.resolve(root);
+  const target = path.resolve(root, testDir);
+  const fromRoot = path.relative(root, target);
+  if (!fromRoot || fromRoot.startsWith('..') || path.isAbsolute(fromRoot)) return { error: `the test folder must be a folder inside ${root} (got "${testDir}")` };
+  if (!/^[\w.@/-]+$/.test(fromRoot.split(path.sep).join('/'))) return { error: `the test folder "${testDir}" may only use letters, digits and . _ - @ /` };
+  if (exists(target) && !fs.statSync(target).isDirectory()) return { error: `${testDir} is a file, not a folder` };
+  for (let d = path.dirname(target); ; d = path.dirname(d)) {
+    if (exists(path.join(d, 'package.json'))) return { pkgDir: d, testDir: path.relative(d, target).split(path.sep).join('/') };
+    if (d === root || path.dirname(d) === d) break;
+  }
+  return { error: `no package.json in ${path.dirname(fromRoot) === '.' ? 'the project root' : `${path.dirname(fromRoot)} or above it`}; the test folder must be inside a Node package${packagesBelow(root).length ? ` (packages here: ${packagesBelow(root).join(', ')})` : ''}` };
+}
+
+// Folders with a package.json below <root> (up to SCAN_DEPTH levels; node_modules and dot folders skipped).
+function packagesBelow(root) {
+  const out = [];
+  const walk = (dir, depth) => {
+    if (depth > 0 && exists(path.join(dir, 'package.json'))) out.push(rel(root, dir));
+    if (depth >= SCAN_DEPTH) return;
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) if (e.isDirectory() && !e.name.startsWith('.') && !SKIP_DIRS.has(e.name)) walk(path.join(dir, e.name), depth + 1);
+  };
+  walk(path.resolve(root), 0);
+  return out.sort();
+}
+
 // Set up <runner> in the Node project at <dir>: writes the files and scripts.test, installs the packages (unless
 // install is false) and runs the tests once. Files that already exist are kept. Returns { ok, plan, written, skipped, steps, error }.
-function provision(dir, runner, { root = dir, language, install = true, dryRun = false, run = spawnSync } = {}) {
+function provision(dir, runner, { root = dir, language, testDir, install = true, dryRun = false, run = spawnSync } = {}) {
   dir = path.resolve(dir); root = path.resolve(root);
   const s = suggest(dir, root, { language });
   if (s.status === 'unsupported') return { ok: false, error: s.reason };
@@ -417,7 +478,7 @@ function provision(dir, runner, { root = dir, language, install = true, dryRun =
   if (typeof current === 'string' && current.trim() && !PLACEHOLDER_TEST.test(current)) {
     return { ok: false, error: `package.json already has a test script ("${current}"); remove it first, or add the suite to ${CONFIG_FILE} by hand` };
   }
-  const plan = setupPlan(s.project, runner);
+  const plan = setupPlan(s.project, runner, { testDir });
   const written = [];
   const skipped = [];
   const steps = [];
@@ -454,7 +515,7 @@ function provision(dir, runner, { root = dir, language, install = true, dryRun =
 
 const SUITE_SCHEMA = {
   name: 'string', dir: 'string', runner: [...RUNNERS, 'auto'], testCmd: 'string',
-  testGlobs: 'string[]', sourceGlobs: 'string[]', setup: 'string',
+  testGlobs: 'string[]', sourceGlobs: 'string[]', setup: 'string', report: 'string',
 };
 const SCHEMA = {
   $schema: 'string',
@@ -514,7 +575,7 @@ function completeSuite(s, i, root, errors) {
     if (!found.runner) { errors.push(`${where}: ${dir} matches ${found.candidates.join(' and ')} equally; set "runner"`); return null; }
     runner = found.runner;
   }
-  if (runner === 'generic-junit' && !s.testCmd) { errors.push(`${where}: runner generic-junit needs "testCmd"`); return null; }
+  if (runner === 'generic-junit' && (!s.testCmd || !s.report)) { errors.push(`${where}: runner generic-junit needs "testCmd" and "report" (the JUnit XML file it writes)`); return null; }
   const pm = found ? found.packageManager : packageManager(abs, root);
   const sameRunner = found && found.runner === runner;
   let pkg = {};
@@ -528,6 +589,7 @@ function completeSuite(s, i, root, errors) {
     testGlobs: s.testGlobs || (sameRunner ? found.testGlobs : (packageGlobs(runner, pkg, abs) || DEFAULT_GLOBS[runner])),
     sourceGlobs: s.sourceGlobs || ['**'],
     setup: s.setup || null,
+    report: s.report || null,
   };
 }
 
@@ -663,7 +725,7 @@ function shellEnv(config) {
   return Object.entries(lines).map(([k, v]) => `${k}=${v}`).join('\n') + '\n';
 }
 
-module.exports = { CONFIG_FILE, RUNNERS, detect, detectPackage, suggest, setupPlan, provision, resolve, validate, testDir, allowedTools, worktreeBase, shellEnv };
+module.exports = { CONFIG_FILE, RUNNERS, detect, detectPackage, suggest, setupPlan, provision, locateTestDir, packagesBelow, resolve, validate, testDir, allowedTools, worktreeBase, shellEnv };
 
 // The project root for <dir>: the top of its git work tree, else <dir> itself.
 function findRoot(dir) {
@@ -707,8 +769,15 @@ function ask(question) {
 }
 
 async function initTests(dir, opts) {
-  const root = findRoot(dir);
-  let s = suggest(dir, root, { language: opts.language });
+  let testDir;
+  const projectRoot = findRoot(dir);
+  if (opts.testDir) {
+    const loc = locateTestDir(dir, opts.testDir);
+    if (loc.error) { console.error(`ERROR: ${loc.error}`); return 1; }
+    ({ pkgDir: dir, testDir } = loc);
+  }
+  const root = findRoot(dir) === dir ? projectRoot : findRoot(dir);
+  let s = suggest(dir, root, { language: opts.language, testDir });
   if (s.status !== 'suggestions') {
     console.error(`ERROR: ${s.status === 'unsupported' ? s.reason : `tests are already set up (${s.existing.map(e => `${e.dir}: ${e.runner}`).join(', ')})`}`);
     return 1;
@@ -724,7 +793,7 @@ async function initTests(dir, opts) {
       language = a === '' || /^y(es)?$/.test(a) ? s.project.language : LANGUAGES.find(l => l === a || l.slice(0, 2) === a.slice(0, 2) && a.length <= 2);
       if (!language) { console.error(`ERROR: unknown language "${a}"`); return 2; }
     }
-    s = suggest(dir, root, { language });
+    s = suggest(dir, root, { language, testDir });
   }
   console.log('');
   // 2. The framework, from the suggestions for that language.
@@ -737,7 +806,18 @@ async function initTests(dir, opts) {
     if (!pick) { console.error(`ERROR: no framework "${a}"`); return 2; }
     runner = pick.runner;
   }
-  const pre = provision(dir, runner, { root, language, dryRun: true });
+  // 3. The test folder: --test-dir, else asked (Enter keeps the default) when there is a terminal and no --yes.
+  if (!testDir && !opts.yes && process.stdin.isTTY) {
+    const fallback = path.posix.dirname(setupPlan(s.project, runner).files.slice(-1)[0].path);
+    const a = await ask(`Test folder inside ${where(s.project.dir)} [Enter = ${fallback}]: `);
+    if (a) {
+      const loc = locateTestDir(dir, a);
+      if (loc.error) { console.error(`ERROR: ${loc.error}`); return 2; }
+      if (loc.pkgDir !== dir) { console.error(`ERROR: ${a} belongs to the package in ${rel(dir, loc.pkgDir)}; run init-tests there`); return 2; }
+      testDir = loc.testDir;
+    }
+  }
+  const pre = provision(dir, runner, { root, language, testDir, dryRun: true });
   if (!pre.ok) { console.error(`ERROR: ${pre.error}`); return 1; }
   printPlan(pre.plan, dir);
   if (opts.dryRun) { console.log('\nDry run: nothing was changed.'); return 0; }
@@ -745,7 +825,7 @@ async function initTests(dir, opts) {
     if (!process.stdin.isTTY) { console.error('\nERROR: confirm with --yes'); return 2; }
     if (!/^y(es)?$/i.test(await ask('\nApply these changes? [y/N]: '))) { console.log('Nothing was changed.'); return 0; }
   }
-  const r = provision(dir, runner, { root, language, install: opts.install });
+  const r = provision(dir, runner, { root, language, testDir, install: opts.install });
   for (const st of r.steps || []) console.log(`\n$ ${st.cmd}  (exit ${st.status})${st.status ? `\n${st.output}` : ''}`);
   if (r.written && r.written.length) console.log(`\nWritten: ${r.written.join(', ')}`);
   if (r.skipped && r.skipped.length) console.log(`Kept (already there): ${r.skipped.join(', ')}`);
@@ -758,24 +838,32 @@ if (require.main === module) {
   const args = process.argv.slice(2);
   const flag = f => args.includes(f);
   const valueOf = name => { const i = args.indexOf(name); return i >= 0 ? (args[i + 1] || '') : undefined; };
-  const valueAt = new Set(['--runner', '--language'].map(n => args.indexOf(n)).filter(i => i >= 0).map(i => i + 1));
+  const valueAt = new Set(['--runner', '--language', '--test-dir'].map(n => args.indexOf(n)).filter(i => i >= 0).map(i => i + 1));
   const runnerArg = valueOf('--runner');
   const languageArg = valueOf('--language');
+  const testDirArg = valueOf('--test-dir');
   const [cmd, dirArg] = args.filter((a, i) => !a.startsWith('--') && !valueAt.has(i));
   const json = flag('--json');
   const dir = path.resolve(dirArg || '.');
   const usage = () => {
-    console.error('Usage: sdlc-config.cjs detect [dir] [--json] | show [dir] | env [dir] | suggest [dir] [--json]\n'
-      + '       sdlc-config.cjs init-tests [dir] [--language javascript|typescript] [--runner <name>] [--yes] [--dry-run] [--no-install]');
+    console.error('Usage: sdlc-config.cjs detect [dir] [--json] | show [dir] | env [dir] | suggest [dir] [--test-dir <folder>] [--json]\n'
+      + '       sdlc-config.cjs init-tests [dir] [--test-dir <folder>] [--language javascript|typescript] [--runner <name>] [--yes] [--dry-run] [--no-install]');
     process.exit(2);
   };
-  if (!['detect', 'show', 'env', 'suggest', 'init-tests'].includes(cmd) || runnerArg === '' || (languageArg !== undefined && !LANGUAGES.includes(languageArg))) usage();
+  if (!['detect', 'show', 'env', 'suggest', 'init-tests'].includes(cmd) || runnerArg === '' || testDirArg === '' || (languageArg !== undefined && !LANGUAGES.includes(languageArg))) usage();
   if (!exists(dir)) { console.error(`ERROR: ${dir} does not exist`); process.exit(2); }
 
   if (cmd === 'init-tests') {
-    initTests(dir, { runner: runnerArg, language: languageArg, yes: flag('--yes'), dryRun: flag('--dry-run'), install: !flag('--no-install') }).then(code => process.exit(code));
+    initTests(dir, { runner: runnerArg, language: languageArg, testDir: testDirArg, yes: flag('--yes'), dryRun: flag('--dry-run'), install: !flag('--no-install') }).then(code => process.exit(code));
   } else if (cmd === 'suggest') {
-    const s = suggest(dir, findRoot(dir), { language: languageArg });
+    let at = dir;
+    let testDir;
+    if (testDirArg) {
+      const loc = locateTestDir(dir, testDirArg);
+      if (loc.error) { console.error(`ERROR: ${loc.error}`); process.exit(1); }
+      ({ pkgDir: at, testDir } = loc);
+    }
+    const s = suggest(at, findRoot(at), { language: languageArg, testDir });
     if (json) process.stdout.write(JSON.stringify(s, null, 2) + '\n');
     else if (s.status === 'unsupported') console.log(`${s.dir}: ${s.reason}`);
     else if (s.status === 'has-tests') console.log(`${s.dir}: tests are already set up (${s.existing.map(e => `${e.dir}: ${e.runner}`).join(', ')})`);
