@@ -300,6 +300,81 @@ describe('suggestions for a project without tests', () => {
     expect(py.status).toBe('unsupported');
     expect(py.reason).toContain('pyproject.toml: Python');
     expect(suggest(project({ 'a.txt': '' })).reason).toContain('no package.json here');
+    expect(suggest(project({ 'web/package.json': {}, 'api/package.json': {} })).reason)
+      .toContain('Packages below: api, web (run it there, or pass --test-dir <folder inside one of them>)');
+  });
+});
+
+describe('choosing the test folder', () => {
+  const { locateTestDir } = require(helper);
+
+  test('a folder given from the project root belongs to the nearest package at or above it', () => {
+    const dir = project({ 'package.json': {}, 'server/package.json': {}, 'client/package.json': {}, 'client/src/x.ts': '', 'docs/a.md': '' });
+    expect(locateTestDir(dir, '__tests__')).toEqual({ pkgDir: dir, testDir: '__tests__' });
+    expect(locateTestDir(dir, 'server/__tests__')).toEqual({ pkgDir: path.join(dir, 'server'), testDir: '__tests__' });
+    expect(locateTestDir(dir, 'client/_test')).toEqual({ pkgDir: path.join(dir, 'client'), testDir: '_test' });
+    expect(locateTestDir(dir, './client/src/unit/')).toEqual({ pkgDir: path.join(dir, 'client'), testDir: 'src/unit' });
+    expect(locateTestDir(dir, 'docs/tests')).toEqual({ pkgDir: dir, testDir: 'docs/tests' });
+  });
+
+  test('refuses folders outside the project or outside any package, the project itself, files and odd names', () => {
+    const dir = project({ 'server/package.json': {}, 'notes.txt': '', 'server/x.js': '' });
+    expect(locateTestDir(dir, '../elsewhere').error).toContain('must be a folder inside');
+    expect(locateTestDir(dir, '.').error).toContain('must be a folder inside');
+    expect(locateTestDir(dir, 'docs/_test').error).toBe('no package.json in docs or above it; the test folder must be inside a Node package (packages here: server)');
+    expect(locateTestDir(dir, '_test').error).toContain('no package.json in the project root');
+    expect(locateTestDir(dir, 'server/x.js').error).toBe('server/x.js is a file, not a folder');
+    expect(locateTestDir(dir, 'server/my tests').error).toContain('may only use letters, digits and . _ - @ /');
+  });
+
+  test('each runner puts the example test in the folder and looks there', () => {
+    const js = suggest(project({ 'package.json': { engines: { node: '>=22' } } })).project;
+    const ts = suggest(project({ 'package.json': { engines: { node: '>=18' } }, 'tsconfig.json': '{}' })).project;
+    const at = (p, runner, testDir = '__tests__') => setupPlan(p, runner, { testDir });
+
+    const vitest = at(ts, 'vitest', 'client/_test');
+    expect(vitest.files.map(f => f.path)).toEqual(['vitest.config.ts', 'client/_test/example.test.ts']);
+    expect(vitest.files[0].content).toContain("include: ['client/_test/**/*.{test,spec}.?(c|m)[jt]s?(x)'],");
+    expect(setupPlan({ ...ts, vite: true }, 'vitest', { testDir: '_test' }).notes)
+      .toEqual(["add test: { include: ['_test/**/*.{test,spec}.?(c|m)[jt]s?(x)'] } to your vite.config so Vitest looks in _test"]);
+
+    const jest = at(js, 'jest');
+    expect(jest.files.map(f => f.path)).toEqual(['jest.config.js', '__tests__/example.test.js']);
+    expect(jest.files[0].content).toContain("  roots: ['<rootDir>/__tests__'],");
+
+    expect(JSON.parse(at(js, 'mocha', 'spec/unit').files[0].content)).toEqual({ spec: 'spec/unit/**/*.test.js' });
+    expect(at(js, 'node-test').script).toBe('node --test "__tests__/**/*.test.js"');
+    expect(at(suggest(project({ 'package.json': { engines: { node: '>=18' } } })).project, 'node-test').script).toBe('node --test __tests__/');
+    expect(at(ts, 'node-test', '_t').script).toBe('tsx --test _t/*.test.ts');
+    expect(setupPlan(js, 'jest').files.map(f => f.path)).toEqual(['jest.config.js', 'test/example.test.js']);
+  });
+
+  test('jest with roots runs the example in the chosen folder and nothing outside it', () => {
+    const dir = project({ 'package.json': { name: 'p' }, 'other/outside.test.js': "test('outside', () => { throw new Error('ran'); });\n" });
+    expect(provision(dir, 'jest', { testDir: 'spec/__tests__', install: false })).toMatchObject({ ok: true, written: ['jest.config.js', 'spec/__tests__/example.test.js', 'package.json (scripts.test)'] });
+    fs.symlinkSync(path.join(root, 'server/node_modules'), path.join(dir, 'node_modules'));
+    const r = spawnSync('npx', ['jest', '--json'], { cwd: dir, encoding: 'utf8' });
+    const report = JSON.parse(r.stdout);
+    expect(report.testResults.map(f => path.relative(fs.realpathSync(dir), f.name))).toEqual(['spec/__tests__/example.test.js']);
+    expect(report.success).toBe(true);
+  });
+
+  test('init-tests --test-dir sets up the package that holds the folder; suggest shows the same files', () => {
+    const dir = project({ 'server/package.json': { name: 'server' }, 'client/package.json': { name: 'client' } });
+    const plan = cli('suggest', dir, '--test-dir', 'client/_test', '--json');
+    expect(JSON.parse(plan.stdout).suggestions.find(x => x.runner === 'jest').adds.files).toEqual(['jest.config.js', '_test/example.test.js']);
+
+    const r = cli('init-tests', dir, '--test-dir', 'server/__tests__', '--language', 'javascript', '--runner', 'node-test', '--yes');
+    expect(r.stdout).toContain('node-test is set up and the example test passes.');
+    expect(r.status).toBe(0);
+    expect(fs.existsSync(path.join(dir, 'server/__tests__/example.test.js'))).toBe(true);
+    expect(fs.existsSync(path.join(dir, 'client/__tests__'))).toBe(false);
+    expect(detect(dir).map(f => [f.dir, f.runner])).toEqual([['server', 'node-test']]);
+
+    const bad = cli('init-tests', dir, '--test-dir', 'docs/_test', '--runner', 'jest', '--yes');
+    expect(bad.status).toBe(1);
+    expect(bad.stderr).toContain('packages here: client, server');
+    expect(cli('init-tests', dir, '--test-dir').status).toBe(2);
   });
 });
 
