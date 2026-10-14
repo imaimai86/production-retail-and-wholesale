@@ -276,7 +276,11 @@ describe('suggestions for a project without tests', () => {
     expect(esm.project).toMatchObject({ language: 'typescript', module: 'esm', node: '22.18 (engines.node)' });
 
     const old = suggest(project({ 'package.json': { engines: { node: '^20' } }, 'tsconfig.json': '{}', 'pnpm-lock.yaml': '' }));
-    expect(old.suggestions.find(x => x.runner === 'node-test')).toMatchObject({ install: 'pnpm add -D tsx', adds: { script: 'tsx --test "test/**/*.test.ts"' } });
+    expect(old.suggestions.find(x => x.runner === 'node-test')).toMatchObject({ install: 'pnpm add -D tsx', adds: { script: 'tsx --test test/*.test.ts' } });
+    expect(old.suggestions.find(x => x.runner === 'node-test').caveats).toContain('Node 20 cannot find .ts test files by pattern: only test/*.test.ts runs, not sub-folders');
+    const js = p => setupPlan(suggest(project({ 'package.json': { engines: { node: p } } })).project, 'node-test').script;
+    expect(js('>=18')).toBe('node --test test/');
+    expect(js('>=22')).toBe('node --test "test/**/*.test.js"');
   });
 
   test('says why it picked the language, and takes a corrected language', () => {

@@ -301,7 +301,8 @@ function rankRunners(p) {
     r.jest.devDependencies.push('ts-jest', '@types/jest'); r.jest.caveats.push('TypeScript needs ts-jest (added) and a jest.config.js preset');
     r.mocha.devDependencies.push('tsx'); r.mocha.caveats.push('TypeScript needs tsx (added) loaded from .mocharc.json');
     if (stripTypes) { r['node-test'].score += 1; r['node-test'].why.push(`Node ${p.nodeVersion[0]}.${p.nodeVersion[1]} runs TypeScript files directly`); }
-    else { r['node-test'].score -= 1; r['node-test'].devDependencies.push('tsx'); r['node-test'].script = 'tsx --test'; r['node-test'].caveats.push(`Node ${p.nodeVersion[0]}.${p.nodeVersion[1]} cannot run TypeScript directly: needs tsx (added)`); }
+    else { r['node-test'].score -= 1; r['node-test'].devDependencies.push('tsx'); r['node-test'].caveats.push(`Node ${p.nodeVersion[0]}.${p.nodeVersion[1]} cannot run TypeScript directly: needs tsx (added)`); }
+    if (p.nodeVersion[0] < 21) { r['node-test'].score -= 1; r['node-test'].caveats.push(`Node ${p.nodeVersion[0]} cannot find .ts test files by pattern: only test/*.test.ts runs, not sub-folders`); }
   }
   if (esm) {
     r.vitest.score += 2; r.vitest.why.push('native ES modules');
@@ -389,7 +390,10 @@ function setupPlan(p, runner) {
     files.push({ path: sample, content: `// ${SAMPLE_NOTE}\ndescribe('example', () => {\n  test('adds numbers', () => {\n    expect(1 + 1).toBe(2);\n  });\n});\n` });
   } else if (runner === 'node-test') {
     sample = `test/example.test.${ext}`;
-    script = ts && !stripTypes ? 'tsx --test "test/**/*.test.ts"' : `node --test "test/**/*.test.${ext}"`;
+    // Node 21+ expands the pattern itself; Node 18/20 take a folder (searched for .js test files) or the shell's list.
+    const globs = p.nodeVersion[0] >= 21;
+    if (ts && !stripTypes) script = globs ? 'tsx --test "test/**/*.test.ts"' : 'tsx --test test/*.test.ts';
+    else script = globs ? `node --test "test/**/*.test.${ext}"` : 'node --test test/';
     files.push({ path: sample, content: `// ${SAMPLE_NOTE}\n${imports('describe, it', 'node:test')}\n${esm || ts ? "import assert from 'node:assert/strict';" : "const assert = require('node:assert/strict');"}\n\ndescribe('example', () => {\n  it('adds numbers', () => {\n    assert.equal(1 + 1, 2);\n  });\n});\n` });
   } else if (runner === 'mocha') {
     sample = `test/example.test.${ext}`;
