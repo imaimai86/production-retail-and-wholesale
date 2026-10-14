@@ -1,0 +1,20 @@
+{
+  "backlogDir": "Docs/backlog",
+  "suites": [
+    {
+      "name": "server",
+      "dir": "server",
+      "runner": "jest",
+      "testCmd": "npm test",
+      "testGlobs": ["__tests__/**"],
+      "sourceGlobs": ["**"]
+    }
+  ],
+  "integration": { "cmd": "bash scripts/sdlc-integration.sh", "ci": "skip" },
+  "lint": "npm run lint",
+  "worktree": { "base": "../{repo}-sdlc", "link": ["server/node_modules", "node_modules", "graft", ".env"] },
+  "git": { "branchPrefix": "sdlc/", "conflictSuffixStart": 10001 },
+  "agent": { "allowCommands": ["npm run generate-spec"], "codeSearch": "graft" },
+  "ship": { "envExample": true, "maxFileBytes": 1048576 },
+  "ui": { "timezone": "Asia/Dubai" }
+}
