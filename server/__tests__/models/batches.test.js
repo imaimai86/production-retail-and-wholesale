@@ -6,17 +6,13 @@ jest.mock('../../models/db');
 describe('Batches model', () => {
   afterEach(() => jest.clearAllMocks());
 
-  test('getAll default', async () => {
+  test('getAll pages with LIMIT and OFFSET, 10 and 0 by default', async () => {
     db.query.mockResolvedValue({ rows: [] });
     await Batches.getAll();
     expect(db.query).toHaveBeenCalledWith(
       'SELECT * FROM batches ORDER BY id LIMIT $1 OFFSET $2',
       [10, 0]
     );
-  });
-
-  test('getAll with params', async () => {
-    db.query.mockResolvedValue({ rows: [] });
     await Batches.getAll({ limit: 2, offset: 4 });
     expect(db.query).toHaveBeenCalledWith(
       'SELECT * FROM batches ORDER BY id LIMIT $1 OFFSET $2',

@@ -25,46 +25,38 @@ const mod = (args, extra = {}) => spawnSync('bash', [path.join(repo, 'scripts/sd
   cwd: repo, encoding: 'utf8', env: { ...process.env, ...extra },
 });
 
-describe('sdlc-mod.sh model (AC46)', () => {
-  const cases = [
-    ['list'],
-    ['list', '--json'],
-    ['add', 'gw', '--endpoint', 'https://gw.example', '--key-env', 'K', '--models', 'a,b', '--effort'],
-    ['add-model', 'gw', 'm 1'],
-    ['remove-model', 'gw', 'm1'],
-    ['remove', 'gw'],
-    ['test', 'gw/openai/gpt-5'],
-  ];
-  test.each(cases)('%s passes arguments unchanged and returns exit 0', (...args) => {
-    const r = mod(['model', ...args], { STUB_EXIT: '0' });
-    expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout)).toEqual(args);
-    expect(r.stderr).toContain('stub-stderr');
+describe('sdlc-mod.sh model', () => {
+  test('AC46 every subcommand passes its arguments unchanged and returns the helper exit code', () => {
+    const cases = [
+      ['list'],
+      ['list', '--json'],
+      ['add', 'gw', '--endpoint', 'https://gw.example', '--key-env', 'K', '--models', 'a,b', '--effort'],
+      ['add-model', 'gw', 'm 1'],
+      ['remove-model', 'gw', 'm1'],
+      ['remove', 'gw'],
+      ['test', 'gw/openai/gpt-5'],
+    ];
+    for (const args of cases) {
+      for (const code of [0, 1]) {
+        const r = mod(['model', ...args], { STUB_EXIT: String(code) });
+        expect([args, r.status, JSON.parse(r.stdout)]).toEqual([args, code, args]);
+        expect(r.stderr).toContain('stub-stderr');
+      }
+    }
   });
-  test.each(cases)('%s returns the helper exit code 1', (...args) => {
-    const r = mod(['model', ...args], { STUB_EXIT: '1' });
-    expect(r.status).toBe(1);
-    expect(JSON.parse(r.stdout)).toEqual(args);
-    expect(r.stderr).toContain('stub-stderr');
-  });
-});
 
-describe('usage (AC47)', () => {
-  test('the usage text lists model', () => {
-    const r = mod([]);
-    expect(r.status).toBe(2);
-    expect(r.stderr).toMatch(/model/);
-  });
-  test.each([[['model']], [['model', 'path']], [['model', 'get', 'gw']], [['model', 'bogus']]])('%j prints usage, exit 2, helper not run', (args) => {
-    const r = mod(args);
-    expect(r.status).toBe(2);
-    expect(r.stderr).toMatch(/Usage:/);
-    expect(r.stdout).toBe('');
-  });
-});
+  test('AC47 the usage text lists model, and an unknown or missing subcommand prints usage (exit 2) without running the helper', () => {
+    const none = mod([]);
+    expect(none.status).toBe(2);
+    expect(none.stderr).toMatch(/model/);
 
-describe('real helper through the wrapper', () => {
-  test('list --json reaches the real helper', () => {
+    for (const args of [['model'], ['model', 'path'], ['model', 'get', 'gw'], ['model', 'bogus']]) {
+      const r = mod(args);
+      expect([args, r.status, r.stdout]).toEqual([args, 2, '']);
+      expect(r.stderr).toMatch(/Usage:/);
+    }
+
+    // list --json reaches the real helper
     fs.copyFileSync(path.join(repoRoot, 'scripts/sdlc-models.cjs'), path.join(repo, 'scripts/sdlc-models.cjs'));
     const r = mod(['model', 'list', '--json'], { SDLC_MODELS_FILE: path.join(repo, 'none.json') });
     expect(r.status).toBe(0);

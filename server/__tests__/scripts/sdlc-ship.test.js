@@ -31,7 +31,7 @@ const ship = (dir, env) => sh(dir, 'bash', ['scripts/sdlc-ship.sh', 'alpha', 'Do
 const log = dir => sh(dir, 'git', ['log', '--format=%s']).stdout.trim().split('\n');
 
 describe('scripts/sdlc-ship.sh', () => {
-  test('commits changes anywhere in one feat commit and lists them in the body', () => {
+  test('commits changes anywhere in one feat commit, lists them in the body, and ticks the backlog in its own commit', () => {
     const dir = repo();
     baseline(dir);
     write(dir, 'scripts/new.sh');
@@ -39,6 +39,7 @@ describe('scripts/sdlc-ship.sh', () => {
     write(dir, 'server/a.js');
     const r = ship(dir);
     expect(r.status).toBe(0);
+    expect(log(dir)[0]).toBe('chore(backlog): mark alpha done');
     expect(log(dir)[1]).toBe('feat(alpha): implement per Docs/backlog/alpha/specs-1.md');
     const body = sh(dir, 'git', ['log', '-2', '--format=%b']).stdout;
     for (const f of ['scripts/new.sh', 'README.md', 'server/a.js']) expect(body).toContain(f);
@@ -47,91 +48,68 @@ describe('scripts/sdlc-ship.sh', () => {
     expect(r.stdout).toContain('Committed 3 file(s), skipped 0');
   });
 
-  test('pre-existing dirty files stay uncommitted and untouched', () => {
+  test('files dirty or staged before the run stay as they were; .env.local is skipped and listed; new .env keys reach .env.example as placeholders', () => {
     const dir = repo();
     write(dir, 'mine.txt', 'untracked\n');
     write(dir, 'dev.txt', 'modified\n');
-    baseline(dir);
-    write(dir, 'server/a.js');
-    expect(ship(dir).status).toBe(0);
-    expect(fs.readFileSync(path.join(dir, 'mine.txt'), 'utf8')).toBe('untracked\n');
-    expect(fs.readFileSync(path.join(dir, 'dev.txt'), 'utf8')).toBe('modified\n');
-    expect(sh(dir, 'git', ['status', '--porcelain']).stdout.split('\n').filter(Boolean).sort()).toEqual([' M dev.txt', '?? mine.txt']);
-  });
-
-  test('something the developer staged beforehand is not committed and stays staged', () => {
-    const dir = repo();
     write(dir, 'staged.txt');
     sh(dir, 'git', ['add', 'staged.txt']);
+    write(dir, '.env', 'A=1\n');
     baseline(dir);
     write(dir, 'server/a.js');
-    expect(ship(dir).status).toBe(0);
-    expect(sh(dir, 'git', ['status', '--porcelain']).stdout).toContain('A  staged.txt');
-    expect(sh(dir, 'git', ['show', '--name-only', '--format=', 'HEAD~1']).stdout).not.toContain('staged.txt');
-  });
-
-  test('.env.local is not committed and appears in ship-skipped.md', () => {
-    const dir = repo();
-    baseline(dir);
     write(dir, 'server/.env.local', 'SECRET=1\n');
-    write(dir, 'server/a.js');
+    write(dir, '.env', 'A=1\nTOKEN=topsecret\n');
     const r = ship(dir);
     expect(r.status).toBe(0);
+
+    // pre-existing dirty files stay uncommitted and untouched; what the developer staged stays staged
+    expect(fs.readFileSync(path.join(dir, 'mine.txt'), 'utf8')).toBe('untracked\n');
+    expect(fs.readFileSync(path.join(dir, 'dev.txt'), 'utf8')).toBe('modified\n');
+    expect(sh(dir, 'git', ['status', '--porcelain']).stdout.split('\n').filter(Boolean).sort())
+      .toEqual([' M dev.txt', '?? mine.txt', '?? server/.env.local', 'A  staged.txt'].sort());
+    expect(sh(dir, 'git', ['show', '--name-only', '--format=', 'HEAD~1']).stdout).not.toContain('staged.txt');
+
+    // .env.local is not committed and appears in ship-skipped.md
     expect(sh(dir, 'git', ['ls-files']).stdout).not.toContain('.env.local');
     expect(fs.readFileSync(path.join(dir, 'Docs/backlog/alpha/logs/ship-skipped.md'), 'utf8')).toContain('server/.env.local: sensitive file');
     expect(r.stdout).toContain('skipped 1');
-  });
 
-  test('new keys in a git-ignored .env go into .env.example with placeholder values', () => {
-    const dir = repo();
-    write(dir, '.env', 'A=1\n');
-    baseline(dir);
-    write(dir, '.env', 'A=1\nTOKEN=topsecret\n');
-    expect(ship(dir).status).toBe(0);
+    // new keys in the git-ignored .env
     const committed = sh(dir, 'git', ['show', 'HEAD~1:.env.example']).stdout;
     expect(committed).toContain('TOKEN=change-me');
     expect(committed).not.toContain('topsecret');
   });
 
-  test('no cycle changes warns, makes no feat commit and exits 0', () => {
-    const dir = repo();
+  test('warns and exits 0 with nothing to commit, with a slug missing from the backlog, and with a backlog file dirty at baseline', () => {
+    // no cycle changes: no feat commit
+    let dir = repo();
     baseline(dir);
-    const r = ship(dir);
+    let r = ship(dir);
     expect(r.status).toBe(0);
     expect(r.stdout).toContain('WARNING: nothing to commit');
     expect(log(dir).some(s => s.startsWith('feat('))).toBe(false);
-  });
 
-  test('a slug missing from the backlog warns, makes no backlog commit and exits 0', () => {
-    const dir = repo();
+    // a slug missing from the backlog: no backlog commit
+    dir = repo();
     write(dir, 'Docs/backlog/index.md', '- [ ] `other` - x\n');
     sh(dir, 'git', ['commit', '-q', '-am', 'swap']);
     baseline(dir);
     write(dir, 'server/a.js');
-    const r = ship(dir);
+    r = ship(dir);
     expect(r.status).toBe(0);
     expect(r.stdout).toContain('WARNING: alpha not found in Docs/backlog/index.md; not ticked');
     expect(log(dir).some(s => s.startsWith('chore(backlog)'))).toBe(false);
-  });
 
-  test('a backlog file dirty at baseline is ticked but not committed', () => {
-    const dir = repo();
+    // a backlog file dirty at baseline is ticked but not committed
+    dir = repo();
     write(dir, 'Docs/backlog/index.md', '- [ ] `alpha` - thing\n# mine\n');
     baseline(dir);
     write(dir, 'server/a.js');
-    const r = ship(dir);
+    r = ship(dir);
     expect(r.status).toBe(0);
     expect(fs.readFileSync(path.join(dir, 'Docs/backlog/index.md'), 'utf8')).toContain('- [x] `alpha`');
     expect(log(dir).some(s => s.startsWith('chore(backlog)'))).toBe(false);
     expect(r.stdout).toContain('WARNING');
-  });
-
-  test('ticks the backlog in its own commit', () => {
-    const dir = repo();
-    baseline(dir);
-    write(dir, 'server/a.js');
-    ship(dir);
-    expect(log(dir)[0]).toBe('chore(backlog): mark alpha done');
   });
 
   test('a failing git commit exits 1', () => {

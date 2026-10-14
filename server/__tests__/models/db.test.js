@@ -29,62 +29,32 @@ describe('db model pool construction', () => {
     else process.env.DATABASE_URL = original;
   });
 
-  test('uses connectionString when DATABASE_URL is set', () => {
-    const url = 'postgres://u:p@h:5432/d';
-    const { Pool } = load(url);
+  test('uses the untrimmed DATABASE_URL as connectionString, exports exactly query and transaction, and logs nothing', () => {
+    const url = 'postgres://u:secretpw@h:5432/d';
+    let { Pool, db } = load(url);
     expect(Pool).toHaveBeenCalledTimes(1);
     expect(Pool).toHaveBeenCalledWith({ connectionString: url });
     expect(Object.keys(Pool.mock.calls[0][0])).toEqual(['connectionString']);
-  });
 
-  test('passes the untrimmed value through', () => {
-    const url = '  postgres://u:p@h:5432/d  ';
-    const { Pool } = load(url);
-    expect(Pool).toHaveBeenCalledTimes(1);
-    expect(Pool.mock.calls[0][0]).toEqual({ connectionString: url });
-  });
-
-  test('calls Pool with no arguments when DATABASE_URL is unset', () => {
-    const { Pool } = load(undefined);
-    expect(Pool).toHaveBeenCalledTimes(1);
-    expect(Pool.mock.calls[0]).toHaveLength(0);
-  });
-
-  test('calls Pool with no arguments when DATABASE_URL is empty', () => {
-    const { Pool } = load('');
-    expect(Pool).toHaveBeenCalledTimes(1);
-    expect(Pool.mock.calls[0]).toHaveLength(0);
-  });
-
-  test('calls Pool with no arguments when DATABASE_URL is whitespace only', () => {
-    const { Pool } = load('   ');
-    expect(Pool).toHaveBeenCalledTimes(1);
-    expect(Pool.mock.calls[0]).toHaveLength(0);
-  });
-
-  test('calls Pool with no arguments for tab/newline-only value', () => {
-    const { Pool } = load('\t\n ');
-    expect(Pool).toHaveBeenCalledTimes(1);
-    expect(Pool.mock.calls[0]).toHaveLength(0);
-  });
-
-  test.each([undefined, '', '   ', 'not a url', 'postgres://u:p@h:5432/d'])(
-    'requiring the module does not throw for %p',
-    (value) => {
-      expect(() => load(value)).not.toThrow();
-    }
-  );
-
-  test('exports exactly query and transaction', () => {
-    const { db } = load('postgres://u:p@h:5432/d');
     expect(Object.keys(db).sort()).toEqual(['query', 'transaction']);
     expect(typeof db.query).toBe('function');
     expect(typeof db.transaction).toBe('function');
+    consoleSpies.forEach((s) => expect(s).not.toHaveBeenCalled());
+
+    const padded = '  postgres://u:p@h:5432/d  ';
+    ({ Pool } = load(padded));
+    expect(Pool).toHaveBeenCalledTimes(1);
+    expect(Pool.mock.calls[0][0]).toEqual({ connectionString: padded });
   });
 
-  test('does not log the URL when requiring the module', () => {
-    load('postgres://u:secretpw@h:5432/d');
-    consoleSpies.forEach((s) => expect(s).not.toHaveBeenCalled());
+  test('calls Pool with no arguments when DATABASE_URL is unset, empty or blank; requiring the module never throws', () => {
+    for (const value of [undefined, '', '   ', '\t\n ']) {
+      const { Pool } = load(value);
+      expect([value, Pool.mock.calls]).toEqual([value, [[]]]);
+    }
+    for (const value of [undefined, '', '   ', 'not a url', 'postgres://u:p@h:5432/d']) {
+      expect(() => load(value)).not.toThrow();
+    }
   });
 });
 
@@ -113,17 +83,14 @@ describe('db model behaviour', () => {
     expect(res).toEqual({ rows: [1] });
   });
 
-  test('transaction commits and releases the client', async () => {
-    const client = { query: jest.fn().mockResolvedValue({}), release: jest.fn() };
+  test('transaction commits, or rolls back and rethrows unchanged, and always releases the client', async () => {
+    let client = { query: jest.fn().mockResolvedValue({}), release: jest.fn() };
     pool.connect.mockResolvedValue(client);
-    const result = await db.transaction(async () => 'ok');
-    expect(result).toBe('ok');
+    expect(await db.transaction(async () => 'ok')).toBe('ok');
     expect(client.query.mock.calls.map((c) => c[0])).toEqual(['BEGIN', 'COMMIT']);
     expect(client.release).toHaveBeenCalledTimes(1);
-  });
 
-  test('transaction rolls back, rethrows unchanged and releases the client', async () => {
-    const client = { query: jest.fn().mockResolvedValue({}), release: jest.fn() };
+    client = { query: jest.fn().mockResolvedValue({}), release: jest.fn() };
     pool.connect.mockResolvedValue(client);
     const err = new Error('boom');
     await expect(

@@ -38,13 +38,14 @@ function gitInit(root) {
   git(root, 'commit', '-q', '--allow-empty', '-m', 'init');
 }
 
+// In process: starting `node` for every call costs far more than the script itself. Only the tests about the
+// working directory and the default root (below) start a real process.
+const { main } = require(script);
 function run(root, args = [], env = {}) {
-  const r = spawnSync('node', [script, ...args], {
-    cwd: os.tmpdir(),
-    encoding: 'utf8',
-    env: { ...process.env, BACKLOG_ROOT: root, ...env },
-  });
-  return { code: r.status, out: r.stdout, err: r.stderr };
+  let out = '';
+  let err = '';
+  const code = main(args, { ...process.env, BACKLOG_ROOT: root, ...env }, { out: s => { out += s; }, err: s => { err += s; } });
+  return { code, out, err };
 }
 
 const json = (root, args = []) => JSON.parse(run(root, [...args, '--json']).out);
@@ -90,59 +91,8 @@ describe('require()', () => {
   });
 });
 
-describe('parseIndex', () => {
-  const { parseIndex } = require(script);
-
-  test('accepts markers space, x, X, ! and ~', () => {
-    const items = parseIndex('- [ ] `a` - t\n- [x] `b` - t\n- [X] `c` - t\n- [!] `d` - t\n- [~] `e` - t\n');
-    expect(items.map(i => [i.marker, i.slug])).toEqual([[' ', 'a'], ['x', 'b'], ['X', 'c'], ['!', 'd'], ['~', 'e']]);
-  });
-
-  test('ignores header, blank lines, other markers and lines without a slug', () => {
-    const text = '# Backlog\n\nSome text\n- [-] `skipped` - t\n- [ ] no slug here\n- [ ] `ok` - t\n';
-    expect(parseIndex(text).map(i => i.slug)).toEqual(['ok']);
-  });
-
-  test('keeps duplicate slugs as separate entries', () => {
-    expect(parseIndex('- [ ] `a` - one\n- [x] `a` - two\n')).toHaveLength(2);
-  });
-});
-
-describe('parseTitle', () => {
-  const { parseTitle } = require(script);
-
-  test('Bug: and Feature: prefixes give a lowercase type', () => {
-    expect(parseTitle('Bug: Broken thing')).toMatchObject({ type: 'bug', title: 'Broken thing' });
-    expect(parseTitle('Feature: New thing')).toMatchObject({ type: 'feature', title: 'New thing' });
-  });
-
-  test('prefix is case-insensitive', () => {
-    expect(parseTitle('BUG: x')).toMatchObject({ type: 'bug', title: 'x' });
-    expect(parseTitle('fEaTuRe: y')).toMatchObject({ type: 'feature', title: 'y' });
-  });
-
-  test('old-format text is the whole title with no type', () => {
-    const r = parseTitle('Block inventory transfers');
-    expect(r.type).toBeFalsy();
-    expect(r.title).toBe('Block inventory transfers');
-  });
-
-  test('trailing (blocked: reason) is removed from the title', () => {
-    expect(parseTitle('Bug: Thing (blocked: waiting on infra)')).toMatchObject({
-      type: 'bug',
-      title: 'Thing',
-      blockedReason: 'waiting on infra',
-    });
-  });
-
-  test('long titles are never truncated', () => {
-    const long = 'x'.repeat(300);
-    expect(parseTitle(`Feature: ${long}`).title).toBe(long);
-  });
-});
-
-describe('parseArgs / normalizeStatuses', () => {
-  const { parseArgs, normalizeStatuses } = require(script);
+describe('parsing functions', () => {
+  const { parseIndex, parseTitle, parseArgs, normalizeStatuses } = require(script);
   const thrown = fn => {
     try {
       fn();
@@ -152,28 +102,48 @@ describe('parseArgs / normalizeStatuses', () => {
     return null;
   };
 
-  test('no arguments means all', () => {
-    expect(parseArgs([]).json).toBe(false);
-    expect(normalizeStatuses(parseArgs([]).raw || 'all')).toBeTruthy();
+  test('parseIndex keeps the five markers and duplicate slugs, and ignores every other line', () => {
+    const items = parseIndex('- [ ] `a` - t\n- [x] `b` - t\n- [X] `c` - t\n- [!] `d` - t\n- [~] `e` - t\n');
+    expect(items.map(i => [i.marker, i.slug])).toEqual([[' ', 'a'], ['x', 'b'], ['X', 'c'], ['!', 'd'], ['~', 'e']]);
+
+    const text = '# Backlog\n\nSome text\n- [-] `skipped` - t\n- [ ] no slug here\n- [ ] `ok` - t\n';
+    expect(parseIndex(text).map(i => i.slug)).toEqual(['ok']);
+
+    expect(parseIndex('- [ ] `a` - one\n- [x] `a` - two\n')).toHaveLength(2);
   });
 
-  test('--json is detected in any position', () => {
+  test('parseTitle reads the type prefix and the blocked reason, and never truncates', () => {
+    expect(parseTitle('Bug: Broken thing')).toMatchObject({ type: 'bug', title: 'Broken thing' });
+    expect(parseTitle('Feature: New thing')).toMatchObject({ type: 'feature', title: 'New thing' });
+    expect(parseTitle('BUG: x')).toMatchObject({ type: 'bug', title: 'x' });
+    expect(parseTitle('fEaTuRe: y')).toMatchObject({ type: 'feature', title: 'y' });
+
+    const old = parseTitle('Block inventory transfers');
+    expect(old.type).toBeFalsy();
+    expect(old.title).toBe('Block inventory transfers');
+
+    expect(parseTitle('Bug: Thing (blocked: waiting on infra)')).toMatchObject({
+      type: 'bug',
+      title: 'Thing',
+      blockedReason: 'waiting on infra',
+    });
+
+    const long = 'x'.repeat(300);
+    expect(parseTitle(`Feature: ${long}`).title).toBe(long);
+  });
+
+  test('parseArgs and normalizeStatuses: defaults, --json in any position, usage and unknown-status errors', () => {
+    expect(parseArgs([]).json).toBe(false);
+    expect(normalizeStatuses(parseArgs([]).raw || 'all')).toBeTruthy();
+
     expect(parseArgs(['--json', 'pending']).json).toBe(true);
     expect(parseArgs(['pending', '--json']).json).toBe(true);
     expect(parseArgs(['--status', 'blocked', '--json']).json).toBe(true);
-  });
 
-  test.each([
-    [['pending', '--status', 'blocked']],
-    [['--status']],
-    [['--bogus']],
-    [['pending', 'blocked']],
-  ])('bad usage %j throws code 2 with the usage message', argv => {
-    const e = thrown(() => parseArgs(argv));
-    expect(e).toMatchObject({ code: 2, message: USAGE });
-  });
+    for (const argv of [['pending', '--status', 'blocked'], ['--status'], ['--bogus'], ['pending', 'blocked']]) {
+      expect([argv, thrown(() => parseArgs(argv))]).toEqual([argv, expect.objectContaining({ code: 2, message: USAGE })]);
+    }
 
-  test('unknown and empty list items throw the Unknown status message', () => {
     expect(thrown(() => normalizeStatuses('bogus'))).toMatchObject({ message: unknown('bogus') });
     expect(thrown(() => normalizeStatuses('pending,'))).toMatchObject({ message: unknown('') });
     expect(thrown(() => normalizeStatuses('Pending,BoGuS'))).toMatchObject({ message: unknown('BoGuS') });
@@ -195,87 +165,71 @@ describe('criterion 1: markers and titles', () => {
     '- [-] `other` - Feature: ignored marker',
     '',
   ].join('\n');
-  const root = mkRoot(index);
-  const items = json(root);
-  const by = slug => items.find(i => i.slug === slug);
 
-  test('statuses follow the markers; other markers are ignored', () => {
+  test('statuses follow the markers, the blocked reason moves to the note, duplicates are all listed', () => {
+    const items = json(mkRoot(index));
+    const by = slug => items.find(i => i.slug === slug);
+
+    // other markers are ignored
     expect(items.map(i => [i.slug, i.status])).toEqual([
       ['p', 'pending'], ['c', 'completed'], ['cu', 'completed'], ['b', 'blocked'],
       ['b2', 'blocked'], ['old', 'pending'], ['cx', 'completed'], ['px', 'pending'],
     ]);
-  });
 
-  test('blocked reason goes to the note, not the title', () => {
     expect(by('b')).toMatchObject({ title: 'Blocked one', note: 'waiting on vendor; no brief' });
-  });
-
-  test('[!] without (blocked:) is blocked with only the no brief note', () => {
+    // [!] without (blocked:) has only the no brief note
     expect(by('b2')).toMatchObject({ status: 'blocked', note: 'no brief' });
-  });
 
-  test('(blocked:) on [x] and [ ] keeps the status but still moves the text', () => {
+    // (blocked:) on [x] and [ ] keeps the status but still moves the text
     expect(by('cx')).toMatchObject({ status: 'completed', title: 'Completed with note' });
     expect(by('cx').note).toContain('stale');
     expect(by('px')).toMatchObject({ status: 'pending', title: 'Pending with note' });
     expect(by('px').note).toContain('maybe');
-  });
 
-  test('old-format line parses with the whole text as title', () => {
     expect(by('old')).toMatchObject({ title: 'Old format title without prefix', type: null });
-  });
 
-  test('duplicate slugs are all listed and counted', () => {
-    const r = mkRoot('- [ ] `d` - Bug: one\n- [x] `d` - Bug: two\n');
-    expect(json(r)).toHaveLength(2);
-    expect(run(r).out).toContain('total 2');
+    const dup = mkRoot('- [ ] `d` - Bug: one\n- [x] `d` - Bug: two\n');
+    expect(json(dup)).toHaveLength(2);
+    expect(run(dup).out).toContain('total 2');
   });
 });
 
 describe('criterion 2: in-progress detection', () => {
   const index = '- [ ] `loc` - Bug: a\n- [ ] `rem` - Bug: b\n- [ ] `none` - Bug: c\n- [x] `done` - Bug: d\n- [!] `blk` - Bug: e\n';
 
-  test('local sdlc/<slug> branch makes a [ ] item in-progress; completed and blocked keep status', () => {
-    const root = mkRoot(index);
-    gitInit(root);
-    for (const s of ['loc', 'done', 'blk']) git(root, 'branch', `sdlc/${s}`);
-    const st = Object.fromEntries(json(root).map(i => [i.slug, i.status]));
+  test('a local or remote-tracking sdlc/<slug> branch makes a [ ] item in-progress, in JSON and in the table', () => {
+    // completed and blocked keep their status
+    const local = mkRoot(index);
+    gitInit(local);
+    for (const s of ['loc', 'done', 'blk']) git(local, 'branch', `sdlc/${s}`);
+    const st = Object.fromEntries(json(local).map(i => [i.slug, i.status]));
     expect(st).toEqual({ loc: 'in-progress', rem: 'pending', none: 'pending', done: 'completed', blk: 'blocked' });
+
+    // the table prints it in lowercase and the footer counts it
+    const out = run(local).out;
+    expect(out).toMatch(/^in-progress {2}loc/m);
+    expect(out).toContain('pending 2 · in-progress 1 · blocked 1 · parked 0 · completed 1 · total 5');
+
+    const remote = mkRoot(index);
+    gitInit(remote);
+    git(remote, 'update-ref', 'refs/remotes/origin/sdlc/rem', 'HEAD');
+    git(remote, 'update-ref', 'refs/remotes/origin/sdlc/done', 'HEAD');
+    const rst = Object.fromEntries(json(remote).map(i => [i.slug, i.status]));
+    expect(rst.rem).toBe('in-progress');
+    expect(rst.done).toBe('completed');
   });
 
-  test('remote-tracking origin/sdlc/<slug> also makes it in-progress', () => {
-    const root = mkRoot(index);
-    gitInit(root);
-    git(root, 'update-ref', 'refs/remotes/origin/sdlc/rem', 'HEAD');
-    git(root, 'update-ref', 'refs/remotes/origin/sdlc/done', 'HEAD');
-    const st = Object.fromEntries(json(root).map(i => [i.slug, i.status]));
-    expect(st.rem).toBe('in-progress');
-    expect(st.done).toBe('completed');
-  });
-
-  test('a similarly named branch does not match', () => {
+  test('a similarly named branch does not match, and outside a git repository nothing is in-progress', () => {
     const root = mkRoot('- [ ] `abc` - Bug: a\n');
     gitInit(root);
     git(root, 'branch', 'sdlc/abcd');
     git(root, 'branch', 'feature/abc');
     expect(json(root)[0].status).toBe('pending');
-  });
 
-  test('outside a git repository nothing is in-progress and stderr is empty', () => {
-    const root = mkRoot(index);
-    const r = run(root, ['--json']);
+    const r = run(mkRoot(index), ['--json']);
     expect(r.code).toBe(0);
     expect(r.err).toBe('');
     expect(JSON.parse(r.out).filter(i => i.status === 'in-progress')).toEqual([]);
-  });
-
-  test('table prints in-progress in lowercase and the footer counts it', () => {
-    const root = mkRoot(index);
-    gitInit(root);
-    git(root, 'branch', 'sdlc/loc');
-    const out = run(root).out;
-    expect(out).toMatch(/^in-progress {2}loc/m);
-    expect(out).toContain('pending 2 · in-progress 1 · blocked 1 · parked 0 · completed 1 · total 5');
   });
 });
 
@@ -287,72 +241,54 @@ describe('criterion 3: filters and arguments', () => {
     gitInit(root);
     git(root, 'branch', 'sdlc/ip');
   });
-  const slugs = args => json(root, args).map(i => i.slug);
 
-  test.each([
-    [[], ['p', 'c', 'b', 'ip']],
-    [['all'], ['p', 'c', 'b', 'ip']],
-    [['pending'], ['p']],
-    [['in-progress'], ['ip']],
-    [['blocked'], ['b']],
-    [['completed'], ['c']],
-    [['pending,in-progress'], ['p', 'ip']],
-    [['blocked,completed'], ['c', 'b']],
-    [['--status', 'pending'], ['p']],
-    [['--status', 'pending,blocked'], ['p', 'b']],
-    [['open'], ['p']],
-    [['done'], ['c']],
-    [['PENDING'], ['p']],
-    [['Open,DONE'], ['p', 'c']],
-    [['pending', '--json'], ['p']],
-  ])('filter %j', (args, expected) => {
-    expect(slugs(args.filter(a => a !== '--json'))).toEqual(expected);
-  });
+  test('every filter form selects its items, in index order', () => {
+    const cases = [
+      [[], ['p', 'c', 'b', 'ip']],
+      [['all'], ['p', 'c', 'b', 'ip']],
+      [['pending'], ['p']],
+      [['in-progress'], ['ip']],
+      [['blocked'], ['b']],
+      [['completed'], ['c']],
+      [['pending,in-progress'], ['p', 'ip']],
+      [['blocked,completed'], ['c', 'b']],
+      [['--status', 'pending'], ['p']],
+      [['--status', 'pending,blocked'], ['p', 'b']],
+      [['open'], ['p']],
+      [['done'], ['c']],
+      [['PENDING'], ['p']],
+      [['Open,DONE'], ['p', 'c']],
+    ];
+    for (const [args, expected] of cases) {
+      expect([args, json(root, args).map(i => i.slug)]).toEqual([args, expected]);
+    }
 
-  test('table mode honours the filter and keeps index order', () => {
+    // table mode honours the filter too
     const lines = run(root, ['pending,completed']).out.split('\n');
     const rows = lines.slice(1, lines.indexOf(''));
     expect(rows.map(l => l.split(/\s+/)[1])).toEqual(['p', 'c']);
   });
 
-  test.each([['bogus'], ['pending,'], [',pending'], ['pending,,blocked'], ['']])(
-    'unknown status %j exits 2 with the exact message and empty stdout',
-    value => {
+  test('an unknown status exits 2 with the exact message and empty stdout', () => {
+    const cases = [['bogus', 'bogus'], ['pending,', ''], [',pending', ''], ['pending,,blocked', ''], ['', ''], ['BoGuS', 'BoGuS']];
+    for (const [value, offending] of cases) {
       const r = run(root, [value]);
-      expect(r.code).toBe(2);
-      expect(r.out).toBe('');
-      const offending = ['pending,', ',pending', 'pending,,blocked'].includes(value) ? '' : value;
-      expect(r.err.trim()).toBe(unknown(offending));
+      expect([value, r.code, r.out, r.err.trim()]).toEqual([value, 2, '', unknown(offending)]);
     }
-  );
 
-  test('unknown value keeps the case as typed', () => {
-    expect(run(root, ['BoGuS']).err.trim()).toBe(unknown('BoGuS'));
-  });
-
-  test('unknown status with --json still exits 2 and prints nothing to stdout', () => {
     const r = run(root, ['nope', '--json']);
     expect(r.code).toBe(2);
     expect(r.out).toBe('');
   });
 
-  test.each([
-    [['pending', '--status', 'blocked']],
-    [['--status']],
-    [['--status', '--json']],
-    [['--bogus']],
-    [['-x']],
-    [['pending', 'blocked']],
-  ])('bad usage %j exits 2 with the usage message', args => {
-    const r = run(root, args);
-    expect(r.code).toBe(2);
-    expect(r.out).toBe('');
-    expect(r.err.trim()).toBe(USAGE);
-  });
+  test('bad usage exits 2 with the usage message, before the index is read', () => {
+    const cases = [['pending', '--status', 'blocked'], ['--status'], ['--status', '--json'], ['--bogus'], ['-x'], ['pending', 'blocked']];
+    for (const args of cases) {
+      const r = run(root, args);
+      expect([args, r.code, r.out, r.err.trim()]).toEqual([args, 2, '', USAGE]);
+    }
 
-  test('argument errors are checked before the index is read', () => {
-    const noIndex = mkRoot(null);
-    const r = run(noIndex, ['bogus']);
+    const r = run(mkRoot(null), ['bogus']);
     expect(r.code).toBe(2);
     expect(r.err).not.toContain('not found');
   });
@@ -368,76 +304,65 @@ describe('criterion 4: TYPE and PRI', () => {
     '- [ ] `badpri` - old format five',
     '',
   ].join('\n');
-  const root = mkRoot(index, {
-    pfx: brief('feature', 'P0'),
-    fromBrief: brief('feature', 'P1 (blocks use)'),
-    upper: brief('Bug', 'P3'),
-    nopri: '# Brief\n\nType: bug\n',
-    badpri: brief('bug', 'urgent'),
-  });
-  const by = Object.fromEntries(json(root).map(i => [i.slug, i]));
 
-  test('prefix beats the brief Type line', () => {
+  test('type comes from the prefix, then the brief; priority is the P0-P3 token; absent values are null and "-"', () => {
+    const root = mkRoot(index, {
+      pfx: brief('feature', 'P0'),
+      fromBrief: brief('feature', 'P1 (blocks use)'),
+      upper: brief('Bug', 'P3'),
+      nopri: '# Brief\n\nType: bug\n',
+      badpri: brief('bug', 'urgent'),
+    });
+    const by = Object.fromEntries(json(root).map(i => [i.slug, i]));
+
+    // the prefix beats the brief Type line; the brief Type is lowercased
     expect(by.pfx.type).toBe('bug');
-  });
-
-  test('brief Type is used when there is no prefix, lowercased', () => {
     expect(by.fromBrief.type).toBe('feature');
     expect(by.upper.type).toBe('bug');
-  });
 
-  test('priority is the P0-P3 token of the brief Priority line', () => {
     expect(by.fromBrief.priority).toBe('P1');
     expect(by.pfx.priority).toBe('P0');
     expect(by.upper.priority).toBe('P3');
-  });
 
-  test('absent values are null in JSON', () => {
     expect(by.nobrief).toMatchObject({ type: null, priority: null, hasBrief: false });
     expect(by.nopri.priority).toBeNull();
     expect(by.badpri.priority).toBeNull();
-  });
 
-  test('absent values print "-" in the table', () => {
     const row = run(root).out.split('\n').find(l => l.startsWith('pending') && l.includes('nobrief'));
     expect(row.split(/\s+/).slice(1, 4)).toEqual(['nobrief', '-', '-']);
   });
 });
 
 describe('criterion 5: footer, Not in index, no brief, empty result', () => {
-  const index = '- [ ] `a` - Bug: has brief\n- [!] `b` - Bug: blocked (blocked: waiting)\n- [x] `c` - Bug: done\n';
-  const root = mkRoot(index, {
-    a: brief('bug', 'P2'),
-    c: brief('bug', 'P2'),
-    zeta: brief('bug', 'P2'),
-    alpha: brief('feature', 'P1'),
-    emptydir: null,
-  });
-  fs.writeFileSync(path.join(root, 'Docs', 'backlog', 'loose-file.md'), 'x');
+  const one = () => mkRoot('- [ ] `a` - Bug: x\n', { a: brief('bug', 'P1') });
 
-  test('footer counts ignore the filter', () => {
-    const out = run(root, ['blocked']).out;
-    expect(out).toContain('pending 1 · in-progress 0 · blocked 1 · parked 0 · completed 1 · total 3');
-  });
+  test('the footer ignores the filter and follows one blank line; Not in index is the sorted last line', () => {
+    const index = '- [ ] `a` - Bug: has brief\n- [!] `b` - Bug: blocked (blocked: waiting)\n- [x] `c` - Bug: done\n';
+    const root = mkRoot(index, {
+      a: brief('bug', 'P2'),
+      c: brief('bug', 'P2'),
+      zeta: brief('bug', 'P2'),
+      alpha: brief('feature', 'P1'),
+      emptydir: null,
+    });
+    fs.writeFileSync(path.join(root, 'Docs', 'backlog', 'loose-file.md'), 'x');
 
-  test('Not in index lists brief folders without an index line, sorted', () => {
+    expect(run(root, ['blocked']).out).toContain('pending 1 · in-progress 0 · blocked 1 · parked 0 · completed 1 · total 3');
+
     const out = run(root).out;
     expect(out).toContain('Not in index: alpha, zeta');
     expect(out).not.toContain('emptydir');
     expect(out).not.toContain('loose-file');
-  });
 
-  test('Not in index line is absent when empty', () => {
-    expect(run(mkRoot('- [ ] `a` - Bug: x\n', { a: brief('bug', 'P1') })).out).not.toContain('Not in index');
-  });
-
-  test('footer follows one blank line; Not in index is the last line', () => {
-    const lines = run(root).out.replace(/\n$/, '').split('\n');
+    const lines = out.replace(/\n$/, '').split('\n');
     const blank = lines.indexOf('');
     expect(blank).toBeGreaterThan(0);
     expect(lines[blank + 1]).toMatch(/^pending \d+ · in-progress \d+ · blocked \d+ · parked \d+ · completed \d+ · total \d+$/);
     expect(lines[blank + 2]).toBe('Not in index: alpha, zeta');
     expect(lines).toHaveLength(blank + 3);
+
+    // the line is absent when there is nothing to list
+    expect(run(one()).out).not.toContain('Not in index');
   });
 
   test('missing brief shows "no brief", joined with a blocked reason', () => {
@@ -451,62 +376,48 @@ describe('criterion 5: footer, Not in index, no brief, empty result', () => {
     expect(out).toMatch(/waiting; no brief$/m);
   });
 
-  test('empty result prints the No items line and the footer, exit 0', () => {
-    const r = run(mkRoot('- [ ] `a` - Bug: x\n', { a: brief('bug', 'P1') }), ['blocked']);
+  test('an empty result prints the No items line with the filter as typed, and the footer, exit 0', () => {
+    const r = run(one(), ['blocked']);
     expect(r.code).toBe(0);
     expect(r.out).toBe(
       'No items with status: blocked\n\npending 1 · in-progress 0 · blocked 0 · parked 0 · completed 0 · total 1\n'
     );
-  });
 
-  test('empty-result message echoes the filter as typed', () => {
-    const r = run(mkRoot('- [ ] `a` - Bug: x\n', { a: brief('bug', 'P1') }), ['Blocked,DONE']);
-    expect(r.out.split('\n')[0]).toBe('No items with status: Blocked,DONE');
-  });
+    expect(run(one(), ['Blocked,DONE']).out.split('\n')[0]).toBe('No items with status: Blocked,DONE');
 
-  test('empty index prints no items for the default filter', () => {
-    const r = run(mkRoot('# Backlog\n'));
-    expect(r.code).toBe(0);
-    expect(r.out).toContain('No items with status: all');
-    expect(r.out).toContain('total 0');
+    const empty = run(mkRoot('# Backlog\n'));
+    expect(empty.code).toBe(0);
+    expect(empty.out).toContain('No items with status: all');
+    expect(empty.out).toContain('total 0');
   });
 });
 
 describe('table layout', () => {
-  const index = '- [ ] `a` - Bug: Fix\n- [x] `bb` - Feature: Done thing\n- [!] `c` - Bug: Stuck (blocked: waiting)\n';
-  const root = mkRoot(index, {
-    a: brief('bug', 'P1 (blocks use)'),
-    bb: brief('feature', 'P2'),
-    c: brief('bug', 'P0'),
-  });
-  const out = run(root).out;
-  const lines = out.split('\n');
+  test('six padded columns, no trailing whitespace, colours or borders, one final newline, long titles kept', () => {
+    const index = '- [ ] `a` - Bug: Fix\n- [x] `bb` - Feature: Done thing\n- [!] `c` - Bug: Stuck (blocked: waiting)\n';
+    const root = mkRoot(index, {
+      a: brief('bug', 'P1 (blocks use)'),
+      bb: brief('feature', 'P2'),
+      c: brief('bug', 'P0'),
+    });
+    const out = run(root).out;
+    const lines = out.split('\n');
 
-  test('header row names the six columns', () => {
     expect(lines[0].split(/\s{2,}/)).toEqual(['STATUS', 'SLUG', 'TYPE', 'PRI', 'TITLE', 'NOTE']);
-  });
-
-  test('exact padded layout', () => {
     expect(lines.slice(0, 4)).toEqual([
       'STATUS     SLUG  TYPE     PRI  TITLE       NOTE',
       'pending    a     bug      P1   Fix',
       'completed  bb    feature  P2   Done thing',
       'blocked    c     bug      P0   Stuck       waiting',
     ]);
-  });
 
-  test('no trailing whitespace, no colours, no border lines', () => {
     for (const l of lines) expect(l).toBe(l.trimEnd());
     expect(out).not.toContain(`${String.fromCharCode(27)}[`);
     expect(out).not.toMatch(/^[-=+|]{3,}/m);
-  });
 
-  test('output ends with a single newline', () => {
     expect(out.endsWith('\n')).toBe(true);
     expect(out.endsWith('\n\n')).toBe(false);
-  });
 
-  test('long titles are not truncated', () => {
     const long = 'word '.repeat(60).trim();
     const r = mkRoot(`- [ ] \`a\` - Feature: ${long}\n`, { a: brief('feature', 'P1') });
     expect(run(r).out).toContain(long);
@@ -514,10 +425,10 @@ describe('table layout', () => {
 });
 
 describe('criterion 6: JSON output and missing index', () => {
-  const index = '- [ ] `a` - Bug: One\n- [!] `b` - Feature: Two (blocked: why)\n';
-  const root = mkRoot(index, { a: brief('bug', 'P1 (x)') });
+  test('--json prints only an array of seven-field objects, with null and "" for absent values', () => {
+    const index = '- [ ] `a` - Bug: One\n- [!] `b` - Feature: Two (blocked: why)\n';
+    const root = mkRoot(index, { a: brief('bug', 'P1 (x)') });
 
-  test('stdout parses as an array of objects with exactly the seven fields', () => {
     const r = run(root, ['--json']);
     expect(r.code).toBe(0);
     const arr = JSON.parse(r.out);
@@ -528,39 +439,28 @@ describe('criterion 6: JSON output and missing index', () => {
       );
       expect(typeof o.hasBrief).toBe('boolean');
     }
-  });
-
-  test('values for a complete item', () => {
-    expect(json(root)[0]).toEqual({
+    expect(arr[0]).toEqual({
       status: 'pending', slug: 'a', type: 'bug', priority: 'P1', title: 'One', note: '', hasBrief: true,
     });
-  });
-
-  test('values for an item with absent fields use null and ""', () => {
-    expect(json(root)[1]).toEqual({
+    expect(arr[1]).toEqual({
       status: 'blocked', slug: 'b', type: 'feature', priority: null, title: 'Two', note: 'why; no brief', hasBrief: false,
     });
-  });
 
-  test('no footer and no extra text', () => {
-    const out = run(root, ['--json']).out;
-    expect(out).not.toContain('total');
-    expect(out).not.toContain('Not in index');
-    expect(out.trim().startsWith('[')).toBe(true);
-    expect(out.trim().endsWith(']')).toBe(true);
-  });
+    // no footer and no extra text
+    expect(r.out).not.toContain('total');
+    expect(r.out).not.toContain('Not in index');
+    expect(r.out.trim().startsWith('[')).toBe(true);
+    expect(r.out.trim().endsWith(']')).toBe(true);
 
-  test('empty match is [] with no No items line', () => {
-    const r = run(root, ['completed', '--json']);
-    expect(r.code).toBe(0);
-    expect(JSON.parse(r.out)).toEqual([]);
-    expect(r.out).not.toContain('No items');
-  });
+    // an empty match is [] with no No items line
+    const none = run(root, ['completed', '--json']);
+    expect(none.code).toBe(0);
+    expect(JSON.parse(none.out)).toEqual([]);
+    expect(none.out).not.toContain('No items');
 
-  test('--json works with --status, in any position', () => {
+    // with --status, in any position
     expect(json(root, ['--status', 'blocked']).map(i => i.slug)).toEqual(['b']);
-    const r = run(root, ['--json', '--status', 'blocked']);
-    expect(JSON.parse(r.out).map(i => i.slug)).toEqual(['b']);
+    expect(JSON.parse(run(root, ['--json', '--status', 'blocked']).out).map(i => i.slug)).toEqual(['b']);
   });
 
   test('missing index exits 1 with the message and empty stdout', () => {
@@ -574,7 +474,7 @@ describe('criterion 6: JSON output and missing index', () => {
 });
 
 describe('root resolution', () => {
-  test('works from any working directory using BACKLOG_ROOT', () => {
+  test('uses BACKLOG_ROOT from any working directory, and the repo root when it is unset', () => {
     const root = mkRoot('- [ ] `a` - Bug: x\n', { a: brief('bug', 'P1') });
     const r = spawnSync('node', [script, '--json'], {
       cwd: '/',
@@ -583,14 +483,12 @@ describe('root resolution', () => {
     });
     expect(r.status).toBe(0);
     expect(JSON.parse(r.stdout)[0].slug).toBe('a');
-  });
 
-  test('defaults to the repo root when BACKLOG_ROOT is unset', () => {
     const env = { ...process.env };
     delete env.BACKLOG_ROOT;
-    const r = spawnSync('node', [script, '--json'], { cwd: os.tmpdir(), encoding: 'utf8', env });
-    expect(r.status).toBe(0);
-    expect(Array.isArray(JSON.parse(r.stdout))).toBe(true);
+    const d = spawnSync('node', [script, '--json'], { cwd: os.tmpdir(), encoding: 'utf8', env });
+    expect(d.status).toBe(0);
+    expect(Array.isArray(JSON.parse(d.stdout))).toBe(true);
   });
 });
 
@@ -622,31 +520,23 @@ describe('parked status', () => {
     '- [!] `b` - Bug: stuck (blocked: waiting)',
     '',
   ].join('\n');
-  const mk = () => mkRoot(index, { p: brief('bug', 'P1'), k: brief('feature', 'P3'), k2: brief('feature', 'P3'), c: brief('bug', 'P2'), b: brief('bug', 'P2') });
-  const by = (root, slug) => json(root).find(i => i.slug === slug);
 
-  test('[~] is parked, and the parked reason goes to the note, not the title', () => {
-    const r = mk();
-    expect(by(r, 'k')).toMatchObject({ status: 'parked', title: 'Parked one', note: 'not needed yet' });
-    expect(by(r, 'k2')).toMatchObject({ status: 'parked', note: '' });
-  });
+  test('[~] is parked: reason in the note, a filter value, counted in the footer, never in-progress', () => {
+    const r = mkRoot(index, { p: brief('bug', 'P1'), k: brief('feature', 'P3'), k2: brief('feature', 'P3'), c: brief('bug', 'P2'), b: brief('bug', 'P2') });
+    const by = slug => json(r).find(i => i.slug === slug);
 
-  test('a parked item with an sdlc/<slug> branch stays parked, not in-progress', () => {
-    const r = mk();
-    gitInit(r);
-    git(r, 'branch', 'sdlc/k');
-    expect(by(r, 'k').status).toBe('parked');
-  });
+    expect(by('k')).toMatchObject({ status: 'parked', title: 'Parked one', note: 'not needed yet' });
+    expect(by('k2')).toMatchObject({ status: 'parked', note: '' });
 
-  test('parked is a filter value, listed by all, and counted in the footer', () => {
-    const r = mk();
     expect(json(r, ['parked']).map(i => i.slug)).toEqual(['k', 'k2']);
     expect(json(r, ['pending,parked']).map(i => i.slug)).toEqual(['p', 'k', 'k2']);
     expect(json(r, ['all'])).toHaveLength(5);
     expect(run(r, ['blocked']).out).toContain('pending 1 · in-progress 0 · blocked 1 · parked 2 · completed 1 · total 5');
-  });
+    expect(run(r, ['parked']).out).toMatch(/^parked +k /m);
 
-  test('the table prints parked in lowercase', () => {
-    expect(run(mk(), ['parked']).out).toMatch(/^parked +k /m);
+    // an sdlc/<slug> branch does not move it
+    gitInit(r);
+    git(r, 'branch', 'sdlc/k');
+    expect(by('k').status).toBe('parked');
   });
 });

@@ -31,47 +31,37 @@ echo "agent returned"`;
 }
 
 const OK = JSON.stringify({ type: 'result', subtype: 'success', result: 'all done', permission_denials: [] });
-describe('agent() permission handling', () => {
-  test('a clean run asks for JSON output, keeps the usual log, and returns', () => {
-    const { r, args, log } = runAgent(OK);
+const REFUSED = JSON.stringify({ type: 'result', subtype: 'success', result: 'x', permission_denials: [{ tool_name: 'Bash', tool_use_id: 't', tool_input: { command: 'git push origin main' } }] });
 
+describe('agent() permission handling', () => {
+  test('a clean run asks for JSON output, keeps the usual log, and returns; an end without success is kept in the log', () => {
+    const { r, args, log } = runAgent(OK);
     expect(r.status).toBe(0);
     expect(r.stdout).toContain('agent returned');
     expect(args).toContain('--output-format json');
     expect(args).toContain('--permission-mode acceptEdits');
     expect(log).toBe('all done\n');
+
+    expect(runAgent(OK.replace('success', 'error_max_turns')).log).toContain('[agent ended: error_max_turns]');
   });
 
-  test('a refused action stops the run with exit 2 and records the ask', () => {
-    const reply = JSON.stringify({ type: 'result', subtype: 'success', result: 'x', permission_denials: [{ tool_name: 'Bash', tool_use_id: 't', tool_input: { command: 'git push origin main' } }] });
-    const { r, state } = runAgent(reply);
-
+  test('a refused action stops the run with exit 2 and records the ask; an allowed rule or protected path lets it run', () => {
+    const { r, state } = runAgent(REFUSED);
     expect(r.status).toBe(2);
     expect(r.stdout).not.toContain('agent returned');
     expect(r.stdout).toContain('was refused 1 action(s)');
     expect(state.pending).toHaveLength(1);
     expect(state.pending[0]).toMatchObject({ stage: 'implement', tool: 'Bash', rule: 'Bash(git push:*)' });
-  });
 
-  test('a rule the developer allowed is passed to claude, and a decided ask no longer stops the run', () => {
-    const reply = JSON.stringify({ type: 'result', subtype: 'success', result: 'x', permission_denials: [{ tool_name: 'Bash', tool_use_id: 't', tool_input: { command: 'git push origin main' } }] });
-    const { r, args } = runAgent(reply, { state: { pending: [], allow: ['Bash(git push:*)'], bypass: [], denied: [] } });
+    // a rule the developer allowed is passed to claude, and a decided ask no longer stops the run
+    const allowed = runAgent(REFUSED, { state: { pending: [], allow: ['Bash(git push:*)'], bypass: [], denied: [] } });
+    expect(allowed.r.status).toBe(0);
+    expect(allowed.args).toContain('Bash(git push:*)');
 
-    expect(r.status).toBe(0);
-    expect(args).toContain('Bash(git push:*)');
-  });
-
-  test('a protected path the developer allowed runs the stage with the checks off', () => {
-    const { r, args } = runAgent(OK, { state: { pending: [], allow: [], bypass: ['implement'], denied: [] } });
-
-    expect(r.status).toBe(0);
-    expect(args).toContain('--permission-mode bypassPermissions');
-    expect(r.stdout).toContain('permission checks are off for this stage');
-  });
-
-  test('an agent that ended without success keeps that in its log', () => {
-    const ended = runAgent(OK.replace('success', 'error_max_turns'));
-
-    expect(ended.log).toContain('[agent ended: error_max_turns]');
+    // a protected path the developer allowed runs the stage with the checks off
+    const bypass = runAgent(OK, { state: { pending: [], allow: [], bypass: ['implement'], denied: [] } });
+    expect(bypass.r.status).toBe(0);
+    expect(bypass.args).toContain('--permission-mode bypassPermissions');
+    expect(bypass.r.stdout).toContain('permission checks are off for this stage');
   });
 });
