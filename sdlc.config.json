@@ -14,7 +14,7 @@
   "lint": "npm run lint",
   "worktree": { "base": "../{repo}-sdlc", "link": ["server/node_modules", "node_modules", "graft", ".env"] },
   "git": { "branchPrefix": "sdlc/", "conflictSuffixStart": 10001 },
-  "agent": { "allowCommands": ["npm run generate-spec"], "codeSearch": "graft" },
+  "agent": { "allowCommands": ["npm run generate-spec"], "codeSearch": "auto" },
   "ship": { "envExample": true, "maxFileBytes": 1048576 },
   "ui": { "timezone": "Asia/Dubai" }
 }

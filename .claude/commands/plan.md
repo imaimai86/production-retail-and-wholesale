@@ -1,2 +1,8 @@
+---
+description: Write the technical plan for a backlog item (uses graft when it is available, else Grep and Glob)
+argument-hint: <slug>
+allowed-tools: Bash(node scripts/sdlc-config.cjs skill:*)
+---
 Slug: $ARGUMENTS
-Read `Docs/backlog/$ARGUMENTS/specs-1.md`. Use Graft to find affected code, then write the technical plan to `Docs/backlog/$ARGUMENTS/plan-1.md`. No source edits.
+
+!`node scripts/sdlc-config.cjs skill plan`

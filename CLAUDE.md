@@ -72,11 +72,10 @@ ADMIN_TOKEN=secret
   - Creating a PR, pushing to it and watching its CI do not need this confirmation; only the merge does.
 
 ## Graft
-Graft must be installed for the SDLC workflow (the Plan stage and `/plan` use it).
-- Before running `./scripts/sdlc.sh` or any SDLC stage, check `command -v graft` and `graft --version`.
-- If graft is missing, stop and tell the user to follow "Graft setup" in `README.md` (`npm install -g @nanonets/graft`, then `graft build`). Do not guess file locations without it.
-- If `graft/` is missing, or `graft check` reports it stale, run `graft build` first.
-- Prefer graft (`graft ask`, `graft grep`, `graft callers`, or the graft MCP tools) over grep and full-file reads when locating code.
+Graft is recommended for the SDLC workflow, not required. It is used when it is installed and the repo has its `graft/` index; otherwise the Plan stage, `/plan` and `/triage` search with Grep and Glob, and the pipeline prints a note. `node scripts/sdlc-config.cjs code-search` prints which one applies; `"agent": { "codeSearch": "none" }` in `sdlc.config.json` turns graft off.
+- To get it, follow "Graft setup" in `README.md` (`npm install -g @nanonets/graft`, then `graft build`). If `graft/` is missing, or `graft check` reports it stale, run `graft build`.
+- When graft is available, prefer it (`graft ask`, `graft grep`, `graft callers`, or the graft MCP tools) over grep and full-file reads when locating code.
+- Skills that search code have a graft version and a Grep/Glob version: their text is in `scripts/skills/<name>.md` (the commands in `.claude/commands/` print it with `node scripts/sdlc-config.cjs skill <name>`) and pipeline prompts are in `scripts/prompts/`; `{{CODE_SEARCH}}` in both is filled from `scripts/prompts/parts/code-search.graft.md` or `code-search.md`.
 
 ## Implementation plan
 1. **Scope and requirements**

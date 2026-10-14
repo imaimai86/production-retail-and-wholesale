@@ -3,6 +3,8 @@
 //   node scripts/sdlc-config.cjs detect [dir] [--json]   the test suites detection finds; writes nothing
 //   node scripts/sdlc-config.cjs show   [dir]            the resolved settings as JSON (file, then detection, then defaults)
 //   node scripts/sdlc-config.cjs env    [dir]            the resolved settings as shell assignments (SDLC_*), for the scripts
+//   node scripts/sdlc-config.cjs code-search [dir]       "graft" or "none": graft when installed and indexed (recommended, not required)
+//   node scripts/sdlc-config.cjs skill <name> [dir]      a skill from scripts/skills/ in its graft or Grep/Glob version
 //   node scripts/sdlc-config.cjs suggest [dir] [--test-dir <folder>] [--json]  for a project without tests: supported test frameworks, best first; writes nothing
 //   node scripts/sdlc-config.cjs init-tests [dir] [--test-dir <folder>] [--language javascript|typescript] [--runner <name>] [--yes] [--dry-run] [--no-install]
 //        --test-dir: where the tests go, from [dir] (e.g. __tests__, server/__tests__, client/_test); the package set up is the
@@ -558,6 +560,34 @@ function validate(value, schema, where, errors) {
 }
 
 const graftOnPath = env => spawnSync('sh', ['-c', 'command -v graft'], { encoding: 'utf8', env }).status === 0;
+// graft is recommended, not required: it is used when it is installed and the project has its index (the graft/ folder).
+const graftAvailable = (root, env = process.env) => exists(path.join(root, 'graft')) && graftOnPath(env);
+const GRAFT_HINT = 'graft (a prebuilt code graph) is recommended for code search: npm install -g @nanonets/graft, then graft build';
+
+// The code search the agents use: "none" when the setting says so, else graft when it is available, else "none".
+// A setting of "graft" that cannot be met falls back to "none" with a warning.
+function codeSearchFor(root, setting = 'auto', env = process.env) {
+  if (setting === 'none') return { codeSearch: 'none', warning: null };
+  if (graftAvailable(root, env)) return { codeSearch: 'graft', warning: null };
+  const why = graftOnPath(env) ? 'the project has no graft/ index (run graft build)' : 'graft is not installed';
+  return { codeSearch: 'none', warning: `${setting === 'graft' ? 'agent.codeSearch is "graft" but ' : ''}${why}; code search uses Grep and Glob. ${GRAFT_HINT}` };
+}
+
+// A skill or prompt template with {{CODE_SEARCH}} filled from parts/code-search.graft.md or parts/code-search.md.
+const PARTS_DIR = path.join(__dirname, 'prompts', 'parts');
+const SKILLS_DIR = path.join(__dirname, 'skills');
+function renderTemplate(text, codeSearch, partsDir = PARTS_DIR) {
+  const part = fs.readFileSync(path.join(partsDir, `code-search${codeSearch === 'graft' ? '.graft' : ''}.md`), 'utf8').trim();
+  return text.split('{{CODE_SEARCH}}').join(part);
+}
+// The skill <name> (skills/<name>.md) in the version for this project: with graft when it is available, else without.
+function renderSkill(name, root, { env = process.env, skillsDir = SKILLS_DIR, partsDir = PARTS_DIR } = {}) {
+  if (!/^[a-z0-9-]+$/.test(name) || !exists(path.join(skillsDir, `${name}.md`))) return null;
+  let setting = 'auto';
+  try { setting = (readJson(path.join(root, CONFIG_FILE)).agent || {}).codeSearch || 'auto'; } catch { /* no or unreadable file */ }
+  const { codeSearch } = codeSearchFor(root, setting, env);
+  return renderTemplate(fs.readFileSync(path.join(skillsDir, `${name}.md`), 'utf8'), codeSearch, partsDir);
+}
 const systemTimezone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 const validTimezone = tz => { try { new Intl.DateTimeFormat('en', { timeZone: tz }); return true; } catch { return false; } };
 
@@ -628,7 +658,8 @@ function resolve(root, { env = process.env } = {}) {
 
   const ui = { timezone: (file.ui && file.ui.timezone) || systemTimezone() };
   if (!validTimezone(ui.timezone)) errors.push(`ui.timezone: unknown time zone "${ui.timezone}"`);
-  const codeSearch = (file.agent && file.agent.codeSearch) || 'auto';
+  const search = codeSearchFor(root, (file.agent && file.agent.codeSearch) || 'auto', env);
+  if (search.warning) warnings.push(search.warning);
   const defaultLinks = [...new Set([...suites.map(s => s.dir === '.' ? 'node_modules' : `${s.dir}/node_modules`), 'node_modules'])];
 
   const config = {
@@ -648,7 +679,7 @@ function resolve(root, { env = process.env } = {}) {
     },
     agent: {
       allowCommands: (file.agent && file.agent.allowCommands) || [],
-      codeSearch: codeSearch === 'auto' ? (graftOnPath(env) ? 'graft' : 'none') : codeSearch,
+      codeSearch: search.codeSearch,
     },
     ship: {
       envExample: file.ship && typeof file.ship.envExample === 'boolean' ? file.ship.envExample : true,
@@ -725,7 +756,7 @@ function shellEnv(config) {
   return Object.entries(lines).map(([k, v]) => `${k}=${v}`).join('\n') + '\n';
 }
 
-module.exports = { CONFIG_FILE, RUNNERS, detect, detectPackage, suggest, setupPlan, provision, locateTestDir, packagesBelow, resolve, validate, testDir, allowedTools, worktreeBase, shellEnv };
+module.exports = { CONFIG_FILE, RUNNERS, codeSearchFor, renderTemplate, renderSkill, graftAvailable, detect, detectPackage, suggest, setupPlan, provision, locateTestDir, packagesBelow, resolve, validate, testDir, allowedTools, worktreeBase, shellEnv };
 
 // The project root for <dir>: the top of its git work tree, else <dir> itself.
 function findRoot(dir) {
@@ -850,6 +881,24 @@ if (require.main === module) {
       + '       sdlc-config.cjs init-tests [dir] [--test-dir <folder>] [--language javascript|typescript] [--runner <name>] [--yes] [--dry-run] [--no-install]');
     process.exit(2);
   };
+  if (cmd === 'skill') {
+    // skill <name> [dir]: the skill text for the project in dir (default: the current folder). Used by .claude/commands stubs.
+    const [, name, at] = args.filter((a, i) => !a.startsWith('--') && !valueAt.has(i));
+    const text = name ? renderSkill(name, path.resolve(at || '.')) : null;
+    if (text === null) { console.error(`ERROR: no skill "${name || ''}" (skills: ${fs.readdirSync(SKILLS_DIR).map(f => f.replace(/\.md$/, '')).join(', ')})`); process.exit(2); }
+    process.stdout.write(text);
+    process.exit(0);
+  }
+  if (cmd === 'code-search') {
+    // code-search [dir]: "graft" or "none" for the project in dir; never fails (a broken settings file means "auto").
+    let setting = 'auto';
+    try { setting = (readJson(path.join(dir, CONFIG_FILE)).agent || {}).codeSearch || 'auto'; } catch { /* none */ }
+    if (!['graft', 'none', 'auto'].includes(setting)) setting = 'auto';
+    const r = codeSearchFor(dir, setting);
+    if (r.warning) console.error(`NOTE: ${r.warning}`);
+    console.log(r.codeSearch);
+    process.exit(0);
+  }
   if (!['detect', 'show', 'env', 'suggest', 'init-tests'].includes(cmd) || runnerArg === '' || testDirArg === '' || (languageArg !== undefined && !LANGUAGES.includes(languageArg))) usage();
   if (!exists(dir)) { console.error(`ERROR: ${dir} does not exist`); process.exit(2); }
 
