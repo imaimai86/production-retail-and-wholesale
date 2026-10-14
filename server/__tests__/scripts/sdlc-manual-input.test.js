@@ -4,12 +4,14 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const root = path.resolve(__dirname, '../../..');
+const { addSdlcSettings } = require('../../test-utils/sdlcSettings');
 const sdlc = fs.readFileSync(path.join(root, 'scripts/sdlc.sh'), 'utf8');
 
 function tmpRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sdlc-input-'));
   fs.mkdirSync(path.join(dir, 'scripts'));
   fs.copyFileSync(path.join(root, 'scripts/sdlc.sh'), path.join(dir, 'scripts/sdlc.sh'));
+  addSdlcSettings(dir);
   spawnSync('git', ['init', '-q'], { cwd: dir });
   return dir;
 }
@@ -23,7 +25,7 @@ describe('FROM validation in scripts/sdlc.sh', () => {
     const r = run('bogus');
     expect(r.status).toBe(1);
     expect(r.stdout).toContain('ERROR: unknown FROM=bogus (use spec, plan, red-tests, implement, review or test-repair)');
-    expect(fs.readdirSync(dir).sort()).toEqual(['.git', 'scripts']);
+    expect(fs.readdirSync(dir).sort()).toEqual(['.git', 'scripts', 'sdlc.config.json', 'server']);
 
     for (const from of ['spec', 'plan', 'red-tests', 'implement', 'test-repair', 'review']) {
       const ok = run(from);

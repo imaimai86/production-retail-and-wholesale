@@ -2,6 +2,7 @@
 // Test runner adapters for the SDLC pipeline: run a suite (or some of its files and tests) and report the outcome in one
 // shape, whatever the runner (jest, vitest, mocha, node:test, or any command writing a JUnit XML report).
 //   node scripts/sdlc-runners.cjs run   [dir] --out <result.json> [--suite <name>] [--cwd <root>] [--file <f>]... [--test <full name>]...
+//        without --suite every suite runs (with --file, only those holding the files) and the results are merged
 //   node scripts/sdlc-runners.cjs parse <runner> <report> [--root <dir>] [--stderr <file>]   convert a runner's own report
 // The result (RunResult):
 //   { runner, suite, ok, exitCode, command, tests: [{ file, name, status, message }], suiteErrors: [{ file, message }] }
@@ -11,6 +12,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const url = require('url');
 const { spawnSync } = require('child_process');
 const config = require('./sdlc-config.cjs');
 
@@ -94,6 +96,9 @@ function parseNodeTest(text, { root, cwd = root }) {
   for (const line of String(text || '').split('\n')) {
     let e;
     try { e = JSON.parse(line); } catch { continue; }
+    // Node 18 names an ES module test file by its file: URL
+    if (typeof e.file === 'string' && e.file.startsWith('file:')) { try { e.file = url.fileURLToPath(e.file); } catch { /* keep it */ } }
+    if (typeof e.name === 'string' && e.name.startsWith('file:')) { try { e.name = url.fileURLToPath(e.name); } catch { /* keep it */ } }
     const s = state(e.file);
     const n = e.nesting || 0;
     if (e.event === 'start') { s.names[n] = e.name; s.names.length = n + 1; s.hasChild[n] = false; continue; }
@@ -146,28 +151,7 @@ function parseJUnit(xml, { root }) {
 
 // --- Test files ------------------------------------------------------------------------------------------------------
 
-// A glob (**, *, ?, [..], {a,b}, ?(a|b), +(..), *(..), @(..)) as an anchored regular expression.
-function globToRegex(glob) {
-  let re = '';
-  for (let i = 0; i < glob.length; i++) {
-    const c = glob[i];
-    const ext = /[?+*@!]/.test(c) && glob[i + 1] === '(';
-    if (ext) {
-      let depth = 0; let j = i + 1;
-      for (; j < glob.length; j++) { if (glob[j] === '(') depth++; else if (glob[j] === ')' && --depth === 0) break; }
-      const body = glob.slice(i + 2, j).split('|').map(globToRegex).map(r => r.slice(1, -1)).join('|');
-      re += c === '!' ? '[^/]*' : `(?:${body})${{ '?': '?', '+': '+', '*': '*', '@': '' }[c]}`;
-      i = j;
-    } else if (c === '*' && glob[i + 1] === '*') {
-      if (glob[i + 2] === '/') { re += '(?:.*/)?'; i += 2; } else { re += '.*'; i += 1; }
-    } else if (c === '*') re += '[^/]*';
-    else if (c === '?') re += '[^/]';
-    else if (c === '[') { const j = glob.indexOf(']', i); re += j > i ? glob.slice(i, j + 1) : '\\['; i = j > i ? j : i; }
-    else if (c === '{') { const j = glob.indexOf('}', i); re += `(?:${glob.slice(i + 1, j).split(',').map(globToRegex).map(r => r.slice(1, -1)).join('|')})`; i = j; }
-    else re += /[.+^$()|\\]/.test(c) ? `\\${c}` : c;
-  }
-  return `^${re}$`;
-}
+const { globToRegex } = config;
 
 // Test files of a suite, relative to the project root, found by its testGlobs (node_modules and dot folders skipped).
 function suiteFiles(root, suite) {
@@ -350,12 +334,22 @@ if (require.main === module) {
     const { config: cfg, errors } = config.resolve(dir);
     if (errors.length) { for (const e of errors) console.error(`ERROR: ${e}`); process.exit(2); }
     const wanted = one('--suite');
-    const suite = wanted ? cfg.suites.find(s => s.name === wanted) : cfg.suites[0];
-    if (!suite) { console.error(`ERROR: no suite "${wanted}" (suites: ${cfg.suites.map(s => s.name).join(', ')})`); process.exit(2); }
-    const r = run(suite, { root: one('--cwd') || dir, files: many('--file'), names: many('--test') });
+    const files = many('--file');
+    // Without --suite: every suite (with --file, those holding the files), their results merged into one.
+    const holds = (suite, f) => suite.dir === '.' || f === suite.dir || f.startsWith(`${suite.dir}/`);
+    const suites = wanted ? cfg.suites.filter(s => s.name === wanted) : cfg.suites.filter(s => !files.length || files.some(f => holds(s, f)));
+    if (!suites.length) { console.error(`ERROR: no suite ${wanted ? `"${wanted}"` : `holds ${files.join(', ')}`} (suites: ${cfg.suites.map(s => `${s.name} in ${s.dir}`).join(', ')})`); process.exit(2); }
+    const results = suites.map(suite => run(suite, { root: one('--cwd') || dir, files: files.filter(f => holds(suite, f)), names: many('--test') }));
+    const r = results.length === 1 ? results[0] : {
+      runner: results.map(x => x.runner).join('+'), suite: results.map(x => x.suite).join('+'), ok: results.every(x => x.ok),
+      exitCode: results.find(x => x.exitCode) ? results.find(x => x.exitCode).exitCode : 0, command: results.map(x => x.command).join(' ; '),
+      tests: results.flatMap(x => x.tests), suiteErrors: results.flatMap(x => x.suiteErrors), noReport: results.some(x => x.noReport) || undefined,
+    };
     fs.writeFileSync(out, JSON.stringify(r) + '\n');
-    const count = st => r.tests.filter(t => t.status === st).length;
-    console.log(`${suite.name} (${suite.runner}): ${count('passed')} passed, ${count('failed')} failed, ${count('skipped')} skipped, ${r.suiteErrors.length} file errors`);
+    for (const x of results) {
+      const count = st => x.tests.filter(t => t.status === st).length;
+      console.log(`${x.suite} (${x.runner}): ${count('passed')} passed, ${count('failed')} failed, ${count('skipped')} skipped, ${x.suiteErrors.length} file errors`);
+    }
     process.exit(r.noReport ? 3 : r.ok ? 0 : 1);
   } else usage();
 }

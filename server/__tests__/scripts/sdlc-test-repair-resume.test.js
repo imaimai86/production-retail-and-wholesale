@@ -4,6 +4,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const root = path.resolve(__dirname, '../../..');
+const { addSdlcSettings } = require('../../test-utils/sdlcSettings');
 const sdlcSrc = fs.readFileSync(path.join(root, 'scripts/sdlc.sh'), 'utf8');
 const CHECK = path.join(root, 'scripts/sdlc-testcheck.cjs');
 const SLUG = 'alpha';
@@ -188,6 +189,7 @@ describe('scripts/sdlc.sh FROM validation (execution)', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sdlc-from-'));
     fs.mkdirSync(path.join(dir, 'scripts'));
     fs.copyFileSync(path.join(root, 'scripts/sdlc.sh'), path.join(dir, 'scripts/sdlc.sh'));
+    addSdlcSettings(dir);
     git(dir, 'init', '-q');
     const run = from => spawnSync('bash', ['scripts/sdlc.sh', SLUG], { cwd: dir, env: { ...process.env, FROM: from }, encoding: 'utf8' });
 
@@ -195,8 +197,8 @@ describe('scripts/sdlc.sh FROM validation (execution)', () => {
       const r = run(from);
       expect([from, r.status]).toEqual([from, 1]);
       expect(r.stdout).toContain(`ERROR: unknown FROM=${from} (use spec, plan, red-tests, implement, review or test-repair)`);
-      expect(fs.readdirSync(dir).sort()).toEqual(['.git', 'scripts']);
-      expect(git(dir, 'status', '--porcelain')).toBe('?? scripts/');
+      expect(fs.readdirSync(dir).sort()).toEqual(['.git', 'scripts', 'sdlc.config.json', 'server']);
+      expect(git(dir, 'status', '--porcelain')).toBe('?? scripts/\n?? sdlc.config.json');
       expect(git(dir, 'branch', '--list')).toBe('');
     }
 
@@ -220,6 +222,7 @@ describe('scripts/sdlc.sh FROM=test-repair with failing preconditions (execution
     git(dir, 'init', '-q');
     fs.mkdirSync(path.join(dir, 'scripts'));
     for (const f of ['sdlc.sh', 'sdlc-testcheck.cjs', 'sdlc-changes.cjs']) fs.copyFileSync(path.join(root, 'scripts', f), path.join(dir, 'scripts', f));
+    addSdlcSettings(dir);
     write(dir, `Docs/backlog/${SLUG}/brief.md`, 'brief\n');
     write(dir, 'server/__tests__/a.test.js', "test('a works', () => {});\n");
     write(dir, '.gitignore', 'bin/\ncalls.txt\n');
@@ -306,7 +309,7 @@ describe('scripts/sdlc.sh structure (text of the source under test)', () => {
     expect(guard[1]).toBeGreaterThan(outer);
 
     // the Test repair block is entered for FROM_N up to 5
-    expect(sdlcSrc).toMatch(/if \[ "\$FROM_N" -le 5 \]; then\s*\n\s*jest_json_at/);
+    expect(sdlcSrc).toMatch(/if \[ "\$FROM_N" -le 5 \]; then\s*\n\s*results_at/);
 
     // the resume hint text is used for non-verdict failures only
     expect(sdlcSrc).toContain('Resume at Test repair once fixed: FROM=test-repair ./scripts/sdlc.sh $SLUG');

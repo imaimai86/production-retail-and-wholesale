@@ -1,3 +1,8 @@
+---
+description: Interview the user about a backlog item and write its specification
+argument-hint: <slug>
+allowed-tools: Bash(node scripts/sdlc-config.cjs skill:*)
+---
 Feature or bug slug: $ARGUMENTS
-1. Read `Docs/backlog/$ARGUMENTS/brief.md` if it exists. Use grill-me / AskUserQuestion for only the gaps: edge cases, inputs/outputs, failure modes.
-2. Write the full specification to `Docs/backlog/$ARGUMENTS/specs-1.md`.
+
+!`node scripts/sdlc-config.cjs skill interview`

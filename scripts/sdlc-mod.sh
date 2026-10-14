@@ -15,8 +15,8 @@
 #                                               in place). Refreshes every WATCH_INTERVAL seconds (default 3); --once prints one frame.
 #   scripts/sdlc-mod.sh model list|add|add-model|remove-model|remove|test ...   the model registry (scripts/sdlc-models.cjs)
 # Env: SDLC_MAX_PARALLEL   most pipelines running at once (default 2; exit 3 when full)
-#      SDLC_BASE           ref a new branch starts from (default origin/main, else main, else HEAD)
-#      SDLC_WT_BASE        folder holding the worktrees (default ../<repo>-sdlc)
+#      SDLC_BASE           ref a new branch starts from (default: git.base in sdlc.config.json, else origin/main, else main, else HEAD)
+#      SDLC_WT_BASE        folder holding the worktrees (default: worktree.base in sdlc.config.json, else ../<repo>-sdlc)
 #      SDLC_PLUGIN_DIRS    plugin folders loaded in every agent (default .claude/plugins/sdlc-guard, if present)
 #      SDLC_ALLOW_MERGED   set to run an item again whose red-tests commit is already in the base branch (exit 5 otherwise)
 #      WATCH_INTERVAL      seconds between frames of `watch` (default 3; a non-positive or non-numeric value exits 2)
@@ -29,7 +29,13 @@ COMMON="$(git -C "$ROOT" rev-parse --git-common-dir 2>/dev/null)" || COMMON=".gi
 case "$COMMON" in /*) ;; *) COMMON="$ROOT/$COMMON" ;; esac
 REG="$COMMON/sdlc-runs"
 MAX_PARALLEL="${SDLC_MAX_PARALLEL:-2}"
-WT_BASE="${SDLC_WT_BASE:-$(dirname "$ROOT")/$(basename "$ROOT")-sdlc}"
+# Project settings (sdlc.config.json): backlog folder, branch prefix, base branch, worktree folder and links. When they
+# cannot be read, these defaults apply (each link only if it exists) and sdlc.sh reports what is wrong when the run starts.
+SDLC_BACKLOG_DIR="Docs/backlog"; SDLC_BRANCH_PREFIX="sdlc/"; SDLC_GIT_BASE=""; SDLC_WT_BASE_DEFAULT=""
+SDLC_WT_LINKS=(server/node_modules node_modules graft graphify-out .env)
+eval "$(node "$ROOT/scripts/sdlc-config.cjs" env "$ROOT" 2>/dev/null)" || true
+BACKLOG_DIR="$SDLC_BACKLOG_DIR"; BRANCH_PREFIX="$SDLC_BRANCH_PREFIX"
+WT_BASE="${SDLC_WT_BASE:-${SDLC_WT_BASE_DEFAULT:-$(dirname "$ROOT")/$(basename "$ROOT")-sdlc}}"
 
 now() { date +%Y-%m-%dT%H:%M:%S; }
 usage() { echo "Usage: $0 run <slug> | stop <slug> | discard <slug> [--yes] [--stop] | restart <slug> [--yes] | status | changes <slug> [--json] | changes --all [<slug>...] | watch <slug> [--once] | permit <slug> allow|always|deny [n|all] | model list [--json] | model add <provider> --endpoint <url> --key-env <VAR> --models a,b [--effort] | model add-model|remove-model <provider> <model> | model remove <provider> | model test <provider>/<model>" >&2; exit 2; }
@@ -70,7 +76,7 @@ running_count() {
 
 # The ref a new branch starts from.
 pick_base() {
-  local p base="${SDLC_BASE:-}"
+  local p base="${SDLC_BASE:-${SDLC_GIT_BASE:-}}"
   if [ -z "$base" ]; then
     for p in origin/main main HEAD; do git -C "$ROOT" rev-parse --verify -q "$p" >/dev/null && { base="$p"; break; }; done
   fi
@@ -107,9 +113,9 @@ cmd_run() {
     fail_start "$slug" 3 "at most $MAX_PARALLEL pipelines may run at once (SDLC_MAX_PARALLEL)"
   fi
 
-  docs="Docs/backlog/$slug"
+  docs="$BACKLOG_DIR/$slug"
   wt="$WT_BASE/$slug"
-  branch="sdlc/$slug"
+  branch="${BRANCH_PREFIX}$slug"
   base="$(pick_base)"
   if [ ! -e "$wt/.git" ]; then
     # Fail before creating anything. An item whose red-tests commit is already in the base branch was merged: its
@@ -138,7 +144,7 @@ cmd_run() {
   # A .gitignore pattern that ends in "/" (node_modules/, /graft/) does not match a symlink, so the links are
   # also listed in the repo's local exclude file (shared by every worktree): no stage may commit them.
   mkdir -p "$COMMON/info"
-  for p in server/node_modules node_modules graft .env; do
+  for p in ${SDLC_WT_LINKS[@]+"${SDLC_WT_LINKS[@]}"}; do
     if [ -e "$ROOT/$p" ] && [ ! -e "$wt/$p" ] && [ ! -L "$wt/$p" ]; then mkdir -p "$(dirname "$wt/$p")"; ln -s "$ROOT/$p" "$wt/$p"; fi
     if [ -L "$wt/$p" ] && ! grep -qxF "/$p" "$COMMON/info/exclude" 2>/dev/null; then echo "/$p" >> "$COMMON/info/exclude"; fi
   done
@@ -194,7 +200,7 @@ cmd_discard() {
     case "$a" in --yes) yes=--yes ;; --stop) stop=1 ;; "") ;; *) usage ;; esac
   done
   check_slug "$slug"
-  f="$REG/$slug.json"; wt="$WT_BASE/$slug"; branch="sdlc/$slug"
+  f="$REG/$slug.json"; wt="$WT_BASE/$slug"; branch="${BRANCH_PREFIX}$slug"
   if [ -z "$stop" ] && [ -f "$f" ] && [ "$(json_get "$f" state)" = running ] && alive "$(json_get "$f" pid)"; then
     echo "$slug is running: stop it first, or pass --stop" >&2; exit 4
   fi
@@ -247,7 +253,7 @@ cmd_status() {
 # One frame of `watch`: the pipeline's own files, wherever its worktree is.
 watch_frame() {
   local slug="$1" dir="$2" f="$REG/$1.json" logs state pid line
-  logs="$dir/Docs/backlog/$slug/logs"
+  logs="$dir/$BACKLOG_DIR/$slug/logs"
   if [ -f "$logs/status.json" ]; then cat "$logs/status.json"; else echo "(no status.json yet in $logs)"; fi
   if [ -f "$f" ]; then
     state="$(json_get "$f" state)"; pid="$(json_get "$f" pid)"
@@ -270,7 +276,7 @@ cmd_watch() {
   f="$REG/$slug.json"
   wt="$(json_get "$f" worktree 2>/dev/null || true)"
   if [ -n "$wt" ] && [ -d "$wt" ]; then dir="$wt"
-  elif [ -f "Docs/backlog/$slug/logs/status.json" ]; then dir="."
+  elif [ -f "$BACKLOG_DIR/$slug/logs/status.json" ]; then dir="."
   else echo "No pipeline for $slug" >&2; exit 1
   fi
   if [ "$once" = --once ]; then watch_frame "$slug" "$dir"; return 0; fi
@@ -400,7 +406,7 @@ cmd_permit() {
   wt="$(json_get "$f" worktree 2>/dev/null || true)"
   if [ -z "$wt" ] || [ ! -d "$wt" ]; then wt="$WT_BASE/$slug"; fi
   [ -d "$wt" ] || { echo "No pipeline for $slug" >&2; exit 1; }
-  node "$ROOT/scripts/sdlc-permissions.cjs" decide "$wt/Docs/backlog/$slug/logs/permissions.json" "$which" "$choice" "$ROOT/.claude/sdlc-permissions.json"
+  node "$ROOT/scripts/sdlc-permissions.cjs" decide "$wt/$BACKLOG_DIR/$slug/logs/permissions.json" "$which" "$choice" "$ROOT/.claude/sdlc-permissions.json"
 }
 
 case "${1:-}" in

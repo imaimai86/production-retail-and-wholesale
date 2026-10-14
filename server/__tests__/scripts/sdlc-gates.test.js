@@ -54,7 +54,7 @@ describe('scripts/sdlc.sh gates', () => {
 
 describe('Test repair retry of unclaimed failures', () => {
   const callIdx = lines.findIndex(l => /^\s*retry_unclaimed\s*$/.test(l));
-  const nowIdx = lines.findIndex(l => l.includes('jest_json_now "$LOG/now.json"'));
+  const nowIdx = lines.findIndex(l => l.includes('results_now "$LOG/now.json"'));
   const prechecks = lines.map((l, i) => [l, i]).filter(([l]) => l.includes('precheck "$LOG/now.json"'));
   const defIdx = lines.findIndex(l => /^\s*retry_unclaimed\s*\(\)/.test(l));
   const body = defIdx < 0 ? '' : (() => {
@@ -63,7 +63,7 @@ describe('Test repair retry of unclaimed failures', () => {
     return lines.slice(defIdx, end + 1).join('\n');
   })();
 
-  test('retry_unclaimed is called once, after jest_json_now now.json and before the first precheck', () => {
+  test('retry_unclaimed is called once, after results_now now.json and before the first precheck', () => {
     expect(defIdx).toBeGreaterThan(-1);
     expect(nowIdx).toBeGreaterThan(-1);
     expect(prechecks.length).toBeGreaterThan(0);
@@ -74,17 +74,17 @@ describe('Test repair retry of unclaimed failures', () => {
     prechecks.forEach(([l]) => expect(l).toContain('MAX_REPAIR_TESTS'));
 
     // the second jest run (after.json) is not followed by a retry
-    expect(lines.findIndex(l => l.includes('jest_json_now "$LOG/after.json"'))).toBeGreaterThan(-1);
+    expect(lines.findIndex(l => l.includes('results_now "$LOG/after.json"'))).toBeGreaterThan(-1);
     expect(lines.filter(l => /^\s*retry_unclaimed\s*$/.test(l))).toHaveLength(1);
   });
 
-  test('it re-runs only the retry set from server/, merges the result, and adds no env variable or opt-out switch', () => {
-    expect(body).toContain('npx jest');
-    expect(body).toContain(' -t ');
-    expect(body).toContain('--json --outputFile');
+  test('it re-runs only the retry set through the runner adapter, merges the result, and adds no env variable or opt-out switch', () => {
+    expect(body).toContain('retry-args');
+    expect(body).toContain('node scripts/sdlc-runners.cjs run . --out');
+    expect(body).toContain('--file');
+    expect(body).toContain('--test');
     expect(body).toContain('|| true');
     expect(body).toContain('>/dev/null 2>&1');
-    expect(body).toContain('cd server');
     expect(body).toContain('unclaimed');
     expect(body).toContain('merge-retry');
     expect(body).toContain('flaky-tests.md');
