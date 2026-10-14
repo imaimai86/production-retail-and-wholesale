@@ -268,3 +268,56 @@ describe('scripts/sdlc.sh FROM=test-repair with failing preconditions (execution
     expect(fs.existsSync(path.join(dir, 'server/__tests__/new.test.js'))).toBe(true);
   });
 });
+
+describe('scripts/sdlc.sh structure (text of the source under test)', () => {
+  const lines = sdlcSrc.split('\n');
+  const idx = re => lines.findIndex(l => re.test(l));
+
+  test('FROM: validated before the first git call and mkdir (AC1), six values listed, test-repair ordered between implement and review', () => {
+    const val = idx(/unknown FROM=/);
+    expect(val).toBeGreaterThan(-1);
+    expect(val).toBeLessThan(idx(/\bgit (rev-parse|checkout)/));
+    expect(val).toBeLessThan(idx(/mkdir -p/));
+
+    // the unknown-value message and the header comment list all six values
+    expect(sdlcSrc).toContain('ERROR: unknown FROM=$FROM (use spec, plan, red-tests, implement, review or test-repair)');
+    expect(lines.slice(0, 12).join('\n')).toContain('FROM=spec|plan|red-tests|implement|test-repair|review');
+
+    expect(sdlcSrc).toMatch(/implement\) FROM_N=4;; test-repair\) FROM_N=5;; review\) FROM_N=6/);
+    // review compares against the renumbered stage 6
+    expect(sdlcSrc).toMatch(/\[ "\$FROM_N" -eq 6 \] && REPAIR_PAT/);
+  });
+
+  test('Test repair: red-tests lookup, claim-file guard, entry condition, resume hints and pre-check message', () => {
+    // the red-tests commit for test-repair is looked up without the repair commit
+    expect(sdlcSrc).toMatch(/FROM_N" -eq 5 \]; then(?:(?!REPAIR_PAT)[\s\S]){0,200}RED_SHA=\$\(git log --format=%H -1 --grep="\^test\(\$SLUG\): add failing tests"\)/);
+
+    // the WARNING line precedes the rm -f of the claim file
+    const warn = idx(/WARNING: test-issues\.md exists and will be deleted; use FROM=test-repair to resume at Test repair/);
+    const rm = idx(/rm -f "\$DOCS\/test-issues\.md"/);
+    expect(warn).toBeGreaterThan(-1);
+    expect(rm).toBeGreaterThan(warn);
+
+    // the Implement stage and rm -f sit inside a guard that excludes test-repair
+    const guard = lines.slice(0, rm).map((l, i) => [l, i]).filter(([l]) => /if \[ "\$FROM_N" -le 4 \]; then/.test(l)).pop();
+    const outer = idx(/^if \[ "\$FROM_N" -le 5 \]; then/);
+    expect(outer).toBeGreaterThan(-1);
+    expect(guard).toBeDefined();
+    expect(guard[1]).toBeGreaterThan(outer);
+
+    // the Test repair block is entered for FROM_N up to 5
+    expect(sdlcSrc).toMatch(/if \[ "\$FROM_N" -le 5 \]; then\s*\n\s*jest_json_at/);
+
+    // the resume hint text is used for non-verdict failures only
+    expect(sdlcSrc).toContain('Resume at Test repair once fixed: FROM=test-repair ./scripts/sdlc.sh $SLUG');
+    expect(sdlcSrc).toMatch(/reject "claims fail pre-check \(see above\)" hint/);
+    expect(sdlcSrc).toMatch(/reject "auditor failed to run" hint/);
+    for (const verdict of ['diff check failed', 'tests were removed or renamed', 'a repaired test no longer fails', 'independent auditor did not return', 'source files were modified', 'repair agent says the tests are right', 'checks still fail after an audited repair']) {
+      const l = lines.find(x => x.includes(verdict)) || '';
+      expect(l).toContain(verdict);
+      expect(l).not.toMatch(/\bhint\b/);
+    }
+
+    expect(sdlcSrc).toContain('REJECT: claims would not pass the pre-check');
+  });
+});
