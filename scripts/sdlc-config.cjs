@@ -273,7 +273,21 @@ function describeProject(dir, root, pkg) {
     backend: BACKEND.filter(has),
     chai: has('chai') || has('sinon'),
     srcDir: exists(path.join(dir, 'src')),
+    e2eDirs: e2eDirs(dir, files, has),
   };
+}
+
+// Folders of browser end-to-end tests (Playwright, Cypress): unit test runners must leave them alone.
+function e2eDirs(dir, files, has) {
+  const out = [];
+  const pw = files.find(f => /^playwright\.config\.[cm]?[jt]s$/.test(f));
+  if (pw || has('@playwright/test')) {
+    let testDir = null;
+    try { testDir = (fs.readFileSync(path.join(dir, pw || ''), 'utf8').match(/testDir\s*:\s*['"`]([^'"`]+)['"`]/) || [])[1]; } catch { /* none */ }
+    out.push(testDir ? testDir.replace(/^\.\//, '').replace(/\/+$/, '') : 'e2e');
+  }
+  if (files.some(f => /^cypress\.config\.[cm]?[jt]s$/.test(f)) || has('cypress')) out.push('cypress');
+  return [...new Set(out)];
 }
 
 const installCmd = (pm, deps) => !deps.length ? null
@@ -375,8 +389,15 @@ function setupPlan(p, runner) {
   if (runner === 'vitest') {
     sample = `${p.srcDir ? 'src' : 'test'}/example.test.${ext}`;
     script = 'vitest run';
-    if (dom && p.vite) notes.push("add test: { environment: 'jsdom' } to your vite.config to test components");
-    else if (dom) files.push({ path: `vitest.config.${ts ? 'ts' : 'mjs'}`, content: "import { defineConfig } from 'vitest/config';\n\nexport default defineConfig({\n  test: { environment: 'jsdom' },\n});\n" });
+    const e2e = p.e2eDirs.map(d => `'${d}/**'`);
+    if (p.vite && (dom || e2e.length)) {
+      if (dom) notes.push("add test: { environment: 'jsdom' } to your vite.config to test components");
+      if (e2e.length) notes.push(`add test: { exclude: [...configDefaults.exclude, ${e2e.join(', ')}] } to your vite.config so Vitest leaves the end-to-end tests alone`);
+    } else if (dom || e2e.length) {
+      const opts = [dom ? "environment: 'jsdom'" : null, e2e.length ? `exclude: [...configDefaults.exclude, ${e2e.join(', ')}]` : null].filter(Boolean);
+      files.push({ path: `vitest.config.${ts ? 'ts' : 'mjs'}`,
+        content: `import { ${e2e.length ? 'configDefaults, ' : ''}defineConfig } from 'vitest/config';\n\nexport default defineConfig({\n  test: {\n${opts.map(o => `    ${o},`).join('\n')}\n  },\n});\n` });
+    }
     files.push({ path: sample, content: `// ${SAMPLE_NOTE}\nimport { describe, it, expect } from 'vitest';\n\ndescribe('example', () => {\n  it('adds numbers', () => {\n    expect(1 + 1).toBe(2);\n  });\n});\n` });
   } else if (runner === 'jest') {
     sample = `${p.srcDir ? 'src' : 'test'}/example.test.${ext}`;
@@ -384,7 +405,7 @@ function setupPlan(p, runner) {
     const conf = [
       ts ? `  preset: '${esm ? 'ts-jest/presets/default-esm' : 'ts-jest'}',` : null,
       `  testEnvironment: '${dom ? 'jsdom' : 'node'}',`,
-      "  testPathIgnorePatterns: ['/node_modules/', '/dist/'],",
+      `  testPathIgnorePatterns: [${['/node_modules/', '/dist/', ...p.e2eDirs.map(d => `/${d}/`)].map(x => `'${x}'`).join(', ')}],`,
     ].filter(Boolean).join('\n');
     files.push({ path: 'jest.config.js', content: `/** @type {import('jest').Config} */\n${esm ? 'export default' : 'module.exports ='} {\n${conf}\n};\n` });
     files.push({ path: sample, content: `// ${SAMPLE_NOTE}\ndescribe('example', () => {\n  test('adds numbers', () => {\n    expect(1 + 1).toBe(2);\n  });\n});\n` });

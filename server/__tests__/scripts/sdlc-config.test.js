@@ -320,6 +320,30 @@ describe('setting up the chosen framework', () => {
     }
   });
 
+  test('Playwright and Cypress folders are left out of the unit test runner', () => {
+    // Vitest's default pattern matches *.spec.ts, so it would run Playwright's specs (and fail) without the exclude.
+    const pw = suggest(project({
+      'package.json': { devDependencies: { '@playwright/test': '^1', typescript: '^5' } },
+      'playwright.config.ts': "export default defineConfig({ testDir: './tests/e2e/', workers: 1 });\n",
+    })).project;
+    expect(pw.e2eDirs).toEqual(['tests/e2e']);
+    const vitest = setupPlan(pw, 'vitest').files.find(f => f.path === 'vitest.config.ts');
+    expect(vitest.content).toBe("import { configDefaults, defineConfig } from 'vitest/config';\n\nexport default defineConfig({\n  test: {\n"
+      + "    exclude: [...configDefaults.exclude, 'tests/e2e/**'],\n  },\n});\n");
+    expect(setupPlan(pw, 'jest').files[0].content).toContain("testPathIgnorePatterns: ['/node_modules/', '/dist/', '/tests/e2e/'],");
+
+    const both = suggest(project({ 'package.json': { dependencies: { react: '^18' }, devDependencies: { '@playwright/test': '^1', cypress: '^13' } } })).project;
+    expect(both.e2eDirs).toEqual(['e2e', 'cypress']);
+    expect(setupPlan(both, 'vitest').files[0].content).toContain("environment: 'jsdom',\n    exclude: [...configDefaults.exclude, 'e2e/**', 'cypress/**'],");
+    const vite = setupPlan({ ...both, vite: true }, 'vitest');
+    expect(vite.files.map(f => f.path)).toEqual(['test/example.test.js']);
+    expect(vite.notes[1]).toContain("exclude: [...configDefaults.exclude, 'e2e/**', 'cypress/**']");
+
+    const plain = suggest(project({ 'package.json': {} })).project;
+    expect(plain.e2eDirs).toEqual([]);
+    expect(setupPlan(plain, 'vitest').files.map(f => f.path)).toEqual(['test/example.test.js']);
+  });
+
   test('TypeScript and ES modules get their own setup', () => {
     const p = suggest(project({ 'package.json': { type: 'module' }, 'tsconfig.json': '{}' })).project;
     const jest = setupPlan(p, 'jest');
