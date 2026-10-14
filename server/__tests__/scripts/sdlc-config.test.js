@@ -5,7 +5,7 @@ const { spawnSync } = require('child_process');
 
 const root = path.resolve(__dirname, '../../..');
 const helper = path.join(root, 'scripts/sdlc-config.cjs');
-const { detect, suggest, setupPlan, provision, resolve, testDir, allowedTools, worktreeBase, shellEnv } = require(helper);
+const { detect, suggest, setupPlan, provision, resolve, testDir, allowedTools, worktreeBase, shellEnv, codeIndexers } = require(helper);
 
 // A throwaway project: { 'path/file': text or object (written as JSON) }.
 function project(files) {
@@ -131,7 +131,7 @@ describe('detection in real-world layouts', () => {
     const r = resolve(dir, { env: noGraft });
     expect(r.errors).toEqual([]);
     expect(r.config.suites.map(s => s.dir)).toEqual(['server']);
-    expect(r.warnings).toEqual([expect.stringContaining('e2e: skipped, its test script uses a runner that is not recognised (scripts.test: playwright test)')]);
+    expect(r.warnings.filter(w => !w.includes('graft'))).toEqual([expect.stringContaining('e2e: skipped, its test script uses a runner that is not recognised (scripts.test: playwright test)')]);
     fs.writeFileSync(path.join(dir, 'sdlc.config.json'), JSON.stringify({ suites: [{ dir: 'e2e' }] }));
     expect(errorsOf(dir)).toContain('suites[0]: the test script in e2e uses a runner that is not recognised; set "runner"');
     const out = cli('detect', dir);
@@ -156,7 +156,7 @@ describe('settings', () => {
     expect(worktreeBase(c)).toBe(path.join(path.dirname(dir), `${path.basename(dir)}-sdlc`));
   });
 
-  test('a file suite is completed from detection; an explicit runner gets that runner\'s defaults; code search auto follows PATH', () => {
+  test('a file suite is completed from detection; an explicit runner gets that runner\'s defaults; code search auto needs graft on PATH and a graft/ index', () => {
     const dir = project({
       'server/package.json': { scripts: { test: 'jest' } },
       'web/package.json': { devDependencies: { vitest: '^2' } },
@@ -169,6 +169,8 @@ describe('settings', () => {
     ]);
     const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'sdlc-bin-'));
     fs.writeFileSync(path.join(bin, 'graft'), '#!/bin/sh\n', { mode: 0o755 });
+    expect(ok(dir, { env: { PATH: `${bin}:/usr/bin:/bin` } }).agent.codeSearch).toBe('none');
+    fs.mkdirSync(path.join(dir, 'graft'));
     expect(ok(dir, { env: { PATH: `${bin}:/usr/bin:/bin` } }).agent.codeSearch).toBe('graft');
   });
 
@@ -178,7 +180,9 @@ describe('settings', () => {
       'sdlc.config.json': { backlogDir: '', suits: [], git: { conflictSuffixStart: 'x' }, agent: { codeSearch: 'grep' }, suites: [{ runner: 'karma' }] },
     }));
     for (const e of ['backlogDir: must be a non-empty string', 'suits: unknown setting', 'git.conflictSuffixStart: must be a whole number',
-      'agent.codeSearch: must be one of graft, none, auto', 'suites[0].runner: must be one of']) expect(bad).toContain(e);
+      'suites[0].runner: must be one of']) expect(bad).toContain(e);
+    expect(errorsOf(project({ 'package.json': { scripts: { test: 'jest' } }, 'sdlc.config.json': { agent: { codeSearch: 'grep' } } })))
+      .toContain('agent.codeSearch: "grep" is not a code indexer (use auto, none, graft, graphify)');
 
     expect(errorsOf(project({ 'sdlc.config.json': { suites: [{ dir: 'missing' }] } }))).toContain('suites[0].dir: folder missing does not exist');
     expect(errorsOf(project({ 'x/a.txt': '', 'sdlc.config.json': { suites: [{ dir: 'x' }] } }))).toContain('suites[0]: no test runner found in x; set "runner"');
@@ -205,7 +209,20 @@ describe('this repository', () => {
   const sdlcSh = fs.readFileSync(path.join(root, 'scripts/sdlc.sh'), 'utf8');
   const modSh = fs.readFileSync(path.join(root, 'scripts/sdlc-mod.sh'), 'utf8');
   const shVar = name => sdlcSh.match(new RegExp(`^${name}="([^"]*)"`, 'm'))[1];
-  const shWords = text => [...text.matchAll(/"([^"]*)"|(\S+)/g)].map(m => m[1] ?? m[2]);
+
+  // sdlc.sh's code_search_setup, run in a temp folder with or without graft (a stand-in on PATH and a graft/ index).
+  const shAllowed = withGraft => {
+    const fn = sdlcSh.slice(sdlcSh.indexOf('code_search_setup() {'), sdlcSh.indexOf('\ncode_search_setup\n'));
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'sdlc-allowed-'));
+    fs.symlinkSync(path.join(root, 'scripts'), path.join(cwd, 'scripts'));
+    fs.mkdirSync(path.join(cwd, 'logs'));
+    const bin = path.join(cwd, 'bin');
+    fs.mkdirSync(bin);
+    if (withGraft) { fs.writeFileSync(path.join(bin, 'graft'), '#!/bin/sh\n', { mode: 0o755 }); fs.mkdirSync(path.join(cwd, 'graft')); }
+    const r = spawnSync('bash', ['-c', `set -euo pipefail\nLOG=logs\n${fn}\ncode_search_setup >/dev/null\nprintf '%s\\n' "\${ALLOWED[@]}"`],
+      { cwd, encoding: 'utf8', env: { PATH: `${bin}:/usr/bin:/bin:${path.dirname(process.execPath)}` } });
+    return r.stdout.trim().split('\n');
+  };
 
   test('sdlc.config.json resolves to the constants in sdlc.sh and sdlc-mod.sh', () => {
     const c = ok(root);
@@ -213,7 +230,10 @@ describe('this repository', () => {
     expect(c.suites[0].testCmd).toBe(shVar('TEST_CMD'));
     expect(testDir(c.suites[0])).toBe(shVar('TEST_DIR'));
     expect(`${c.backlogDir}/index.md`).toBe(shVar('BACKLOG'));
-    expect(allowedTools(c)).toEqual(shWords(sdlcSh.match(/^ALLOWED=\(([\s\S]*?)\)\n/m)[1]));
+    for (const withGraft of [true, false]) {
+      const agent = { ...c.agent, codeSearch: withGraft ? 'graft' : 'none', codeIndexer: withGraft ? codeIndexers({}).graft : null };
+      expect(allowedTools({ ...c, agent })).toEqual(shAllowed(withGraft));
+    }
     expect(c.worktree.link).toEqual(modSh.match(/for p in (server\/node_modules[^;]*);/)[1].split(' '));
     expect(worktreeBase(c)).toBe(path.join(path.dirname(root), `${path.basename(root)}-sdlc`));
     expect(c.git.branchPrefix).toBe('sdlc/');

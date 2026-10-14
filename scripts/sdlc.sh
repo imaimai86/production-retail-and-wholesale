@@ -14,7 +14,9 @@
 #        git-ignored .env are copied (placeholder values) into .env.example. Nothing to commit is a warning, not a failure.
 #        Test repair re-runs UNCLAIMED failing tests once; a pass is a flaky test: WARNING, listed in $LOG/flaky-tests.md, not rejected.
 #        Prompts: scripts/prompts/prompt-<stage>.md (spec, plan, red-tests, implement, test-repair, test-audit, review), read at run
-#        time. Placeholders: {{DOCS}} {{LOG}} {{TEST_DIR}} {{TEST_CMD}} {{RED_SHA}} {{SLUG}}.
+#        time. Placeholders: {{DOCS}} {{LOG}} {{TEST_DIR}} {{TEST_CMD}} {{RED_SHA}} {{SLUG}}, and {{CODE_SEARCH}}: how to search
+#        code, for the code indexer in use (scripts/prompts/parts/code-search.<name>.md or its own guide), else Grep and Glob
+#        (scripts/prompts/parts/code-search.md).
 #        Model and effort per stage: MODEL_<STAGE> and EFFORT_<STAGE>, STAGE = SPEC PLAN RED_TESTS IMPLEMENT TEST_REPAIR
 #        TEST_AUDIT REVIEW (for example MODEL_IMPLEMENT=opus EFFORT_IMPLEMENT=high). SDLC_MODEL / SDLC_EFFORT set every stage
 #        that has no stage-specific value. Models: any `claude --model` value (alias or full id); effort: low|medium|high|xhigh|max.
@@ -58,9 +60,21 @@ FAIL_LOG="$LOG/tests.log"
 # Repository-wide allow rules live in the main working tree, so every worktree run sees them.
 PERM_REPO="$(git worktree list --porcelain | awk '/^worktree /{print substr($0,10); exit}')/.claude/sdlc-permissions.json"
 
-ALLOWED=(Read Write Edit Glob Grep mcp__graft
-  "Bash(npm test:*)" "Bash(npm run lint:*)" "Bash(npm run generate-spec:*)" "Bash(graft:*)"
-  "Bash(ls:*)" "Bash(git status:*)" "Bash(git diff:*)" "Bash(git log:*)")
+# Code search: a code indexer (graft, graphify, or one declared in sdlc.config.json) when it is installed and the project
+# has its index, else Grep and Glob; one is recommended, none is required (see agent.codeSearch, and
+# `node scripts/sdlc-config.cjs code-search --list`). It sets the prompts' {{CODE_SEARCH}} text and the indexer's tools
+# and commands the agents may use.
+code_search_setup() {
+  local sh c rules=()
+  CODE_SEARCH=none; CODE_SEARCH_MCP=(); CODE_SEARCH_BASH=(); CODE_SEARCH_GUIDE=""
+  sh="$(node scripts/sdlc-config.cjs code-search --sh 2>"$LOG/code-search.txt")" && eval "$sh" || CODE_SEARCH=none
+  if [ -s "$LOG/code-search.txt" ]; then cat "$LOG/code-search.txt"; fi
+  for c in ${CODE_SEARCH_BASH[@]+"${CODE_SEARCH_BASH[@]}"}; do rules+=("Bash($c:*)"); done
+  ALLOWED=(Read Write Edit Glob Grep ${CODE_SEARCH_MCP[@]+"${CODE_SEARCH_MCP[@]}"}
+    "Bash(npm test:*)" "Bash(npm run lint:*)" "Bash(npm run generate-spec:*)" ${rules[@]+"${rules[@]}"}
+    "Bash(ls:*)" "Bash(git status:*)" "Bash(git diff:*)" "Bash(git log:*)")
+}
+code_search_setup
 
 # Status file: ONE small JSON line, overwritten in place (never appended), so it stays tiny.
 # Watch it with:  watch -n5 cat Docs/backlog/<slug>/logs/status.json
@@ -181,6 +195,14 @@ render_prompt() {
   t=$(cat "$f")
   t=${t//\{\{DOCS\}\}/$DOCS}; t=${t//\{\{LOG\}\}/$LOG}; t=${t//\{\{TEST_DIR\}\}/$TEST_DIR}
   t=${t//\{\{TEST_CMD\}\}/$TEST_CMD}; t=${t//\{\{RED_SHA\}\}/${RED_SHA:-}}; t=${t//\{\{SLUG\}\}/$SLUG}
+  if [[ "$t" == *"{{CODE_SEARCH}}"* ]]; then
+    local text="${CODE_SEARCH_GUIDE:-}" part="scripts/prompts/parts/code-search.md"
+    if [ -z "$text" ]; then
+      [ -f "$part" ] || { echo "ERROR: missing prompt part $part" >&2; exit 1; }
+      text="$(cat "$part")"
+    fi
+    t=${t//\{\{CODE_SEARCH\}\}/"$text"}   # quoted: bash 5.2 would read & in the text as the match
+  fi
   printf '%s' "$t"
 }
 # agent <log-name> <stage>: headless, scoped tools, bounded turns, transcript saved. The prompt comes from prompt-<stage>.md

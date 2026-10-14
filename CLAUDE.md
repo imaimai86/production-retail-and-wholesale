@@ -71,12 +71,13 @@ ADMIN_TOKEN=secret
   - When the PR is ready (CI green, no conflict), ask with the AskUserQuestion tool, never a free-text "merge?" line, with at least the options **Merge** and **Do not merge**, naming the PR number and its CI status in the question. Merge only after the user picks Merge. Any other answer means do not merge.
   - Creating a PR, pushing to it and watching its CI do not need this confirmation; only the merge does.
 
-## Graft
-Graft must be installed for the SDLC workflow (the Plan stage and `/plan` use it).
-- Before running `./scripts/sdlc.sh` or any SDLC stage, check `command -v graft` and `graft --version`.
-- If graft is missing, stop and tell the user to follow "Graft setup" in `README.md` (`npm install -g @nanonets/graft`, then `graft build`). Do not guess file locations without it.
-- If `graft/` is missing, or `graft check` reports it stale, run `graft build` first.
-- Prefer graft (`graft ask`, `graft grep`, `graft callers`, or the graft MCP tools) over grep and full-file reads when locating code.
+## Code indexing (graft, graphify or none)
+A code indexer is recommended for the SDLC workflow, not required. The agents use one when it is installed and the repo has its index, else they search with Grep and Glob and the pipeline prints a note.
+- Built in: **graft** (`npm install -g @nanonets/graft`, then `graft build`; index `graft/`; see "Graft setup" in `README.md`) and **graphify** (`uv tool install graphifyy`, then `/graphify .`; index `graphify-out/graph.json`).
+- Choose in `sdlc.config.json` with `"agent": { "codeSearch": "auto" | "none" | "<indexer>" }`, or run `node scripts/sdlc-config.cjs code-search --use <name>`. `auto` takes the first available one (order: `agent.codeSearchOrder`, default graft then graphify). `node scripts/sdlc-config.cjs code-search --list` shows each one and why it is or is not available.
+- Another indexer is declared under `agent.codeIndexers.<name>` with `command` (must be on PATH), optional `index` (must exist), `tools` (MCP tools), `commands` (shell commands the agents may run) and `guide` or `guideFile` (how to search with it). The same fields change a built-in one.
+- When an indexer is in use, prefer it over grep and full-file reads when locating code. If graft's `graft/` is missing or `graft check` reports it stale, run `graft build`.
+- Skills that search code have a version per indexer and a Grep/Glob version: their text is in `scripts/skills/<name>.md` (the commands in `.claude/commands/` print it with `node scripts/sdlc-config.cjs skill <name>`) and pipeline prompts are in `scripts/prompts/`; `{{CODE_SEARCH}}` in both is filled from `scripts/prompts/parts/code-search.<indexer>.md` (or the indexer's own guide) or `code-search.md`.
 
 ## Implementation plan
 1. **Scope and requirements**

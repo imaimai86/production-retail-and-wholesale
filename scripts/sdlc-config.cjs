@@ -3,6 +3,10 @@
 //   node scripts/sdlc-config.cjs detect [dir] [--json]   the test suites detection finds; writes nothing
 //   node scripts/sdlc-config.cjs show   [dir]            the resolved settings as JSON (file, then detection, then defaults)
 //   node scripts/sdlc-config.cjs env    [dir]            the resolved settings as shell assignments (SDLC_*), for the scripts
+//   node scripts/sdlc-config.cjs code-search [dir] [--list | --use <name|auto|none> | --sh]
+//        the code indexer the agents search with (graft, graphify, one declared in agent.codeIndexers) or "none" (Grep and
+//        Glob): --list shows each and whether it is available, --use saves the choice, --sh prints it for sdlc.sh
+//   node scripts/sdlc-config.cjs skill <name> [dir]      a skill from scripts/skills/ in its graft or Grep/Glob version
 //   node scripts/sdlc-config.cjs suggest [dir] [--test-dir <folder>] [--json]  for a project without tests: supported test frameworks, best first; writes nothing
 //   node scripts/sdlc-config.cjs init-tests [dir] [--test-dir <folder>] [--language javascript|typescript] [--runner <name>] [--yes] [--dry-run] [--no-install]
 //        --test-dir: where the tests go, from [dir] (e.g. __tests__, server/__tests__, client/_test); the package set up is the
@@ -17,7 +21,7 @@ const { spawnSync } = require('child_process');
 
 const CONFIG_FILE = 'sdlc.config.json';
 const RUNNERS = ['jest', 'vitest', 'mocha', 'node-test', 'generic-junit'];
-const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'coverage', 'vendor', 'target', 'out', 'tmp', 'graft']);
+const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'coverage', 'vendor', 'target', 'out', 'tmp', 'graft', 'graphify-out']);
 const SCAN_DEPTH = 2;
 
 // --- Detection -------------------------------------------------------------------------------------------------------
@@ -525,7 +529,7 @@ const SCHEMA = {
   lint: 'string',
   worktree: { base: 'string', link: 'string[]' },
   git: { branchPrefix: 'string', base: 'string', conflictSuffixStart: 'integer' },
-  agent: { allowCommands: 'string[]', codeSearch: ['graft', 'none', 'auto'] },
+  agent: { allowCommands: 'string[]', codeSearch: 'string', codeSearchOrder: 'string[]', codeIndexers: { '*': 'INDEXER' } },
   ship: { envExample: 'boolean', maxFileBytes: 'integer' },
   ui: { timezone: 'string' },
 };
@@ -550,14 +554,113 @@ function validate(value, schema, where, errors) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return errors.push(`${at}: must be an object`);
     for (const k of Object.keys(value)) {
       const p = where ? `${where}.${k}` : k;
-      if (!Object.prototype.hasOwnProperty.call(schema, k)) errors.push(`${p}: unknown setting`);
-      else validate(value[k], schema[k], p, errors);
+      // { '*': <schema> } is a map: any key, each value checked against <schema>.
+      const sub = schema['*'] ? (schema['*'] === 'INDEXER' ? INDEXER_SCHEMA : schema['*']) : schema[k];
+      if (!schema['*'] && !Object.prototype.hasOwnProperty.call(schema, k)) errors.push(`${p}: unknown setting`);
+      else validate(value[k], sub, p, errors);
     }
   }
   return errors;
 }
 
-const graftOnPath = env => spawnSync('sh', ['-c', 'command -v graft'], { encoding: 'utf8', env }).status === 0;
+// --- Code search: a code indexer (graft, graphify, or one the project declares) or Grep/Glob ------------------------
+// An indexer is used when its command is on PATH and its index exists in the project; one is recommended, none is
+// required. agent.codeSearch picks one by name, "auto" (the first available, in agent.codeSearchOrder) or "none";
+// agent.codeIndexers adds indexers or changes a built-in one field by field.
+const CODE_INDEXERS = {
+  graft: {
+    command: 'graft', index: 'graft', tools: ['mcp__graft'], commands: ['graft'],
+    setup: 'npm install -g @nanonets/graft, then graft build',
+  },
+  graphify: {
+    command: 'graphify', index: 'graphify-out/graph.json', tools: [], commands: ['graphify'],
+    setup: 'uv tool install graphifyy (or pipx install graphifyy), then build the graph with /graphify . in Claude Code',
+  },
+};
+const INDEXER_SCHEMA = { command: 'string', index: 'string', tools: 'string[]', commands: 'string[]', guide: 'string', guideFile: 'string', setup: 'string' };
+const SEARCH_SETTINGS = ['auto', 'none'];
+
+const onPath = (cmd, env) => /^[\w.@+-]+$/.test(cmd) && spawnSync('sh', ['-c', `command -v ${cmd}`], { encoding: 'utf8', env }).status === 0;
+const readSettings = root => { try { return readJson(path.join(root, CONFIG_FILE)); } catch { return {}; } };
+
+// The built-in indexers merged with the project's agent.codeIndexers.
+function codeIndexers(file = {}) {
+  const own = (file.agent && file.agent.codeIndexers) || {};
+  const out = {};
+  for (const name of [...Object.keys(CODE_INDEXERS), ...Object.keys(own)]) {
+    out[name] = { name, tools: [], commands: [], ...(CODE_INDEXERS[name] || {}), ...(own[name] || {}) };
+  }
+  return out;
+}
+
+// What is wrong with the code search settings (beyond their types): unknown names, incomplete indexers.
+function codeSearchErrors(file = {}) {
+  const errors = [];
+  const agent = file.agent || {};
+  const all = codeIndexers(file);
+  for (const [name, ix] of Object.entries(agent.codeIndexers || {})) {
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) errors.push(`agent.codeIndexers.${name}: names use lowercase letters, digits and dashes`);
+    if (SEARCH_SETTINGS.includes(name)) errors.push(`agent.codeIndexers.${name}: "${name}" is reserved`);
+    if (!CODE_INDEXERS[name] && !ix.command) errors.push(`agent.codeIndexers.${name}: needs "command" (the program that must be on PATH)`);
+    if (!CODE_INDEXERS[name] && !ix.guide && !ix.guideFile) errors.push(`agent.codeIndexers.${name}: needs "guide" or "guideFile" (how the agents should search with it)`);
+    if (ix.command && !/^[\w.@+-]+$/.test(ix.command)) errors.push(`agent.codeIndexers.${name}.command: a program name, not a command line`);
+  }
+  if (agent.codeSearch && !SEARCH_SETTINGS.includes(agent.codeSearch) && !all[agent.codeSearch]) {
+    errors.push(`agent.codeSearch: "${agent.codeSearch}" is not a code indexer (use auto, none, ${Object.keys(all).join(', ')})`);
+  }
+  for (const n of agent.codeSearchOrder || []) if (!all[n]) errors.push(`agent.codeSearchOrder: "${n}" is not a code indexer`);
+  return errors;
+}
+
+// Why <ix> cannot be used in <root>, or null when it can.
+function unavailable(ix, root, env) {
+  if (!ix.command || !onPath(ix.command, env)) return `${ix.name} is not installed (no ${ix.command || '?'} command)`;
+  if (ix.index && !exists(path.join(root, ix.index))) return `the project has no ${ix.name} index (${ix.index})`;
+  return null;
+}
+
+// The code search for the project: { codeSearch: <indexer name> | "none", indexer, warning }. Never an error: an
+// indexer that cannot be used falls back to Grep and Glob with a warning that says how to set one up.
+function codeSearchFor(root, file = {}, env = process.env) {
+  const setting = (file.agent && file.agent.codeSearch) || 'auto';
+  const none = warning => ({ codeSearch: 'none', indexer: null, warning });
+  if (setting === 'none') return none(null);
+  const all = codeIndexers(file);
+  if (setting !== 'auto') {
+    const ix = all[setting];
+    if (!ix) return none(`agent.codeSearch names "${setting}", which is not a code indexer; code search uses Grep and Glob`);
+    const why = unavailable(ix, root, env);
+    return why ? none(`agent.codeSearch is "${setting}" but ${why}; code search uses Grep and Glob. To set it up: ${ix.setup || 'see its documentation'}`)
+      : { codeSearch: setting, indexer: ix, warning: null };
+  }
+  for (const name of (file.agent && file.agent.codeSearchOrder) || Object.keys(all)) {
+    const ix = all[name];
+    if (ix && !unavailable(ix, root, env)) return { codeSearch: name, indexer: ix, warning: null };
+  }
+  const offers = Object.values(all).filter(ix => ix.setup).map(ix => `${ix.name} (${ix.setup})`);
+  return none(`no code indexer is available; code search uses Grep and Glob.${offers.length ? ` A code indexer is recommended: ${offers.join(', or ')}` : ''}`);
+}
+
+// The code-search text for skills and prompts: the indexer's "guide", its "guideFile" (from the project root), or
+// parts/code-search.<name>.md; Grep and Glob use parts/code-search.md.
+const PARTS_DIR = path.join(__dirname, 'prompts', 'parts');
+const SKILLS_DIR = path.join(__dirname, 'skills');
+function codeSearchGuide(search, root, partsDir = PARTS_DIR) {
+  const ix = search.indexer;
+  if (ix && ix.guide) return ix.guide.trim();
+  if (ix && ix.guideFile) return fs.readFileSync(path.resolve(root, ix.guideFile), 'utf8').trim();
+  const own = ix && path.join(partsDir, `code-search.${ix.name}.md`);
+  return fs.readFileSync(own && exists(own) ? own : path.join(partsDir, 'code-search.md'), 'utf8').trim();
+}
+const renderTemplate = (text, guide) => text.split('{{CODE_SEARCH}}').join(guide);
+
+// The skill <name> (skills/<name>.md) for this project: its {{CODE_SEARCH}} filled for the indexer in use, or Grep/Glob.
+function renderSkill(name, root, { env = process.env, skillsDir = SKILLS_DIR, partsDir = PARTS_DIR } = {}) {
+  if (!/^[a-z0-9-]+$/.test(name) || !exists(path.join(skillsDir, `${name}.md`))) return null;
+  const file = readSettings(root);
+  const search = codeSearchFor(root, codeSearchErrors(file).length ? {} : file, env);
+  return renderTemplate(fs.readFileSync(path.join(skillsDir, `${name}.md`), 'utf8'), codeSearchGuide(search, root, partsDir));
+}
 const systemTimezone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 const validTimezone = tz => { try { new Intl.DateTimeFormat('en', { timeZone: tz }); return true; } catch { return false; } };
 
@@ -604,6 +707,7 @@ function resolve(root, { env = process.env } = {}) {
   if (hasFile) {
     try { file = readJson(fileName); } catch (e) { return { config: null, errors: [`${CONFIG_FILE}: not valid JSON (${e.message})`], warnings, file: fileName }; }
     validate(file, SCHEMA, '', errors);
+    if (!errors.length) errors.push(...codeSearchErrors(file));
     if (errors.length) return { config: null, errors: errors.map(e => `${CONFIG_FILE}: ${e}`), warnings, file: fileName };
   }
 
@@ -628,8 +732,10 @@ function resolve(root, { env = process.env } = {}) {
 
   const ui = { timezone: (file.ui && file.ui.timezone) || systemTimezone() };
   if (!validTimezone(ui.timezone)) errors.push(`ui.timezone: unknown time zone "${ui.timezone}"`);
-  const codeSearch = (file.agent && file.agent.codeSearch) || 'auto';
-  const defaultLinks = [...new Set([...suites.map(s => s.dir === '.' ? 'node_modules' : `${s.dir}/node_modules`), 'node_modules'])];
+  const search = codeSearchFor(root, file, env);
+  if (search.warning) warnings.push(search.warning);
+  const indexLink = search.indexer && search.indexer.index ? [search.indexer.index.split('/')[0]] : [];
+  const defaultLinks = [...new Set([...suites.map(s => s.dir === '.' ? 'node_modules' : `${s.dir}/node_modules`), 'node_modules', ...indexLink])];
 
   const config = {
     root,
@@ -648,7 +754,8 @@ function resolve(root, { env = process.env } = {}) {
     },
     agent: {
       allowCommands: (file.agent && file.agent.allowCommands) || [],
-      codeSearch: codeSearch === 'auto' ? (graftOnPath(env) ? 'graft' : 'none') : codeSearch,
+      codeSearch: search.codeSearch,
+      codeIndexer: search.indexer,
     },
     ship: {
       envExample: file.ship && typeof file.ship.envExample === 'boolean' ? file.ship.envExample : true,
@@ -678,15 +785,15 @@ function testDir(suite) {
 
 // The tools every stage agent may use: file tools, code search, the test and lint commands, extra commands, read-only git.
 function allowedTools(config) {
-  const graft = config.agent.codeSearch === 'graft';
+  const ix = config.agent.codeIndexer || { tools: [], commands: [] };
   const bash = cmd => `Bash(${cmd}:*)`;
   return [...new Set([
     'Read', 'Write', 'Edit', 'Glob', 'Grep',
-    ...(graft ? ['mcp__graft'] : []),
+    ...ix.tools,
     ...config.suites.map(s => bash(s.testCmd)),
     ...(config.lint ? [bash(config.lint)] : []),
     ...config.agent.allowCommands.map(bash),
-    ...(graft ? [bash('graft')] : []),
+    ...ix.commands.map(bash),
     bash('ls'), bash('git status'), bash('git diff'), bash('git log'),
   ])];
 }
@@ -725,7 +832,7 @@ function shellEnv(config) {
   return Object.entries(lines).map(([k, v]) => `${k}=${v}`).join('\n') + '\n';
 }
 
-module.exports = { CONFIG_FILE, RUNNERS, detect, detectPackage, suggest, setupPlan, provision, locateTestDir, packagesBelow, resolve, validate, testDir, allowedTools, worktreeBase, shellEnv };
+module.exports = { CONFIG_FILE, RUNNERS, CODE_INDEXERS, codeIndexers, codeSearchErrors, codeSearchFor, codeSearchGuide, renderTemplate, renderSkill, detect, detectPackage, suggest, setupPlan, provision, locateTestDir, packagesBelow, resolve, validate, testDir, allowedTools, worktreeBase, shellEnv };
 
 // The project root for <dir>: the top of its git work tree, else <dir> itself.
 function findRoot(dir) {
@@ -838,10 +945,11 @@ if (require.main === module) {
   const args = process.argv.slice(2);
   const flag = f => args.includes(f);
   const valueOf = name => { const i = args.indexOf(name); return i >= 0 ? (args[i + 1] || '') : undefined; };
-  const valueAt = new Set(['--runner', '--language', '--test-dir'].map(n => args.indexOf(n)).filter(i => i >= 0).map(i => i + 1));
+  const valueAt = new Set(['--runner', '--language', '--test-dir', '--use'].map(n => args.indexOf(n)).filter(i => i >= 0).map(i => i + 1));
   const runnerArg = valueOf('--runner');
   const languageArg = valueOf('--language');
   const testDirArg = valueOf('--test-dir');
+  const useArg = valueOf('--use');
   const [cmd, dirArg] = args.filter((a, i) => !a.startsWith('--') && !valueAt.has(i));
   const json = flag('--json');
   const dir = path.resolve(dirArg || '.');
@@ -850,6 +958,60 @@ if (require.main === module) {
       + '       sdlc-config.cjs init-tests [dir] [--test-dir <folder>] [--language javascript|typescript] [--runner <name>] [--yes] [--dry-run] [--no-install]');
     process.exit(2);
   };
+  if (cmd === 'skill') {
+    // skill <name> [dir]: the skill text for the project in dir (default: the current folder). Used by .claude/commands stubs.
+    const [, name, at] = args.filter((a, i) => !a.startsWith('--') && !valueAt.has(i));
+    const text = name ? renderSkill(name, path.resolve(at || '.')) : null;
+    if (text === null) { console.error(`ERROR: no skill "${name || ''}" (skills: ${fs.readdirSync(SKILLS_DIR).map(f => f.replace(/\.md$/, '')).join(', ')})`); process.exit(2); }
+    process.stdout.write(text);
+    process.exit(0);
+  }
+  if (cmd === 'code-search') {
+    // code-search [dir] [--list | --use <name|auto|none> | --sh]: the code indexer the agents use (or "none" for Grep and
+    // Glob). Never fails on a broken settings file: it then searches as "auto" and says why.
+    const file = readSettings(dir);
+    const problems = codeSearchErrors(file);
+    for (const e of problems) console.error(`NOTE: ${e}; using "auto"`);
+    const settings = problems.length ? {} : file;
+    if (useArg !== undefined) {
+      const all = codeIndexers(settings);
+      if (!SEARCH_SETTINGS.includes(useArg) && !all[useArg]) { console.error(`ERROR: "${useArg}" is not a code indexer (use auto, none, ${Object.keys(all).join(', ')})`); process.exit(2); }
+      const target = path.join(dir, CONFIG_FILE);
+      let raw = null;
+      try { raw = fs.readFileSync(target, 'utf8'); } catch { /* new file */ }
+      let next;
+      try { next = raw === null ? {} : JSON.parse(raw); } catch { console.error(`ERROR: ${CONFIG_FILE} is not valid JSON; fix it first`); process.exit(1); }
+      next.agent = { ...(next.agent || {}), codeSearch: useArg };
+      fs.writeFileSync(target, JSON.stringify(next, null, 2) + '\n');
+      const r = codeSearchFor(dir, next, process.env);
+      console.log(`agent.codeSearch = "${useArg}" in ${CONFIG_FILE}; code search now uses ${r.codeSearch === 'none' ? 'Grep and Glob' : r.codeSearch}`);
+      if (r.warning) console.log(`NOTE: ${r.warning}`);
+      process.exit(0);
+    }
+    const r = codeSearchFor(dir, settings);
+    if (flag('--list')) {
+      const setting = (settings.agent && settings.agent.codeSearch) || 'auto';
+      console.log(`agent.codeSearch: ${setting}; in use: ${r.codeSearch === 'none' ? 'none (Grep and Glob)' : r.codeSearch}`);
+      const list = Object.values(codeIndexers(settings));
+      const width = Math.max(...list.map(ix => ix.name.length)) + 2;
+      for (const ix of list) {
+        const why = unavailable(ix, dir, process.env);
+        console.log(`  ${ix.name === r.codeSearch ? '*' : ' '} ${ix.name.padEnd(width)}${why ? `not available: ${why}` : 'available'}`
+          + `${!why || !ix.setup ? '' : `\n    ${' '.repeat(width)}set up: ${ix.setup}`}`);
+      }
+      console.log(`Choose with: node scripts/sdlc-config.cjs code-search --use <${[...Object.keys(codeIndexers(settings)), ...SEARCH_SETTINGS].join('|')}>`);
+      process.exit(0);
+    }
+    if (r.warning) console.error(`NOTE: ${r.warning}`);
+    if (flag('--sh')) {
+      const ix = r.indexer || { tools: [], commands: [] };
+      const arr = list => `(${list.map(q).join(' ')})`;
+      process.stdout.write(`CODE_SEARCH=${q(r.codeSearch)}\nCODE_SEARCH_MCP=${arr(ix.tools)}\nCODE_SEARCH_BASH=${arr(ix.commands)}\n`
+        + `CODE_SEARCH_GUIDE=${q(codeSearchGuide(r, dir))}\n`);
+    } else console.log(r.codeSearch);
+    process.exit(0);
+  }
+
   if (!['detect', 'show', 'env', 'suggest', 'init-tests'].includes(cmd) || runnerArg === '' || testDirArg === '' || (languageArg !== undefined && !LANGUAGES.includes(languageArg))) usage();
   if (!exists(dir)) { console.error(`ERROR: ${dir} does not exist`); process.exit(2); }
 

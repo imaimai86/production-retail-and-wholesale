@@ -1,0 +1,1 @@
+Find the affected code with Grep (symbol and text searches) and Glob (file names), and follow each function to its callers with another Grep for its name. Read only the files you need, and only the relevant parts of large files.

@@ -1,0 +1,1 @@
+Find the affected code with graphify, the code knowledge graph in graphify-out/: `graphify query "<what you need>"` to locate it, `graphify explain "<symbol or concept>"` for what it is and what it connects to, and `graphify path "<A>" "<B>"` for how two parts are linked. Read only the files it points to; do not read whole files you do not need.

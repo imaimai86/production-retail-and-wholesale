@@ -39,7 +39,7 @@ To view the Swagger UI locally:
 
 ## Graft setup (required for the SDLC workflow)
 
-The Plan stage of `scripts/sdlc.sh` and the `/plan` command use [graft](https://www.npmjs.com/package/@nanonets/graft), a prebuilt code graph, to find the files a change touches. Each developer needs it installed and built once. If graft is missing, the Claude hooks do nothing silently and the Plan stage loses its code graph.
+The Plan stage of `scripts/sdlc.sh` and the `/plan` and `/triage` commands use a code indexer to find the files a change touches: [graft](https://www.npmjs.com/package/@nanonets/graft) (set up below), [graphify](https://github.com/safishamsi/graphify), or one declared in `sdlc.config.json`. One is recommended, none is required: without one they search with Grep and Glob, the pipeline prints a note, and the graft hooks do nothing. `node scripts/sdlc-config.cjs code-search --list` shows what is available and `--use <graft|graphify|auto|none>` chooses. Each developer who wants graft installs and builds it once.
 
 1. **Install** (needs Node.js and npm):
    ```bash
