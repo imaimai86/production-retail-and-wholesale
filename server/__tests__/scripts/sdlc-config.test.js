@@ -5,7 +5,7 @@ const { spawnSync } = require('child_process');
 
 const root = path.resolve(__dirname, '../../..');
 const helper = path.join(root, 'scripts/sdlc-config.cjs');
-const { detect, suggest, setupPlan, provision, resolve, testDir, allowedTools, worktreeBase, shellEnv } = require(helper);
+const { detect, suggest, setupPlan, provision, resolve, testDir, allowedTools, worktreeBase, shellEnv, codeIndexers } = require(helper);
 
 // A throwaway project: { 'path/file': text or object (written as JSON) }.
 function project(files) {
@@ -180,7 +180,9 @@ describe('settings', () => {
       'sdlc.config.json': { backlogDir: '', suits: [], git: { conflictSuffixStart: 'x' }, agent: { codeSearch: 'grep' }, suites: [{ runner: 'karma' }] },
     }));
     for (const e of ['backlogDir: must be a non-empty string', 'suits: unknown setting', 'git.conflictSuffixStart: must be a whole number',
-      'agent.codeSearch: must be one of graft, none, auto', 'suites[0].runner: must be one of']) expect(bad).toContain(e);
+      'suites[0].runner: must be one of']) expect(bad).toContain(e);
+    expect(errorsOf(project({ 'package.json': { scripts: { test: 'jest' } }, 'sdlc.config.json': { agent: { codeSearch: 'grep' } } })))
+      .toContain('agent.codeSearch: "grep" is not a code indexer (use auto, none, graft, graphify)');
 
     expect(errorsOf(project({ 'sdlc.config.json': { suites: [{ dir: 'missing' }] } }))).toContain('suites[0].dir: folder missing does not exist');
     expect(errorsOf(project({ 'x/a.txt': '', 'sdlc.config.json': { suites: [{ dir: 'x' }] } }))).toContain('suites[0]: no test runner found in x; set "runner"');
@@ -229,7 +231,8 @@ describe('this repository', () => {
     expect(testDir(c.suites[0])).toBe(shVar('TEST_DIR'));
     expect(`${c.backlogDir}/index.md`).toBe(shVar('BACKLOG'));
     for (const withGraft of [true, false]) {
-      expect(allowedTools({ ...c, agent: { ...c.agent, codeSearch: withGraft ? 'graft' : 'none' } })).toEqual(shAllowed(withGraft));
+      const agent = { ...c.agent, codeSearch: withGraft ? 'graft' : 'none', codeIndexer: withGraft ? codeIndexers({}).graft : null };
+      expect(allowedTools({ ...c, agent })).toEqual(shAllowed(withGraft));
     }
     expect(c.worktree.link).toEqual(modSh.match(/for p in (server\/node_modules[^;]*);/)[1].split(' '));
     expect(worktreeBase(c)).toBe(path.join(path.dirname(root), `${path.basename(root)}-sdlc`));

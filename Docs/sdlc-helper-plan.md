@@ -181,7 +181,7 @@ Each phase leaves this repo working.
 4. **Where to start:** phase 1 is built in this repo, then extracted into `sdlc-helper` in phase 4.
 
 5. **Name and repo (2026-10-15):** `sdlc-helper`, under `imaimai86` (npm package `sdlc-helper`, GitHub `imaimai86/sdlc-helper`).
-6. **Graft (2026-10-15):** recommended, not required. Every skill and stage prompt that searches code has a graft
-   version and a Grep/Glob version, and the one used is picked by what is available: graft when it is installed and
-   the project has its `graft/` index, unless `agent.codeSearch` is `"none"`. Without graft the pipeline prints a
-   note recommending it and carries on.
+6. **Code indexing (2026-10-15):** a code indexer is recommended, not required. graft and graphify are built in, the
+   project can declare others (`agent.codeIndexers`), and the user selects one, `auto` (first available) or `none`
+   (`agent.codeSearch`). Every skill and stage prompt that searches code has a version per indexer and a Grep/Glob
+   version, picked by what is selected and available; without one the pipeline prints a note and carries on.
