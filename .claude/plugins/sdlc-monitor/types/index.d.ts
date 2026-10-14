@@ -81,11 +81,17 @@ declare module 'claude-code' {
       launching: Record<string, number>
       // answers typed for a paused run, keyed `<slug>:<question number>`
       draft: Record<string, string>
+      // index of the first board column drawn
+      boardOffset: number
       notice: string
       // what a button press is working on; '' when idle
       busy: string
+      // key of the button whose action is running (its label is a spinner); '' when none
+      working: string
       // the spinner frame shown beside it
       frame: number
+      // true while any refresh runs: the Refresh button spins and takes no press
+      refreshing: boolean
       // the last `model list --json` result; null when never loaded or the last load failed
       configList: Record<string, ConfigProvider> | null
       // the message line of a failed `model list --json`; '' otherwise

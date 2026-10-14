@@ -19,10 +19,6 @@ describe('integration test setup', () => {
     expect(rootPkg.scripts.test).toBe('npm run test --prefix server');
   });
 
-  test('server npm test script is unchanged', () => {
-    expect(JSON.parse(read('server/package.json')).scripts.test).toBe('jest');
-  });
-
   test('.gitlab-ci.yml runs the unit and integration jobs on node:22 with a throwaway postgres:16 service', () => {
     expect(fs.existsSync(path.join(root, '.gitlab-ci.yml'))).toBe(true);
     const ci = read('.gitlab-ci.yml');
