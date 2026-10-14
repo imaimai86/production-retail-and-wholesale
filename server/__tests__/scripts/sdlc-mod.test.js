@@ -564,6 +564,41 @@ describe('sdlc-mod.sh changes', () => {
     expect(mod(['changes', 'slow-one']).stdout).toBe('1 1\n');
   });
 
+  test('--all counts every recorded pipeline, or the slugs named, in one JSON line; one that cannot be counted gets its error', () => {
+    const a = pipeline('alpha');
+    writeIn(a, 'a.txt'); writeIn(a, 'b.txt');
+    commit(a, 'two');
+    writeIn(a, 'c.txt');
+    const b = pipeline('slow-one');
+    writeIn(b, 'x.txt');
+    // a record whose worktree was deleted by hand
+    const gone = pipeline('fail-one');
+    fs.rmSync(gone, { recursive: true, force: true });
+
+    // the same numbers as the single form
+    const one = JSON.parse(mod(['changes', 'alpha', '--json']).stdout);
+    let r = mod(['changes', '--all']);
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim().split('\n')).toHaveLength(1);
+    expect(JSON.parse(r.stdout)).toEqual({
+      runs: {
+        alpha: { changed: one.changed, uncommitted: one.uncommitted },
+        'slow-one': { changed: 1, uncommitted: 1 },
+        'fail-one': { error: 'Worktree for fail-one is gone' },
+      },
+    });
+
+    // only the slugs named; a slug with neither record nor worktree
+    r = mod(['changes', '--all', 'slow-one', 'ghost']);
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout)).toEqual({ runs: { 'slow-one': { changed: 1, uncommitted: 1 }, ghost: { error: 'No pipeline for ghost' } } });
+
+    // a bad slug is a usage error; no records at all is an empty answer
+    expect(mod(['changes', '--all', 'Bad Slug']).status).toBe(2);
+    for (const f of fs.readdirSync(path.join(repo, '.git/sdlc-runs'))) fs.rmSync(path.join(repo, '.git/sdlc-runs', f));
+    expect(mod(['changes', '--all']).stdout.trim()).toBe('{"runs":{}}');
+  });
+
   describe('base and merge-base', () => {
     // main has moved one commit past `root`; the worktree starts from main and commits w.txt.
     function twoCommits() {

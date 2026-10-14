@@ -57,7 +57,10 @@ const PENDING = [
 type ModelReply = { exitCode?: number; stdout?: string; stderr?: string } | undefined
 
 // A test can hold the wrapper's stop / discard call open to look at the pane while it works.
+const repoTop = { value: '' }
 const gate: { wait: Promise<void> } = { wait: Promise.resolve() }
+// the same for the wrapper's `changes --all` count, held open to look at the Refresh button while it works
+const countGate: { wait: Promise<void> } = { wait: Promise.resolve() }
 
 function world(on: any, runs: RunSpec[] = [], model?: (argv: string[]) => ModelReply | Promise<ModelReply>) {
   const opens: { id: string; title: string }[] = []
@@ -67,7 +70,9 @@ function world(on: any, runs: RunSpec[] = [], model?: (argv: string[]) => ModelR
   const envs: Record<string, string>[] = []
   const writes: { path: string; text: string }[] = []
   const file = (name: string) => ({ name, kind: 'file', size: 1 })
-  const pidOf = (r: RunSpec) => (r.alive === false ? 999 : 100)
+  // slugs the wrapper stopped: their process is gone
+  const stopped = new Set<string>()
+  const pidOf = (r: RunSpec) => (r.alive === false || stopped.has(r.slug) ? 999 : 100)
   // slugs whose run record the wrapper has deleted (discard); revive() brings one back, as a new start would
   const gone = new Set<string>()
   // how many one-by-one `permit` calls were made, so the stub can answer how many asks are left
@@ -87,6 +92,7 @@ function world(on: any, runs: RunSpec[] = [], model?: (argv: string[]) => ModelR
     return { value: [] }
   })
   on('fs.read', (_: unknown, e: { path: string }) => {
+    if (e.path.endsWith('Docs/backlog/one/brief.md')) return { value: '# one\n\nType: bug\nFix the first thing in detail.\n' }
     for (const g of gone) if (e.path.endsWith(`sdlc-runs/${g}.discarded`)) return { value: `git branch sdlc/${g} abc123\n` }
     for (const r of runs) {
       if (gone.has(r.slug)) continue
@@ -136,6 +142,7 @@ function world(on: any, runs: RunSpec[] = [], model?: (argv: string[]) => ModelR
     if (e.argv[2] === 'stop') {
       const bad = runs.find(r => r.slug === e.argv[3] && r.stopError)
       if (bad) return { value: { exitCode: 3, stdout: '', stderr: `${bad.stopError}\n`, isStdoutTruncated: false } }
+      stopped.add(e.argv[3])
     }
     if (e.argv[2] === 'permit') {
       const n = runs.find(r => r.slug === e.argv[3])?.permissions?.length ?? 0
@@ -143,14 +150,18 @@ function world(on: any, runs: RunSpec[] = [], model?: (argv: string[]) => ModelR
 
       return out(e.argv[5] === 'all' ? '0' : String(Math.max(0, n - decided)))
     }
-    if (e.argv[0] === 'git') return out('.git\n')
+    if (e.argv[0] === 'git') return out(e.argv.includes('--git-common-dir') && repoTop.value ? `${repoTop.value}/.git\n` : '.git\n')
     if (e.argv[0] === 'node') return out(JSON.stringify(PENDING))
     if (e.argv[0] === 'kill') return out('', e.argv[2] === '100' ? 0 : 1)
-    if (e.argv[1] === 'scripts/sdlc-mod.sh' && e.argv[2] === 'changes') {
-      const c = runs.find(r => r.slug === e.argv[3])?.changes
-      if (!c) return out('', 1)
+    if (e.argv[1] === 'scripts/sdlc-mod.sh' && e.argv[2] === 'changes' && e.argv[3] === '--all') {
+      await countGate.wait
+      const counted: Record<string, unknown> = {}
+      for (const slug of e.argv.slice(4)) {
+        const c = runs.find(r => r.slug === slug)?.changes
+        counted[slug] = c ? { changed: c.changed, uncommitted: c.uncommitted } : { error: `Worktree for ${slug} is gone` }
+      }
 
-      return out(JSON.stringify({ slug: e.argv[3], worktree: WT, changed: c.changed, uncommitted: c.uncommitted, files: [] }))
+      return out(JSON.stringify({ runs: counted }))
     }
 
     if (model && e.argv[1] === 'scripts/sdlc-mod.sh' && e.argv[2] === 'model') {
@@ -189,7 +200,8 @@ async function open($: any) {
 }
 
 const launches = (calls: string[][]) => calls.filter(c => c[0] === 'bash' && c[1] === '-c').map(c => c[c.length - 1])
-const changesCalls = (calls: string[][], slug: string) => calls.filter(c => c[2] === 'changes' && c[3] === slug)
+// the `changes --all <slug>...` calls that counted `slug`
+const changesCalls = (calls: string[][], slug: string) => calls.filter(c => c[2] === 'changes' && c[3] === '--all' && c.slice(4).includes(slug))
 const stops = (calls: string[][]) => calls.filter(c => c[0] === 'bash' && c[2] === 'stop').map(c => c[3])
 const text = async (ui: any, re: RegExp) => (await ui.find({ type: 'Text', text: re }))?.text
 
@@ -214,7 +226,7 @@ test('Run selected starts each pipeline detached through the wrapper', async ($,
   await ui.press({ key: 'run-selected' })
 
   const cmd = w.calls.find(c => c[1] === '-c')!
-  expect(cmd[2]).toContain('nohup bash scripts/sdlc-mod.sh run "$0"')
+  expect(cmd[2]).toContain('nohup bash "${SDLC_WRAPPER:-scripts/sdlc-mod.sh}" run "$0"')
   expect(cmd[2]).toContain('&')
   expect(cmd[cmd.length - 1]).toBe('one')
   expect(w.envs[w.calls.indexOf(cmd)].SDLC_MAX_PARALLEL).toBe('2')
@@ -254,7 +266,7 @@ test('a running pipeline shows stages, agent, attempt and test progress', async 
 
   expect(await text(ui, /^alpha\s+running/)).toBeDefined()
   expect(await text(ui, /3\/6 stages/)).toBeDefined()
-  expect(await text(ui, /impl-2/)).toMatch(/03:12/)
+  expect(await text(ui, /^impl-2\s+opus/)).toMatch(/03:12/) // the agent line, not the board card
   expect(await text(ui, /attempt/)).toMatch(/2\/4/)
   expect(await text(ui, /opus · medium\s+running/)).toBeDefined() // the running agent's model and effort
   expect(await text(ui, /sonnet · medium/)).toBeDefined() // the Implement stage box
@@ -267,7 +279,7 @@ test('a running pipeline shows stages, agent, attempt and test progress', async 
 test('a paused pipeline shows its questions; answers are written and the pipeline resumes', async ($, on) => {
   const w = world(on, [{ slug: 'alpha', state: 'paused', stage: 'Spec', questions: QUESTIONS }])
   const ui = await open($)
-  expect(await text(ui, /^⏸ alpha/)).toBeDefined()
+  expect((await ui.find({ key: 'open-alpha' }))?.props.label).toMatch(/^⏸ alpha/) // the board card
   await ui.press({ key: 'open-alpha' })
 
   expect(await text(ui, /0\/2 questions answered/)).toBeDefined()
@@ -402,7 +414,7 @@ test('Discard needs a second press; the pane then offers Start, and a started pi
 
   await ui.press({ key: 'start' })
   expect(launches()).toHaveLength(1)
-  expect(launches()[0][2]).toContain('nohup bash scripts/sdlc-mod.sh run "$0"')
+  expect(launches()[0][2]).toContain('nohup bash "${SDLC_WRAPPER:-scripts/sdlc-mod.sh}" run "$0"')
   expect(launches()[0][launches()[0].length - 1]).toBe('alpha')
   expect(await ui.find({ key: 'start' })).toBeUndefined()
   expect(await text(ui, /Starting/)).toBeDefined()
@@ -525,27 +537,79 @@ test('the pipeline view shows the Files line with the base, or the word base, an
   await ui.unmount()
 })
 
-test('a finished pipeline is not recounted within 10 seconds; a running one is recounted on every refresh', async ($, on) => {
+test('every due pipeline is counted in one call; an unchanged one is recounted only when running (every 15 s) or on Refresh', async ($, on) => {
   const w = world(on, [
     { slug: 'cc-fin', state: 'done', stage: 'Commit', changes: { changed: 2, uncommitted: 0 } },
     { slug: 'cc-live', state: 'running', stage: 'Implement', agent: 'impl-1', changes: { changed: 1, uncommitted: 1 } },
   ])
   const ui = await open($)
+  // the first refresh counts both in one call
+  const both = w.calls.filter(c => c[2] === 'changes')
+  expect(both).toHaveLength(1)
+  expect(both[0].slice(3)).toEqual(['--all', 'cc-live', 'cc-fin'])
   const fin0 = changesCalls(w.calls, 'cc-fin').length
   const live0 = changesCalls(w.calls, 'cc-live').length
-  expect(fin0).toBe(1)
 
+  // nothing changed and under 15 s: neither is recounted
   await w.clock.advance(2000)
   await $.command.run({ command: 'sdlc-monitor', args: '' })
   expect(changesCalls(w.calls, 'cc-fin').length).toBe(fin0)
-  expect(changesCalls(w.calls, 'cc-live').length).toBeGreaterThan(live0)
+  expect(changesCalls(w.calls, 'cc-live').length).toBe(live0)
 
-  await w.clock.advance(10000)
+  // 15 s later the running one is recounted, the finished one is not
+  await w.clock.advance(15000)
   await $.command.run({ command: 'sdlc-monitor', args: '' })
+  expect(changesCalls(w.calls, 'cc-live').length).toBeGreaterThan(live0)
+  expect(changesCalls(w.calls, 'cc-fin').length).toBe(fin0)
+
+  // Refresh recounts every pipeline, and its label is back once it is done
+  await ui.press({ key: 'refresh' })
   expect(changesCalls(w.calls, 'cc-fin').length).toBeGreaterThan(fin0)
+  expect(String((await ui.find({ key: 'refresh' }))?.props.label)).toBe('Refresh')
   await ui.unmount()
 })
 
+test('Refresh shows a spinner while it works and ignores a second press meanwhile', async ($, on) => {
+  const w = world(on, [{ slug: 'cc-fin', state: 'done', stage: 'Commit', changes: { changed: 2, uncommitted: 0 } }])
+  const ui = await open($)
+  const before = changesCalls(w.calls, 'cc-fin').length
+
+  // hold the count open so the press is still working while the pane is looked at
+  let release: () => void = () => {}
+  countGate.wait = new Promise<void>(r => (release = r))
+  const first = ui.press({ key: 'refresh' })
+  await new Promise(r => setTimeout(r, 20))
+  expect(String((await ui.find({ key: 'refresh' }))?.props.label)).toMatch(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Refreshing/)
+  await ui.press({ key: 'refresh' })
+  release()
+  await first
+  countGate.wait = Promise.resolve()
+
+  expect(changesCalls(w.calls, 'cc-fin').length).toBe(before + 1)
+  expect(String((await ui.find({ key: 'refresh' }))?.props.label)).toBe('Refresh')
+  await ui.unmount()
+})
+
+test('Refresh spins and takes no press while any refresh runs, not only its own', async ($, on) => {
+  const w = world(on, [{ slug: 'cc-fin', state: 'done', stage: 'Commit', changes: { changed: 2, uncommitted: 0 } }])
+  const ui = await $.ui.mount({ plugin: 'sdlc-monitor', surface: 'terminal', component: 'Pane', requestId: 'sdlc', props: {} })
+
+  // a refresh the button did not start (the command's), held open in its count
+  let release: () => void = () => {}
+  countGate.wait = new Promise<void>(r => (release = r))
+  const opening = $.command.run({ command: 'sdlc-monitor', args: '' })
+  await new Promise(r => setTimeout(r, 20))
+  expect(String((await ui.find({ key: 'refresh' }))?.props.label)).toMatch(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Refreshing/)
+  await ui.press({ key: 'refresh' })
+  release()
+  await opening
+  countGate.wait = Promise.resolve()
+
+  // the press was ignored: only the command's refresh counted
+  expect(changesCalls(w.calls, 'cc-fin')).toHaveLength(1)
+  expect(String((await ui.find({ key: 'refresh' }))?.props.label)).toBe('Refresh')
+  await ui.unmount()
+})
 
 // ---- CONFIG pane ----
 
@@ -967,6 +1031,10 @@ test('Stop and Discard show what they are doing until the wrapper returns', asyn
   const pressing = ui.press({ key: 'stop' })
   await new Promise(r => setTimeout(r, 20))
   expect(await text(ui, /Stopping alpha/)).toBeDefined()
+  // the button itself spins, offers no second choice, and nothing is announced until the stop is complete
+  expect(String((await ui.find({ key: 'stop' }))?.props.label)).toMatch(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Stopping/)
+  expect(await ui.find({ key: 'cancel-stop' })).toBeUndefined()
+  expect(w.toasts).not.toContain('Stopped alpha.')
   release()
   await pressing
   gate.wait = Promise.resolve()
@@ -995,5 +1063,89 @@ test('a failed Stop says why instead of reporting success', async ($, on) => {
 
   expect(w.toasts).toContain('Could not stop alpha: could not kill pid 100')
   expect(w.toasts).not.toContain('Stopped alpha.')
+  await ui.unmount()
+})
+
+async function openAt($: any, bodyColumns: number) {
+  await $.command.run({ command: 'sdlc-monitor', args: '' })
+
+  return $.ui.mount({ plugin: 'sdlc-monitor', surface: 'terminal', component: 'Pane', requestId: 'sdlc', props: { bodyColumns } })
+}
+
+test('board: a wide pane shows every column; pending items sit in Backlog and runs in their stage column', async ($, on) => {
+  world(on, [{ slug: 'alpha', state: 'running', stage: 'Implement', agent: 'impl-1', attempt: '1/4' }])
+  const ui = await openAt($, 200)
+
+  expect(await text(ui, /columns 1-7 of 7/)).toBeDefined()
+  expect(await ui.find({ key: 'sel-one' })).toBeDefined()
+  expect(await ui.find({ key: 'open-alpha' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('board: a narrow pane windows the columns and the arrows move the window', async ($, on) => {
+  world(on)
+  const ui = await openAt($, 60)
+
+  expect(await text(ui, /columns 1-2 of 7/)).toBeDefined()
+  await ui.press({ key: 'board-right' })
+  expect(await text(ui, /columns 2-3 of 7/)).toBeDefined()
+  await ui.press({ key: 'board-left' })
+  expect(await text(ui, /columns 1-2 of 7/)).toBeDefined()
+  await ui.unmount()
+})
+
+test('board: opening a pipeline keeps the board at a quarter, scrolled to the pipeline column, with Close to go back', async ($, on) => {
+  world(on, [{ slug: 'alpha', state: 'running', stage: 'Implement', agent: 'impl-1', attempt: '1/4' }])
+  const ui = await openAt($, 200)
+  await ui.press({ key: 'open-alpha' })
+
+  expect(await text(ui, /columns \d-\d of 7/)).toMatch(/columns 4-5 of 7/) // 50 cells fit two columns, moved to show Implement
+  expect(await ui.find({ key: 'open-alpha' })).toBeDefined()
+  await ui.press({ key: 'back' })
+  expect(await text(ui, /columns 1-7 of 7/)).toBeDefined()
+  await ui.unmount()
+})
+
+test('backlog: Open on a pending card shows its brief read-only, a missing brief says so, Close goes back', async ($, on) => {
+  world(on)
+  const ui = await openAt($, 200)
+
+  await ui.press({ key: 'more-one' })
+  expect(await text(ui, /Ticket \(brief.md\)/)).toBeDefined()
+  expect(await text(ui, /^# one/)).toBeDefined()
+  expect(await text(ui, /Fix the first thing in detail/)).toBeDefined()
+  await ui.press({ key: 'more-two' })
+  expect(await text(ui, /No brief.md found/)).toBeDefined()
+  await ui.press({ key: 'back' })
+  expect(await text(ui, /columns 1-7 of 7/)).toBeDefined()
+  await ui.unmount()
+})
+
+test('every repo path hangs on the main working tree, so a session inside a pipeline worktree or a subfolder still works', async ($, on) => {
+  repoTop.value = '/repo'
+  const w = world(on, [{ slug: 'alpha', state: 'paused', stage: 'Plan', permissions: [{ stage: 'Plan', tool: 'Bash', detail: 'npm prefix -g', rule: 'Bash(npm prefix:*)', protected: false }] }])
+  const ui = await openAt($, 200)
+  await ui.press({ key: 'open-alpha' })
+  await ui.press({ key: 'perm-allow:0' })
+
+  expect(w.calls.some(c => c[0] === 'bash' && c[1] === '/repo/scripts/sdlc-mod.sh' && c[2] === 'permit')).toBe(true)
+  expect(w.envs.some(env => env.SDLC_WRAPPER === '/repo/scripts/sdlc-mod.sh')).toBe(true)
+  expect(w.calls.some(c => c[0] === 'node' && c[1] === '/repo/scripts/backlog-list.cjs')).toBe(true)
+  repoTop.value = ''
+  await ui.unmount()
+})
+
+test('a running pipeline spins on its board card and on its active stage box; a paused one does not', async ($, on) => {
+  world(on, [
+    { slug: 'alpha', state: 'running', stage: 'Plan', agent: 'plan-agent', attempt: '' },
+    { slug: 'beta', state: 'paused', stage: 'Plan', questions: QUESTIONS },
+  ])
+  const ui = await openAt($, 200)
+  const spin = /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/
+
+  expect((await ui.find({ key: 'open-alpha' }))?.props.label).toMatch(spin)
+  expect((await ui.find({ key: 'open-beta' }))?.props.label).toMatch(/^⏸/)
+  await ui.press({ key: 'open-alpha' })
+  expect(await text(ui, /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Plan/)).toBeDefined()
   await ui.unmount()
 })

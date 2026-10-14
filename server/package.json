@@ -4,7 +4,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "test": "jest",
+    "test": "jest --maxWorkers=4",
     "test:integration": "jest --runInBand --testPathIgnorePatterns=/node_modules/ --testPathPattern=__tests__/integration/",
     "lint": "eslint .",
     "generate-spec": "cross-env NODE_ENV=development node scripts/generate-openapi-spec.js",

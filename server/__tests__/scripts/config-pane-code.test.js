@@ -16,12 +16,14 @@ describe('sdlc-monitor CONFIG pane code', () => {
     expect(source).toMatch(/command: 'sdlc-config'/);
 
     // the CONFIG button above the prompt, beside SDLC
-    expect(source).toMatch(/key="config-open" label="CONFIG"/);
+    // its label is CONFIG, a spinner while the pane opens
+    expect(source).toMatch(/key="config-open" label=\{labelOf\(.*'config-open', 'CONFIG', 'Opening\.\.\.'\)\}/);
     expect(source).toMatch(/key="sdlc-open" label="SDLC"/);
 
     // rendered through the wrapper, never the registry file
     expect(source).toMatch(/requestId: CONFIG_PANE/);
-    expect(source).toMatch(/\['bash', WRAPPER, 'model', \.\.\.args\]/);
+    // the wrapper path hangs on the main working tree (wrapperPath), so it works from a pipeline worktree too
+    expect(source).toMatch(/\['bash', await wrapperPath\(\$\), 'model', \.\.\.args\]/);
     expect(source).not.toMatch(/models\.json|sdlc-models\.cjs/);
 
     // the list page (Add provider, Edit) and the form page (Save, Save and add another, Cancel)

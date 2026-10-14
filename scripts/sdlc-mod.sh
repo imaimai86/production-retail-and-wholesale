@@ -8,6 +8,8 @@
 #   scripts/sdlc-mod.sh restart <slug> [--yes]   stop it if running, discard it, and start again from Spec
 #   scripts/sdlc-mod.sh status         one line per known run
 #   scripts/sdlc-mod.sh changes <slug> [--json]   files changed in the pipeline's worktree: "<changed> <uncommitted>" (--json adds the file list)
+#   scripts/sdlc-mod.sh changes --all [<slug>...]   the same counts for every recorded pipeline (or the slugs named) in one call:
+#                                               one JSON line {"runs":{"<slug>":{"changed":n,"uncommitted":n}|{"error":"..."}}}
 #   scripts/sdlc-mod.sh watch <slug> [--once]   live view of one pipeline: its status.json line, run state, uncommitted files and the
 #                                               tail of run.out, read from its worktree (or the current directory for a run started
 #                                               in place). Refreshes every WATCH_INTERVAL seconds (default 3); --once prints one frame.
@@ -30,7 +32,7 @@ MAX_PARALLEL="${SDLC_MAX_PARALLEL:-2}"
 WT_BASE="${SDLC_WT_BASE:-$(dirname "$ROOT")/$(basename "$ROOT")-sdlc}"
 
 now() { date +%Y-%m-%dT%H:%M:%S; }
-usage() { echo "Usage: $0 run <slug> | stop <slug> | discard <slug> [--yes] [--stop] | restart <slug> [--yes] | status | changes <slug> [--json] | watch <slug> [--once] | permit <slug> allow|always|deny [n|all] | model list [--json] | model add <provider> --endpoint <url> --key-env <VAR> --models a,b [--effort] | model add-model|remove-model <provider> <model> | model remove <provider> | model test <provider>/<model>" >&2; exit 2; }
+usage() { echo "Usage: $0 run <slug> | stop <slug> | discard <slug> [--yes] [--stop] | restart <slug> [--yes] | status | changes <slug> [--json] | changes --all [<slug>...] | watch <slug> [--once] | permit <slug> allow|always|deny [n|all] | model list [--json] | model add <provider> --endpoint <url> --key-env <VAR> --models a,b [--effort] | model add-model|remove-model <provider> <model> | model remove <provider> | model test <provider>/<model>" >&2; exit 2; }
 check_slug() { [[ "${1:-}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "Invalid slug '${1:-}': lowercase letters, digits and dashes only" >&2; exit 2; }; }
 json_get() { node -e 'try{const v=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))[process.argv[2]];process.stdout.write(v===undefined||v===null?"":String(v))}catch(e){}' "$1" "$2"; }
 # kill -0 also succeeds on a zombie (a process that has exited but whose parent has not collected it): that is not alive.
@@ -170,7 +172,7 @@ cmd_run() {
 }
 
 cmd_stop() {
-  local slug="$1" f pid
+  local slug="$1" f pid i
   check_slug "$slug"
   f="$REG/$slug.json"
   [ -f "$f" ] || { echo "No run recorded for $slug" >&2; exit 1; }
@@ -178,6 +180,9 @@ cmd_stop() {
   alive "$pid" || { echo "$slug is not running"; exit 0; }
   : > "$REG/$slug.interrupt"
   killtree "$pid"
+  # report the stop only once the pipeline is really gone (the pane shows a loader until then)
+  for i in $(seq 1 100); do alive "$pid" || break; sleep 0.2; done
+  alive "$pid" && { echo "could not stop $slug (pid $pid)" >&2; exit 1; }
   echo "stopped $slug"
 }
 
@@ -276,6 +281,33 @@ cmd_watch() {
   done
 }
 
+# The counting used by both forms of `changes`: count(tc, ts) reads the committed file list (diff --name-only -z) and the
+# status (status --porcelain -z) and returns the sorted changed files and the number of uncommitted entries.
+COUNT_JS='
+  const fs = require("fs");
+  function count(tc, ts) {
+    const set = new Set(fs.readFileSync(tc, "utf8").split("\0").filter(Boolean));
+    const st = fs.readFileSync(ts, "utf8").split("\0").filter(Boolean);
+    let m = 0;
+    for (let i = 0; i < st.length; i++) {
+      const code = st[i].slice(0, 2);
+      set.add(st[i].slice(3));
+      m++;
+      if (code[0] === "R" || code[0] === "C" || code[1] === "R" || code[1] === "C") i++;
+    }
+    return { files: [...set].sort(), m };
+  }
+'
+
+# The committed and uncommitted file lists of worktree $1 against base $2, written to $3 and $4.
+list_changes() {
+  local mb
+  mb="$(git -C "$1" merge-base HEAD "$2" 2>/dev/null || true)"
+  : > "$3"
+  if [ -n "$mb" ]; then git -C "$1" diff --name-only -z "$mb"..HEAD > "$3" 2>/dev/null || true; fi
+  git -C "$1" status --porcelain -z --untracked-files=all > "$4" 2>/dev/null || true
+}
+
 # changes <slug> [--json]: files the pipeline changed, counted in its own worktree (committed since the merge-base, plus uncommitted).
 cmd_changes() {
   local slug="" json=0 a f wt base mb tc ts
@@ -298,26 +330,65 @@ cmd_changes() {
   base="$(json_get "$f" base 2>/dev/null || true)"
   [ -n "$base" ] || base="$(pick_base)"
   tc="$(mktemp)"; ts="$(mktemp)"
-  mb="$(git -C "$wt" merge-base HEAD "$base" 2>/dev/null || true)"
-  if [ -n "$mb" ]; then git -C "$wt" diff --name-only -z "$mb"..HEAD > "$tc" 2>/dev/null || true; fi
-  git -C "$wt" status --porcelain -z --untracked-files=all > "$ts" 2>/dev/null || true
-  node -e '
-    const fs = require("fs");
+  list_changes "$wt" "$base" "$tc" "$ts"
+  node -e "$COUNT_JS"'
     const [slug, wt, json, tc, ts] = process.argv.slice(1);
-    const set = new Set(fs.readFileSync(tc, "utf8").split("\0").filter(Boolean));
-    const st = fs.readFileSync(ts, "utf8").split("\0").filter(Boolean);
-    let m = 0;
-    for (let i = 0; i < st.length; i++) {
-      const code = st[i].slice(0, 2);
-      set.add(st[i].slice(3));
-      m++;
-      if (code[0] === "R" || code[0] === "C" || code[1] === "R" || code[1] === "C") i++;
-    }
-    const files = [...set].sort();
+    const { files, m } = count(tc, ts);
     if (json === "1") process.stdout.write(JSON.stringify({ slug, worktree: wt, changed: files.length, uncommitted: m, files: files.slice(0, 50) }) + "\n");
     else process.stdout.write(files.length + " " + m + "\n");
   ' "$slug" "$wt" "$json" "$tc" "$ts" || { rm -f "$tc" "$ts"; exit 1; }
   rm -f "$tc" "$ts"
+}
+
+# changes --all [<slug>...]: the counts of every recorded pipeline (or of the slugs named) in one call, so a monitor watching
+# several pipelines starts one wrapper, one node to read the records and one node to count, not three of each per pipeline.
+# A pipeline that cannot be counted gets {"error": ...} with the message the single form prints; the others are still counted.
+cmd_changes_all() {
+  local tmp s wt base rec def="" f
+  local -a slugs=()
+  for s in "$@"; do check_slug "$s"; slugs+=("$s"); done
+  if [ ${#slugs[@]} -eq 0 ]; then
+    for f in "$REG"/*.json; do [ -f "$f" ] && slugs+=("$(basename "$f" .json)"); done
+  fi
+  if [ ${#slugs[@]} -eq 0 ]; then echo '{"runs":{}}'; return 0; fi
+  tmp="$(mktemp -d)"
+  # slug <TAB> record exists (1/0) <TAB> worktree <TAB> base, for every slug, from one read of the records
+  node -e '
+    const fs = require("fs");
+    const [reg, ...slugs] = process.argv.slice(1);
+    const s = v => (v === undefined || v === null ? "" : String(v)).replace(/[\t\n]/g, " ");
+    for (const slug of slugs) {
+      const f = `${reg}/${slug}.json`;
+      let r = null;
+      try { r = JSON.parse(fs.readFileSync(f, "utf8")); } catch (e) { r = fs.existsSync(f) ? {} : null; }
+      process.stdout.write([slug, r ? 1 : 0, s(r && r.worktree), s(r && r.base)].join("\t") + "\n");
+    }
+  ' "$REG" "${slugs[@]}" > "$tmp/where"
+  while IFS=$'\t' read -r s rec wt base; do
+    if [ -z "$wt" ] || [ ! -d "$wt" ]; then wt="$WT_BASE/$s"; fi
+    if [ ! -d "$wt" ]; then
+      if [ "$rec" = 1 ]; then echo "Worktree for $s is gone" > "$tmp/$s.err"; else echo "No pipeline for $s" > "$tmp/$s.err"; fi
+      continue
+    fi
+    if [ -z "$base" ]; then [ -n "$def" ] || def="$(pick_base)"; base="$def"; fi
+    list_changes "$wt" "$base" "$tmp/$s.tc" "$tmp/$s.ts"
+  done < "$tmp/where"
+  node -e "$COUNT_JS"'
+    const [tmp, ...slugs] = process.argv.slice(1);
+    const runs = {};
+    for (const slug of slugs) {
+      const err = `${tmp}/${slug}.err`;
+      try {
+        if (fs.existsSync(err)) { runs[slug] = { error: fs.readFileSync(err, "utf8").trim() }; continue; }
+        const { files, m } = count(`${tmp}/${slug}.tc`, `${tmp}/${slug}.ts`);
+        runs[slug] = { changed: files.length, uncommitted: m };
+      } catch (e) {
+        runs[slug] = { error: `could not count ${slug}` };
+      }
+    }
+    process.stdout.write(JSON.stringify({ runs }) + "\n");
+  ' "$tmp" "${slugs[@]}" || { rm -rf "$tmp"; exit 1; }
+  rm -rf "$tmp"
 }
 
 # permit <slug> <allow|always|deny> [n|all]: decide the actions the pipeline's agent was refused (see Docs/backlog/<slug>/logs/permissions.json).
@@ -339,7 +410,8 @@ case "${1:-}" in
   discard) [ $# -ge 2 ] || usage; slug="$2"; shift 2; cmd_discard "$slug" "$@" ;;
   restart) { [ $# -eq 2 ] || [ $# -eq 3 ]; } || usage; cmd_restart "$2" "${3:-}" ;;
   status) cmd_status ;;
-  changes) { [ $# -eq 2 ] || [ $# -eq 3 ]; } || usage; shift; cmd_changes "$@" ;;
+  changes) if [ "${2:-}" = --all ]; then shift 2; cmd_changes_all "$@"
+           else { [ $# -eq 2 ] || [ $# -eq 3 ]; } || usage; shift; cmd_changes "$@"; fi ;;
   watch)  { [ $# -eq 2 ] || [ $# -eq 3 ]; } || usage; cmd_watch "$2" "${3:-}" ;;
   model)  case "${2:-}" in
             list|add|add-model|remove-model|remove|test) shift; exec node "$ROOT/scripts/sdlc-models.cjs" "$@" ;;
