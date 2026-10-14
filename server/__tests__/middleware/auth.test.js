@@ -1,44 +1,31 @@
 const Auth = require('../../middleware/auth');
 
 describe('Auth middleware', () => {
-  test('missing token', () => {
-    const req = { header: jest.fn().mockReturnValue(undefined) };
+  const call = (fn, token) => {
+    const req = { header: jest.fn().mockReturnValue(token) };
     const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
     const next = jest.fn();
-    Auth.verify(req, res, next);
-    expect(res.status).toHaveBeenCalledWith(401);
-    expect(next).not.toHaveBeenCalled();
+    fn(req, res, next);
+    return { req, res, next };
+  };
+
+  test('verify answers 401 without a token, and sets userId and continues with one', () => {
+    const missing = call(Auth.verify, undefined);
+    expect(missing.res.status).toHaveBeenCalledWith(401);
+    expect(missing.next).not.toHaveBeenCalled();
+
+    const valid = call(Auth.verify, '1');
+    expect(valid.req.userId).toBe('1');
+    expect(valid.next).toHaveBeenCalled();
   });
 
-  test('valid token', () => {
-    const req = { header: jest.fn().mockReturnValue('1') };
-    const res = { status: jest.fn(), json: jest.fn() };
-    const next = jest.fn();
-    Auth.verify(req, res, next);
-    expect(req.userId).toBe('1');
-    expect(next).toHaveBeenCalled();
-  });
+  test('requireAdmin answers 403 for another token and continues with the admin token', () => {
+    process.env.ADMIN_TOKEN = 'secret';
 
-  describe('requireAdmin', () => {
-    beforeAll(() => {
-      process.env.ADMIN_TOKEN = 'secret';
-    });
+    const forbidden = call(Auth.requireAdmin, 'bad');
+    expect(forbidden.res.status).toHaveBeenCalledWith(403);
+    expect(forbidden.next).not.toHaveBeenCalled();
 
-    test('forbidden', () => {
-      const req = { header: jest.fn().mockReturnValue('bad') };
-      const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
-      const next = jest.fn();
-      Auth.requireAdmin(req, res, next);
-      expect(res.status).toHaveBeenCalledWith(403);
-      expect(next).not.toHaveBeenCalled();
-    });
-
-    test('allowed', () => {
-      const req = { header: jest.fn().mockReturnValue('secret') };
-      const res = { status: jest.fn(), json: jest.fn() };
-      const next = jest.fn();
-      Auth.requireAdmin(req, res, next);
-      expect(next).toHaveBeenCalled();
-    });
+    expect(call(Auth.requireAdmin, 'secret').next).toHaveBeenCalled();
   });
 });

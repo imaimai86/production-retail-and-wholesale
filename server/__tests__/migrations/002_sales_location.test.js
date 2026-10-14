@@ -7,33 +7,18 @@ const schemaPath = path.join(__dirname, '../../schema.sql');
 const squash = s => s.replace(/\s+/g, ' ');
 
 describe('002_sales_location.sql', () => {
-  let sql;
-  beforeAll(() => {
-    sql = fs.existsSync(migrationPath) ? squash(fs.readFileSync(migrationPath, 'utf8')) : '';
-  });
-
-  test('file exists', () => {
+  test('adds sales.location, backfills it, merges duplicate inventory rows and adds the unique constraint, in that order', () => {
     expect(fs.existsSync(migrationPath)).toBe(true);
-  });
+    const sql = squash(fs.readFileSync(migrationPath, 'utf8'));
 
-  test('adds sales.location as text', () => {
     expect(sql).toMatch(/ALTER TABLE sales ADD COLUMN (IF NOT EXISTS )?location TEXT/i);
-  });
-
-  test('backfills existing sales with retail', () => {
+    // existing sales are backfilled with retail
     expect(sql).toMatch(/UPDATE sales SET location ?= ?'retail'/i);
-  });
-
-  test('merges duplicate inventory rows by summing', () => {
+    // duplicate inventory rows are merged by summing
     expect(sql).toMatch(/SUM\(quantity\)/i);
     expect(sql).toMatch(/DELETE FROM inventory/i);
-  });
-
-  test('adds a unique constraint on inventory(product_id, location)', () => {
     expect(sql).toMatch(/ALTER TABLE inventory ADD CONSTRAINT \w+ UNIQUE ?\(product_id, ?location\)/i);
-  });
 
-  test('runs in order: column, backfill, merge, constraint', () => {
     const column = sql.search(/ADD COLUMN/i);
     const backfill = sql.search(/UPDATE sales SET location/i);
     const merge = sql.search(/DELETE FROM inventory/i);
@@ -46,20 +31,15 @@ describe('002_sales_location.sql', () => {
 });
 
 describe('schema.sql', () => {
-  let schema;
-  beforeAll(() => {
-    schema = squash(fs.readFileSync(schemaPath, 'utf8'));
-  });
+  test('sales has a location column and inventory is unique on (product_id, location)', () => {
+    const schema = squash(fs.readFileSync(schemaPath, 'utf8'));
 
-  test('sales has a location column', () => {
-    const block = schema.match(/CREATE TABLE IF NOT EXISTS sales \((.*?)\);/i);
-    expect(block).not.toBeNull();
-    expect(block[1]).toMatch(/\blocation TEXT/i);
-  });
+    const sales = schema.match(/CREATE TABLE IF NOT EXISTS sales \((.*?)\);/i);
+    expect(sales).not.toBeNull();
+    expect(sales[1]).toMatch(/\blocation TEXT/i);
 
-  test('inventory is unique on (product_id, location)', () => {
-    const block = schema.match(/CREATE TABLE IF NOT EXISTS inventory \((.*?)\);/i);
-    expect(block).not.toBeNull();
-    expect(block[1]).toMatch(/UNIQUE ?\(product_id, ?location\)/i);
+    const inventory = schema.match(/CREATE TABLE IF NOT EXISTS inventory \((.*?)\);/i);
+    expect(inventory).not.toBeNull();
+    expect(inventory[1]).toMatch(/UNIQUE ?\(product_id, ?location\)/i);
   });
 });

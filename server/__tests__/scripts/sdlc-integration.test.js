@@ -10,6 +10,7 @@ const PORT = '54321';
 const TOOLS = ['sed', 'head', 'tr', 'cat', 'rm', 'env', 'dirname', 'basename', 'grep'];
 
 let tmp;
+let tmps = [];
 let calls;
 
 function writeShim(dir, name, body) {
@@ -24,6 +25,7 @@ function which(tool) {
 
 function setup({ withDocker = true } = {}) {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sdlc-int-'));
+  tmps.push(tmp);
   const bin = path.join(tmp, 'bin');
   fs.mkdirSync(bin);
   fs.mkdirSync(path.join(tmp, 'server'));
@@ -75,62 +77,67 @@ function run(env = {}, opts = {}) {
 }
 
 afterEach(() => {
-  if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
+  for (const t of tmps) fs.rmSync(t, { recursive: true, force: true });
+  tmps = [];
 });
 
 describe('scripts/sdlc-integration.sh', () => {
-  test('1. CI set: warns TEMPORARY, exits 0, calls no command', () => {
-    const r = run({ CI: 'true' });
+  const URL = 'postgres://u:p@h:1/d';
+  // The generated password and the database URL built from it never reach the output.
+  const expectNoSecret = r => {
+    expect(r.out).not.toContain(PASSWORD);
+    expect(r.out).not.toContain('postgres://app:');
+  };
+
+  test('1-2. CI warns TEMPORARY and calls no command, unless SDLC_INTEGRATION_CI is exactly "run"', () => {
+    let r = run({ CI: 'true' });
     expect(r.status).toBe(0);
     expect(r.out).toContain('TEMPORARY');
     expect(r.out).toContain('SDLC_INTEGRATION_CI=run');
     expect(r.log).toBe('');
-  });
 
-  test('1b. SDLC_INTEGRATION_CI must be exactly "run" to enable', () => {
-    const r = run({ CI: '1', SDLC_INTEGRATION_CI: 'RUN', DATABASE_URL: 'postgres://x' });
+    // 1b. "RUN" does not enable it
+    r = run({ CI: '1', SDLC_INTEGRATION_CI: 'RUN', DATABASE_URL: 'postgres://x' });
     expect(r.status).toBe(0);
     expect(r.out).toContain('TEMPORARY');
     expect(r.log).toBe('');
-  });
 
-  test('1c. empty CI is not treated as CI', () => {
-    const r = run({ CI: '', DATABASE_URL: 'postgres://u:p@h:1/d' });
-    expect(r.log).toContain('npm run test:integration');
-  });
+    // 1c. an empty CI is not CI
+    expect(run({ CI: '', DATABASE_URL: URL }).log).toContain('npm run test:integration');
 
-  test('2. CI + SDLC_INTEGRATION_CI=run + DATABASE_URL runs suite without docker', () => {
-    const r = run({ CI: 'true', SDLC_INTEGRATION_CI: 'run', DATABASE_URL: 'postgres://u:p@h:1/d' });
+    // 2. CI + SDLC_INTEGRATION_CI=run + DATABASE_URL runs the suite without docker
+    r = run({ CI: 'true', SDLC_INTEGRATION_CI: 'run', DATABASE_URL: URL });
     expect(r.status).toBe(0);
     expect(r.log).toContain('npm run test:integration');
     expect(r.log).not.toMatch(/^docker /m);
     expect(r.out).not.toContain('TEMPORARY');
   });
 
-  test('3. SDLC_INTEGRATION=off is inert', () => {
-    const r = run({ SDLC_INTEGRATION: 'off', DATABASE_URL: 'postgres://u:p@h:1/d' });
+  test('3-5. DATABASE_URL is passed to npm, never printed, and docker is never called; a missing test:integration script exits 1', () => {
+    let r = run({ DATABASE_URL: URL });
     expect(r.status).toBe(0);
     expect(r.log).toContain('npm run test:integration');
-  });
+    expect(r.log).toContain(`NPM_DATABASE_URL=${URL}`);
+    expect(r.log).not.toMatch(/^docker /m);
 
-  test('4. missing test:integration script exits 1 with message', () => {
-    const r = run({ SHIM_NODE_RC: '1', DATABASE_URL: 'postgres://u:p@h:1/d' });
+    // 3. SDLC_INTEGRATION=off is inert
+    r = run({ SDLC_INTEGRATION: 'off', DATABASE_URL: URL });
+    expect(r.status).toBe(0);
+    expect(r.log).toContain('npm run test:integration');
+
+    // 4.
+    r = run({ SHIM_NODE_RC: '1', DATABASE_URL: URL });
     expect(r.status).toBe(1);
     expect(r.out).toContain('no test:integration script');
     expect(r.log).not.toContain('npm ');
+
+    // 8b.
+    r = run({ DATABASE_URL: 'postgres://user:s3cretpw@h:1/d', SHIM_NPM_RC: '1' });
+    expect(r.out).not.toContain('s3cretpw');
   });
 
-  test('5. DATABASE_URL is passed to npm and docker is never called', () => {
-    const url = 'postgres://u:p@h:1/d';
-    const r = run({ DATABASE_URL: url });
-    expect(r.status).toBe(0);
-    expect(r.log).toContain('npm run test:integration');
-    expect(r.log).toContain(`NPM_DATABASE_URL=${url}`);
-    expect(r.log).not.toMatch(/^docker /m);
-  });
-
-  test('6. no DATABASE_URL: throwaway docker database, cleaned up', () => {
-    const r = run({});
+  test('6. no DATABASE_URL: a throwaway docker database, removed afterwards, whatever npm exits with', () => {
+    let r = run({});
     expect(r.status).toBe(0);
     expect(r.log).toMatch(/^docker run .*postgres:16/m);
     expect(r.log).toContain('127.0.0.1::5432');
@@ -142,45 +149,31 @@ describe('scripts/sdlc-integration.sh', () => {
     const npmAt = lines.findIndex(l => l.startsWith('npm '));
     const rmAt = lines.findIndex(l => l.startsWith('docker rm -f'));
     expect(rmAt).toBeGreaterThan(npmAt);
-  });
+    expectNoSecret(r);
 
-  test('6b. npm failure propagates its exit code and container is still removed', () => {
-    const r = run({ SHIM_NPM_RC: '1' });
+    // 6b. an npm failure propagates its exit code
+    r = run({ SHIM_NPM_RC: '1' });
     expect(r.status).toBe(1);
     expect(r.log).toMatch(/^docker rm -f prw-sdlc-db-\d+/m);
-  });
+    expectNoSecret(r);
 
-  test('6c. npm exit code other than 1 is propagated', () => {
-    const r = run({ SHIM_NPM_RC: '7' });
+    // 6c. also one other than 1
+    r = run({ SHIM_NPM_RC: '7' });
     expect(r.status).toBe(7);
     expect(r.log).toMatch(/^docker rm -f/m);
   });
 
-  test('6d. container never ready: 60 attempts, non-zero, container removed', () => {
-    const r = run({ SHIM_EXEC_RC: '1' });
+  test('6d-7. a container that is never ready fails after 60 attempts and is removed; neither DATABASE_URL nor docker exits 1', () => {
+    let r = run({ SHIM_EXEC_RC: '1' });
     expect(r.status).not.toBe(0);
     expect(r.log.split('\n').filter(l => l.startsWith('docker exec')).length).toBe(60);
     expect(r.log).not.toContain('npm ');
     expect(r.log).toMatch(/^docker rm -f/m);
-  });
+    expectNoSecret(r);
 
-  test('7. neither DATABASE_URL nor docker exits 1 with message', () => {
-    const r = run({}, { withDocker: false });
+    r = run({}, { withDocker: false });
     expect(r.status).toBe(1);
     expect(r.out).toContain('DATABASE_URL or docker');
     expect(r.log).not.toContain('npm ');
-  });
-
-  test('8. generated password never appears in output', () => {
-    [{}, { SHIM_NPM_RC: '1' }, { SHIM_EXEC_RC: '1' }].forEach(env => {
-      const r = run(env);
-      expect(r.out).not.toContain(PASSWORD);
-      expect(r.out).not.toContain('postgres://app:');
-    });
-  });
-
-  test('8b. provided DATABASE_URL is never printed', () => {
-    const r = run({ DATABASE_URL: 'postgres://user:s3cretpw@h:1/d', SHIM_NPM_RC: '1' });
-    expect(r.out).not.toContain('s3cretpw');
   });
 });

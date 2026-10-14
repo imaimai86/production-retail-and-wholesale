@@ -114,17 +114,13 @@ const newSale = (overrides = {}) => ({
 describe('Sales model', () => {
   afterEach(() => jest.clearAllMocks());
 
-  test('getAll default', async () => {
+  test('getAll pages with LIMIT and OFFSET, 10 and 0 by default', async () => {
     db.query.mockResolvedValue({ rows: [] });
     await Sales.getAll();
     expect(db.query).toHaveBeenCalledWith(
       'SELECT * FROM sales ORDER BY id LIMIT $1 OFFSET $2',
       [10, 0]
     );
-  });
-
-  test('getAll with params', async () => {
-    db.query.mockResolvedValue({ rows: [] });
     await Sales.getAll({ limit: 2, offset: 2 });
     expect(db.query).toHaveBeenCalledWith(
       'SELECT * FROM sales ORDER BY id LIMIT $1 OFFSET $2',
@@ -133,114 +129,111 @@ describe('Sales model', () => {
   });
 
   describe('create', () => {
-    test('S-M1 sold decrements the location and stores it on the sale', async () => {
-      const s = useFakeDb({ inventory: [inv(1, 1, 'retail', 10)] });
-      const record = await Sales.create(newSale({ status: 'sold' }));
+    test('S-M1..4 S-M13 sold (the default status) decrements only the sale location, down to 0, with a conditional UPDATE', async () => {
+      let s = useFakeDb({ inventory: [inv(1, 1, 'retail', 10)] });
+      let record = await Sales.create(newSale({ status: 'sold' }));
       expect(s.qty(1, 'retail')).toBe(7);
       expect(record).toMatchObject({ product_id: 1, location: 'retail', status: 'sold', quantity: 3 });
       expect(s.sales).toHaveLength(1);
       expect(s.sales[0].location).toBe('retail');
-    });
+      // S-M13
+      expect(s.log.find(sql => /^UPDATE inventory/i.test(sql))).toMatch(/quantity ?>= ?\$1/);
 
-    test('S-M2 sold leaves other locations of the same product unchanged', async () => {
-      const s = useFakeDb({ inventory: [inv(1, 1, 'retail', 10), inv(2, 1, 'production', 10), inv(3, 2, 'retail', 10)] });
-      await Sales.create(newSale());
+      // S-M2 other locations of the same product, and other products, are unchanged; S-M3 status defaults to sold
+      s = useFakeDb({ inventory: [inv(1, 1, 'retail', 10), inv(2, 1, 'production', 10), inv(3, 2, 'retail', 10)] });
+      record = await Sales.create(newSale());
+      expect(record.status).toBe('sold');
       expect(s.qty(1, 'retail')).toBe(7);
       expect(s.qty(1, 'production')).toBe(10);
       expect(s.qty(2, 'retail')).toBe(10);
-    });
 
-    test('S-M3 defaults status to sold', async () => {
-      const s = useFakeDb({ inventory: [inv(1, 1, 'retail', 10)] });
-      const record = await Sales.create(newSale());
-      expect(record.status).toBe('sold');
-      expect(s.qty(1, 'retail')).toBe(7);
-    });
-
-    test('S-M4 sold for exactly the stock leaves the row at 0', async () => {
-      const s = useFakeDb({ inventory: [inv(1, 1, 'retail', 3)] });
+      // S-M4 exactly the stock leaves the row at 0
+      s = useFakeDb({ inventory: [inv(1, 1, 'retail', 3)] });
       await Sales.create(newSale({ quantity: 3 }));
       expect(s.qty(1, 'retail')).toBe(0);
       expect(s.sales).toHaveLength(1);
     });
 
-    test('S-M5 sold for more than the stock rejects, with no sale row and stock unchanged', async () => {
-      const s = useFakeDb({ inventory: [inv(1, 1, 'retail', 2)] });
-      const err = await rejection(Sales.create(newSale({ quantity: 3 })));
+    test('S-M5..7 S-M11 S-M12 sold rejects short stock (INSUFFICIENT_STOCK) and a missing row (INVENTORY_NOT_FOUND), writing nothing', async () => {
+      // S-M5 more than the stock
+      let s = useFakeDb({ inventory: [inv(1, 1, 'retail', 2)] });
+      let err = await rejection(Sales.create(newSale({ quantity: 3 })));
       expect(err.code).toBe('INSUFFICIENT_STOCK');
       expect(err.message).toBe('Insufficient stock');
       expect(s.sales).toHaveLength(0);
       expect(s.qty(1, 'retail')).toBe(2);
-    });
 
-    test('S-M6 sold when the row has quantity 0 rejects', async () => {
-      const s = useFakeDb({ inventory: [inv(1, 1, 'retail', 0)] });
-      const err = await rejection(Sales.create(newSale({ quantity: 1 })));
+      // S-M6 the row has quantity 0
+      s = useFakeDb({ inventory: [inv(1, 1, 'retail', 0)] });
+      err = await rejection(Sales.create(newSale({ quantity: 1 })));
       expect(err.code).toBe('INSUFFICIENT_STOCK');
       expect(s.sales).toHaveLength(0);
-    });
 
-    test('S-M7 sold with no inventory row at the location rejects with INVENTORY_NOT_FOUND', async () => {
-      const s = useFakeDb({ inventory: [inv(1, 1, 'production', 10)] });
-      const err = await rejection(Sales.create(newSale({ status: 'sold' })));
+      // S-M7 no inventory row at the location
+      s = useFakeDb({ inventory: [inv(1, 1, 'production', 10)] });
+      err = await rejection(Sales.create(newSale({ status: 'sold' })));
       expect(err.code).toBe('INVENTORY_NOT_FOUND');
       expect(s.sales).toHaveLength(0);
       expect(s.qty(1, 'production')).toBe(10);
+
+      // S-M11 the location is matched case-sensitively
+      s = useFakeDb({ inventory: [inv(1, 1, 'retail', 10)] });
+      err = await rejection(Sales.create(newSale({ location: 'Retail' })));
+      expect(err.code).toBe('INVENTORY_NOT_FOUND');
+      expect(s.qty(1, 'retail')).toBe(10);
+      expect(s.sales).toHaveLength(0);
+
+      // S-M12 a missing row is not found, not insufficient stock
+      useFakeDb({ inventory: [] });
+      err = await rejection(Sales.create(newSale({ quantity: 999 })));
+      expect(err.code).toBe('INVENTORY_NOT_FOUND');
     });
 
-    test('S-M8 order_created with no inventory row rejects with INVENTORY_NOT_FOUND', async () => {
-      const s = useFakeDb({ inventory: [] });
+    test('S-M8..10 order_created needs an inventory row but does not touch stock, even when quantity exceeds it', async () => {
+      let s = useFakeDb({ inventory: [] });
       const err = await rejection(Sales.create(newSale({ status: 'order_created' })));
       expect(err.code).toBe('INVENTORY_NOT_FOUND');
       expect(s.sales).toHaveLength(0);
-    });
 
-    test('S-M9 order_created creates the sale and does not touch stock', async () => {
-      const s = useFakeDb({ inventory: [inv(1, 1, 'retail', 10)] });
+      s = useFakeDb({ inventory: [inv(1, 1, 'retail', 10)] });
       const record = await Sales.create(newSale({ status: 'order_created' }));
       expect(record).toMatchObject({ status: 'order_created', location: 'retail' });
       expect(s.qty(1, 'retail')).toBe(10);
       expect(s.log.some(sql => /^UPDATE inventory/i.test(sql))).toBe(false);
-    });
 
-    test('S-M10 order_created is created even when quantity exceeds the stock', async () => {
-      const s = useFakeDb({ inventory: [inv(1, 1, 'retail', 1)] });
+      s = useFakeDb({ inventory: [inv(1, 1, 'retail', 1)] });
       await Sales.create(newSale({ status: 'order_created', quantity: 5 }));
       expect(s.sales).toHaveLength(1);
       expect(s.qty(1, 'retail')).toBe(1);
     });
-
-    test('S-M11 matches the location case-sensitively', async () => {
-      const s = useFakeDb({ inventory: [inv(1, 1, 'retail', 10)] });
-      const err = await rejection(Sales.create(newSale({ location: 'Retail' })));
-      expect(err.code).toBe('INVENTORY_NOT_FOUND');
-      expect(s.qty(1, 'retail')).toBe(10);
-      expect(s.sales).toHaveLength(0);
-    });
-
-    test('S-M12 a missing row is reported as not found, not as insufficient stock', async () => {
-      useFakeDb({ inventory: [] });
-      const err = await rejection(Sales.create(newSale({ quantity: 999 })));
-      expect(err.code).toBe('INVENTORY_NOT_FOUND');
-    });
-
-    test('S-M13 the sold decrement is a conditional UPDATE', async () => {
-      const s = useFakeDb({ inventory: [inv(1, 1, 'retail', 10)] });
-      await Sales.create(newSale());
-      const decrement = s.log.find(sql => /^UPDATE inventory/i.test(sql));
-      expect(decrement).toMatch(/quantity ?>= ?\$1/);
-    });
   });
 
   describe('updateStatus', () => {
-    test('P-M1 returns null for an unknown id and writes nothing', async () => {
-      const s = useFakeDb({ inventory: [inv(1, 1, 'retail', 10)] });
+    test('P-M1 P-M5 P-M6 an unknown id returns null and an unchanged status is a no-op: nothing is written', async () => {
+      let s = useFakeDb({ inventory: [inv(1, 1, 'retail', 10)] });
       expect(await Sales.updateStatus(999, 'sold')).toBeNull();
+      expect(s.writes()).toEqual([]);
+
+      // P-M5 sold -> sold, even at zero stock
+      s = useFakeDb({
+        inventory: [inv(1, 1, 'retail', 0)],
+        sales: [sale(7, { status: 'sold', quantity: 4 })]
+      });
+      expect(await Sales.updateStatus(7, 'sold')).toMatchObject({ id: 7, status: 'sold' });
+      expect(s.writes()).toEqual([]);
+      expect(s.qty(1, 'retail')).toBe(0);
+
+      // P-M6 order_created -> order_created
+      s = useFakeDb({
+        inventory: [inv(1, 1, 'retail', 5)],
+        sales: [sale(7, { status: 'order_created' })]
+      });
+      expect(await Sales.updateStatus(7, 'order_created')).toMatchObject({ id: 7, status: 'order_created' });
       expect(s.writes()).toEqual([]);
     });
 
-    test('P-M2 order_created -> sold decrements only the sale location', async () => {
-      const s = useFakeDb({
+    test('P-M2..4 order_created -> sold decrements only the sale location; short stock or no row rejects and keeps the status', async () => {
+      let s = useFakeDb({
         inventory: [inv(1, 1, 'retail', 10), inv(2, 1, 'production', 10)],
         sales: [sale(7, { status: 'order_created', location: 'retail', quantity: 4 })]
       });
@@ -249,53 +242,30 @@ describe('Sales model', () => {
       expect(s.sales[0].status).toBe('sold');
       expect(s.qty(1, 'retail')).toBe(6);
       expect(s.qty(1, 'production')).toBe(10);
-    });
 
-    test('P-M3 order_created -> sold with short stock rejects and keeps the status', async () => {
-      const s = useFakeDb({
+      // P-M3 short stock
+      s = useFakeDb({
         inventory: [inv(1, 1, 'retail', 2)],
         sales: [sale(7, { status: 'order_created', quantity: 4 })]
       });
-      const err = await rejection(Sales.updateStatus(7, 'sold'));
+      let err = await rejection(Sales.updateStatus(7, 'sold'));
       expect(err.code).toBe('INSUFFICIENT_STOCK');
       expect(s.sales[0].status).toBe('order_created');
       expect(s.qty(1, 'retail')).toBe(2);
-    });
 
-    test('P-M4 order_created -> sold with no inventory row rejects as insufficient stock', async () => {
-      const s = useFakeDb({
+      // P-M4 no inventory row is also insufficient stock
+      s = useFakeDb({
         inventory: [inv(1, 1, 'production', 10)],
         sales: [sale(7, { status: 'order_created', location: 'retail' })]
       });
-      const err = await rejection(Sales.updateStatus(7, 'sold'));
+      err = await rejection(Sales.updateStatus(7, 'sold'));
       expect(err.code).toBe('INSUFFICIENT_STOCK');
       expect(s.sales[0].status).toBe('order_created');
       expect(s.qty(1, 'production')).toBe(10);
     });
 
-    test('P-M5 sold -> sold is a no-op even at zero stock', async () => {
-      const s = useFakeDb({
-        inventory: [inv(1, 1, 'retail', 0)],
-        sales: [sale(7, { status: 'sold', quantity: 4 })]
-      });
-      const result = await Sales.updateStatus(7, 'sold');
-      expect(result).toMatchObject({ id: 7, status: 'sold' });
-      expect(s.writes()).toEqual([]);
-      expect(s.qty(1, 'retail')).toBe(0);
-    });
-
-    test('P-M6 order_created -> order_created is a no-op', async () => {
-      const s = useFakeDb({
-        inventory: [inv(1, 1, 'retail', 5)],
-        sales: [sale(7, { status: 'order_created' })]
-      });
-      const result = await Sales.updateStatus(7, 'order_created');
-      expect(result).toMatchObject({ id: 7, status: 'order_created' });
-      expect(s.writes()).toEqual([]);
-    });
-
-    test('P-M7 sold -> order_created restores stock to the sale location only', async () => {
-      const s = useFakeDb({
+    test('P-M7 P-M8 sold -> order_created restores stock to the sale location only, re-creating a missing row', async () => {
+      let s = useFakeDb({
         inventory: [inv(1, 1, 'retail', 5), inv(2, 1, 'production', 9)],
         sales: [sale(7, { status: 'sold', location: 'retail', quantity: 3 })]
       });
@@ -304,10 +274,8 @@ describe('Sales model', () => {
       expect(s.sales[0].status).toBe('order_created');
       expect(s.qty(1, 'retail')).toBe(8);
       expect(s.qty(1, 'production')).toBe(9);
-    });
 
-    test('P-M8 sold -> order_created re-creates a missing inventory row', async () => {
-      const s = useFakeDb({
+      s = useFakeDb({
         inventory: [],
         sales: [sale(7, { status: 'sold', location: 'retail', quantity: 3 })]
       });
@@ -317,26 +285,21 @@ describe('Sales model', () => {
   });
 
   describe('remove', () => {
-    test('D-M1 returns null for an unknown id', async () => {
-      const s = useFakeDb({ inventory: [inv(1, 1, 'retail', 10)] });
+    test('D-M1..3 an unknown id returns null; deleting a sold sale restores stock to its location only, re-creating a missing row', async () => {
+      let s = useFakeDb({ inventory: [inv(1, 1, 'retail', 10)] });
       expect(await Sales.remove(999)).toBeNull();
       expect(s.qty(1, 'retail')).toBe(10);
-    });
 
-    test('D-M2 deleting a sold sale restores stock to its location only', async () => {
-      const s = useFakeDb({
+      s = useFakeDb({
         inventory: [inv(1, 1, 'retail', 5), inv(2, 1, 'production', 9)],
         sales: [sale(7, { status: 'sold', location: 'retail', quantity: 3 })]
       });
-      const removed = await Sales.remove(7);
-      expect(removed).toMatchObject({ id: 7 });
+      expect(await Sales.remove(7)).toMatchObject({ id: 7 });
       expect(s.sales).toHaveLength(0);
       expect(s.qty(1, 'retail')).toBe(8);
       expect(s.qty(1, 'production')).toBe(9);
-    });
 
-    test('D-M3 deleting a sold sale re-creates a missing inventory row', async () => {
-      const s = useFakeDb({
+      s = useFakeDb({
         inventory: [],
         sales: [sale(7, { status: 'sold', location: 'retail', quantity: 3 })]
       });
@@ -344,18 +307,16 @@ describe('Sales model', () => {
       expect(s.qty(1, 'retail')).toBe(3);
     });
 
-    test('D-M4 deleting an order_created sale does not change stock', async () => {
-      const s = useFakeDb({
+    test('D-M4 D-M5 deleting an order_created sale neither changes stock nor creates an inventory row', async () => {
+      let s = useFakeDb({
         inventory: [inv(1, 1, 'retail', 5)],
         sales: [sale(7, { status: 'order_created', quantity: 3 })]
       });
       await Sales.remove(7);
       expect(s.sales).toHaveLength(0);
       expect(s.qty(1, 'retail')).toBe(5);
-    });
 
-    test('D-M5 deleting an order_created sale does not create an inventory row', async () => {
-      const s = useFakeDb({
+      s = useFakeDb({
         inventory: [],
         sales: [sale(7, { status: 'order_created' })]
       });

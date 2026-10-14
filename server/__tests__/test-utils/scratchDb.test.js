@@ -41,23 +41,13 @@ afterEach(() => {
 
 const dropQueries = () => queries.filter(q => /DROP/i.test(q));
 
-describe('scratchName', () => {
-  test('has prw_test_ prefix followed by 8 hex chars', () => {
-    for (let i = 0; i < 20; i++) {
-      expect(helper.scratchName()).toMatch(/^prw_test_[0-9a-f]{8}$/);
-    }
-  });
+describe('names and urls', () => {
+  test('scratchName is prw_test_ plus 8 random hex chars; withDatabaseName replaces only the database name', () => {
+    const names = Array.from({ length: 20 }, () => helper.scratchName());
+    for (const n of names) expect(n).toMatch(/^prw_test_[0-9a-f]{8}$/);
+    expect(new Set(names).size).toBeGreaterThan(1);
 
-  test('is random across calls', () => {
-    const names = new Set(Array.from({ length: 20 }, () => helper.scratchName()));
-    expect(names.size).toBeGreaterThan(1);
-  });
-});
-
-describe('withDatabaseName', () => {
-  test('replaces only the database name', () => {
-    const out = helper.withDatabaseName(ADMIN_URL, 'prw_test_abcd1234');
-    const u = new URL(out);
+    const u = new URL(helper.withDatabaseName(ADMIN_URL, 'prw_test_abcd1234'));
     const orig = new URL(ADMIN_URL);
     expect(u.pathname).toBe('/prw_test_abcd1234');
     expect(u.username).toBe(orig.username);
@@ -66,47 +56,36 @@ describe('withDatabaseName', () => {
     expect(u.port).toBe('5433');
     expect(u.search).toBe('?sslmode=disable');
   });
-});
 
-describe('requireDatabaseUrl', () => {
-  test('throws exact message when unset', () => {
+  test('requireDatabaseUrl returns the trimmed url and throws the exact message when it is unset, empty or blank', () => {
     expect(() => helper.requireDatabaseUrl({})).toThrow(new Error(MISSING));
-  });
-
-  test('throws exact message when empty', () => {
     expect(() => helper.requireDatabaseUrl({ DATABASE_URL: '' })).toThrow(new Error(MISSING));
-  });
-
-  test('throws exact message when whitespace only', () => {
     expect(() => helper.requireDatabaseUrl({ DATABASE_URL: '   ' })).toThrow(new Error(MISSING));
-  });
-
-  test('returns the trimmed url', () => {
     expect(helper.requireDatabaseUrl({ DATABASE_URL: `  ${ADMIN_URL}\n` })).toBe(ADMIN_URL);
   });
 });
 
 describe('createScratchDb', () => {
-  test('throws exact message when DATABASE_URL is unset and issues no query', async () => {
+  test('without DATABASE_URL it throws the exact message, issues no query and does not leak the password', async () => {
     delete process.env.DATABASE_URL;
-    await expect(helper.createScratchDb()).rejects.toThrow(new Error(MISSING));
+    let err;
+    try { await helper.createScratchDb(); } catch (e) { err = e; }
+    expect(err).toEqual(new Error(MISSING));
     expect(queries).toEqual([]);
-  });
+    expect(err.message).not.toContain(RAW_PASSWORD);
+    expect(err.message).not.toContain(PASSWORD);
 
-  test('throws exact message when DATABASE_URL is whitespace', async () => {
     process.env.DATABASE_URL = '   ';
     await expect(helper.createScratchDb()).rejects.toThrow(new Error(MISSING));
   });
 
-  test('creates a prw_test_ database and returns the rewritten url', async () => {
+  test('creates a prw_test_ database and returns the rewritten url; a connection failure names neither password nor url', async () => {
     const { name, url } = await helper.createScratchDb();
     expect(name).toMatch(/^prw_test_[0-9a-f]{8}$/);
     expect(queries.some(q => /CREATE DATABASE/i.test(q) && q.includes(name))).toBe(true);
     expect(new URL(url).pathname).toBe(`/${name}`);
     expect(new URL(url).search).toBe('?sslmode=disable');
-  });
 
-  test('connection failure message contains neither password nor url', async () => {
     queryImpl = async () => {
       throw Object.assign(
         new Error(`password authentication failed for ${ADMIN_URL} pw=${RAW_PASSWORD} ${PASSWORD}`),
@@ -121,35 +100,18 @@ describe('createScratchDb', () => {
     expect(err.message).not.toContain(ADMIN_URL);
     expect(err.message).not.toContain('dbhost');
   });
-
-  test('missing-url error does not contain the password', async () => {
-    delete process.env.DATABASE_URL;
-    let err;
-    try { await helper.createScratchDb(); } catch (e) { err = e; }
-    expect(err.message).not.toContain(RAW_PASSWORD);
-    expect(err.message).not.toContain(PASSWORD);
-  });
 });
 
 describe('dropScratchDb', () => {
-  test.each(['other_db', 'app', 'postgres', 'prw_testing', 'x_prw_test_abcd1234', ''])(
-    'rejects name without the prw_test_ prefix: %p',
-    async name => {
-      await expect(helper.dropScratchDb(name)).rejects.toThrow();
-      expect(dropQueries()).toEqual([]);
+  test('rejects a name without the prw_test_ prefix, or one this process did not create, with no DROP and no password in the error', async () => {
+    for (const name of ['other_db', 'app', 'postgres', 'prw_testing', 'x_prw_test_abcd1234', '', 'prw_test_abcd1234']) {
+      let err;
+      try { await helper.dropScratchDb(name); } catch (e) { err = e; }
+      expect([name, err instanceof Error]).toEqual([name, true]);
+      expect(err.message).not.toContain(RAW_PASSWORD);
+      expect(err.message).not.toContain(PASSWORD);
     }
-  );
-
-  test('rejects a prw_test_ name this process did not create', async () => {
-    await expect(helper.dropScratchDb('prw_test_abcd1234')).rejects.toThrow();
     expect(dropQueries()).toEqual([]);
-  });
-
-  test('drop errors never contain the password', async () => {
-    let err;
-    try { await helper.dropScratchDb('other_db'); } catch (e) { err = e; }
-    expect(err.message).not.toContain(RAW_PASSWORD);
-    expect(err.message).not.toContain(PASSWORD);
   });
 
   test('drops a database it created, with FORCE, once', async () => {
@@ -176,7 +138,7 @@ describe('useScratchEnv', () => {
     }
   });
 
-  test('sets DATABASE_URL and PG* from the scratch url', () => {
+  test('sets DATABASE_URL and PG* from the scratch url, with port 5432 by default', () => {
     const url = helper.withDatabaseName(ADMIN_URL, 'prw_test_abcd1234');
     helper.useScratchEnv(url);
     expect(process.env.DATABASE_URL).toBe(url);
@@ -185,9 +147,7 @@ describe('useScratchEnv', () => {
     expect(process.env.PGUSER).toBe('admin');
     expect(process.env.PGPASSWORD).toBe(RAW_PASSWORD);
     expect(process.env.PGDATABASE).toBe('prw_test_abcd1234');
-  });
 
-  test('defaults the port to 5432', () => {
     helper.useScratchEnv('postgres://u:p@h/prw_test_abcd1234');
     expect(process.env.PGPORT).toBe('5432');
   });

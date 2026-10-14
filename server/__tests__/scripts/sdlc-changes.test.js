@@ -46,33 +46,35 @@ describe('sdlc-changes snapshot', () => {
 });
 
 describe('sdlc-changes changed', () => {
-  test('new, edited and deleted files are included', () => {
-    const dir = repo();
+  test('new, edited, deleted and renamed files are included; a .gitignored file is never listed', () => {
+    let dir = repo();
     snapshot(dir);
     write(dir, 'new.txt');
     write(dir, 'tracked.txt', 'edited\n');
     fs.unlinkSync(path.join(dir, 'gone.txt'));
+    write(dir, 'ignored.txt');
     const r = changed(dir);
     expect(r.include.sort()).toEqual(['gone.txt', 'new.txt', 'tracked.txt']);
     expect(r.skipped).toEqual([]);
+
+    // a rename is one delete and one add
+    dir = repo();
+    snapshot(dir);
+    sh(dir, 'git', ['mv', 'old.txt', 'renamed.txt']);
+    expect(changed(dir).include.sort()).toEqual(['old.txt', 'renamed.txt']);
   });
 
-  test('a file dirty before the run and unchanged is in neither list', () => {
+  test('a file dirty before the run is in neither list while unchanged, and skipped as pre-existing once edited again', () => {
     const dir = repo();
     write(dir, 'tracked.txt', 'mine\n');
     snapshot(dir);
     expect(changed(dir)).toMatchObject({ include: [], skipped: [] });
-  });
 
-  test('a file dirty before the run and edited again is skipped as pre-existing', () => {
-    const dir = repo();
-    write(dir, 'tracked.txt', 'mine\n');
-    snapshot(dir);
     write(dir, 'tracked.txt', 'mine and cycle\n');
     expect(changed(dir)).toMatchObject({ include: [], skipped: [{ path: 'tracked.txt', reason: 'pre-existing local changes' }] });
   });
 
-  test('sensitive, config and generated files are skipped; .env.example is included', () => {
+  test('sensitive, config, generated and over 1 MiB files are skipped; .env.example is included', () => {
     const dir = repo();
     snapshot(dir);
     for (const f of ['.env.local', 'server/.env.production', 'key.pem', 'id_rsa_x']) write(dir, f);
@@ -80,6 +82,7 @@ describe('sdlc-changes changed', () => {
     write(dir, 'node_modules/x/index.js');
     write(dir, '.DS_Store');
     write(dir, '.env.example');
+    write(dir, 'big.bin', 'a'.repeat(1024 * 1024 + 1));
     const r = changed(dir);
     const reason = p => (r.skipped.find(s => s.path === p) || {}).reason;
     expect(reason('.env.local')).toBe('sensitive file');
@@ -88,30 +91,8 @@ describe('sdlc-changes changed', () => {
     expect(reason('id_rsa_x')).toBe('sensitive file');
     expect(reason('.vscode/x.json')).toBe('local or agent configuration');
     expect(reason('.claude/settings.json')).toBe('local or agent configuration');
+    expect(reason('big.bin')).toBe('too large');
     expect(r.include).toEqual(['.env.example']);
-  });
-
-  test('a file over 1 MiB is skipped as too large', () => {
-    const dir = repo();
-    snapshot(dir);
-    write(dir, 'big.bin', 'a'.repeat(1024 * 1024 + 1));
-    expect(changed(dir).skipped).toEqual([{ path: 'big.bin', reason: 'too large' }]);
-  });
-
-  test('a .gitignored file is never listed', () => {
-    const dir = repo();
-    snapshot(dir);
-    write(dir, 'ignored.txt');
-    const r = changed(dir);
-    expect(r.include).toEqual([]);
-    expect(r.skipped).toEqual([]);
-  });
-
-  test('a rename is one delete and one add', () => {
-    const dir = repo();
-    snapshot(dir);
-    sh(dir, 'git', ['mv', 'old.txt', 'renamed.txt']);
-    expect(changed(dir).include.sort()).toEqual(['old.txt', 'renamed.txt']);
   });
 
   test('keys added to a git-ignored .env are mirrored into .env.example with placeholders', () => {
@@ -138,60 +119,51 @@ describe('sdlc-changes mark (files per stage)', () => {
     sh(dir, 'git', ['commit', '-q', '-m', msg]);
   };
 
-  test('credits each stage with the files that changed while it ran', () => {
-    const dir = repo();
+  test('credits each stage with the files that changed while it ran, committed or not, but not the commit that collects earlier work', () => {
+    let dir = repo();
     mark(dir);
     write(dir, 'Docs/backlog/s/specs-1.md');
     mark(dir, 'Spec');
     write(dir, 'Docs/backlog/s/plan-1.md');
     write(dir, 'tracked.txt', 'edited\n');
     mark(dir, 'Plan');
-
     expect(stages(dir)).toEqual({ Spec: ['Docs/backlog/s/specs-1.md'], Plan: ['Docs/backlog/s/plan-1.md', 'tracked.txt'] });
-  });
 
-  test('a file created and committed inside one stage still counts for that stage', () => {
-    const dir = repo();
+    // a file created and committed inside one stage still counts for that stage
+    dir = repo();
     mark(dir);
     write(dir, 'server/__tests__/new.test.js');
     commit(dir, 'test: add failing tests');
     mark(dir, 'Red tests');
-
     expect(stages(dir)).toEqual({ 'Red tests': ['server/__tests__/new.test.js'] });
-  });
 
-  test('the commit that collects earlier work is not credited with it', () => {
-    const dir = repo();
+    // the commit that collects earlier work is not credited with it
+    dir = repo();
     mark(dir);
     write(dir, 'a.js');
     mark(dir, 'Implement');
     commit(dir, 'feat: ship');
     mark(dir, 'Commit');
-
     expect(stages(dir)).toEqual({ Implement: ['a.js'] });
   });
 
-  test('a file that was already dirty and did not change is not credited; a second pass on a stage adds to it', () => {
-    const dir = repo();
+  test('an already dirty, unchanged file and sensitive or generated files are never credited; a second pass adds to a stage; a mark without a stage only resets', () => {
+    let dir = repo();
     write(dir, 'dirty-before.txt');
     mark(dir);
     write(dir, 'one.js');
     mark(dir, 'Implement');
     write(dir, 'two.js');
     mark(dir, 'Implement');
-
     expect(stages(dir)).toEqual({ Implement: ['one.js', 'two.js'] });
-  });
 
-  test('sensitive and generated files are never listed, and a mark without a stage only resets', () => {
-    const dir = repo();
+    dir = repo();
     mark(dir);
     write(dir, '.env.local', 'SECRET=1\n');
     write(dir, 'node_modules/x/index.js');
     write(dir, 'real.js');
     mark(dir);
     mark(dir, 'Spec');
-
     expect(stages(dir)).toEqual({});
     write(dir, 'later.js');
     mark(dir, 'Plan');

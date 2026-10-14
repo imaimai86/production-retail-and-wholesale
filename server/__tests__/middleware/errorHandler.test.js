@@ -14,6 +14,14 @@ function run(err, resOverrides) {
   return { res, next };
 }
 
+// The response for `err`, as [status, body]; `label` names the case in a failure.
+const answer = (label, err) => {
+  const { res } = run(err);
+  return [label, res.status.mock.calls, res.json.mock.calls];
+};
+const expected = (label, code, text) => [label, [[code]], [[{ error: text }]]];
+const GENERIC = 'Internal server error';
+
 describe('errorHandler middleware', () => {
   let errorSpy;
 
@@ -25,52 +33,25 @@ describe('errorHandler middleware', () => {
     errorSpy.mockRestore();
   });
 
-  test('EH-01 declares four parameters so Express treats it as an error handler', () => {
+  test('EH-01..07 it takes four parameters; a valid 4xx status (then statusCode) is used with its http.STATUS_CODES text', () => {
+    // EH-01 four parameters make Express treat it as an error handler
     expect(typeof errorHandler).toBe('function');
     expect(errorHandler.length).toBe(4);
+
+    expect(answer('EH-02 plain Error', new Error('boom'))).toEqual(expected('EH-02 plain Error', 500, GENERIC));
+    expect(answer('EH-03', Object.assign(new Error('x'), { status: 404 }))).toEqual(expected('EH-03', 404, 'Not Found'));
+    expect(answer('EH-04 statusCode alone', Object.assign(new Error('x'), { statusCode: 422 })))
+      .toEqual(expected('EH-04 statusCode alone', 422, 'Unprocessable Entity'));
+    expect(answer('EH-05 status wins', { status: 400, statusCode: 404 })).toEqual(expected('EH-05 status wins', 400, 'Bad Request'));
+    expect(answer('EH-06 invalid status falls through', { status: 'abc', statusCode: 403 }))
+      .toEqual(expected('EH-06 invalid status falls through', 403, 'Forbidden'));
+    for (const code of [400, 401, 403, 404, 409, 418, 422, 429, 499]) {
+      expect(answer(`EH-07 ${code}`, { status: code })).toEqual(expected(`EH-07 ${code}`, code, http.STATUS_CODES[code]));
+    }
   });
 
-  describe('status selection', () => {
-    test('EH-02 plain Error returns 500 generic body', () => {
-      const { res } = run(new Error('boom'));
-      expect(res.status).toHaveBeenCalledWith(500);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Internal server error' });
-    });
-
-    test('EH-03 err.status 404 returns 404 Not Found', () => {
-      const { res } = run(Object.assign(new Error('x'), { status: 404 }));
-      expect(res.status).toHaveBeenCalledWith(404);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Not Found' });
-    });
-
-    test('EH-04 err.statusCode 422 without status returns 422', () => {
-      const { res } = run(Object.assign(new Error('x'), { statusCode: 422 }));
-      expect(res.status).toHaveBeenCalledWith(422);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Unprocessable Entity' });
-    });
-
-    test('EH-05 status takes precedence over statusCode', () => {
-      const { res } = run({ status: 400, statusCode: 404 });
-      expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Bad Request' });
-    });
-
-    test('EH-06 invalid status falls through to a valid statusCode', () => {
-      const { res } = run({ status: 'abc', statusCode: 403 });
-      expect(res.status).toHaveBeenCalledWith(403);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Forbidden' });
-    });
-
-    test.each([400, 401, 403, 404, 409, 418, 422, 429, 499])(
-      'EH-07 valid 4xx status %i uses http.STATUS_CODES text',
-      (code) => {
-        const { res } = run({ status: code });
-        expect(res.status).toHaveBeenCalledWith(code);
-        expect(res.json).toHaveBeenCalledWith({ error: http.STATUS_CODES[code] });
-      }
-    );
-
-    test.each([
+  test('EH-08..10 an invalid status or statusCode, or a non-object error, returns the 500 generic body', () => {
+    const invalid = [
       ['302 (3xx)', 302],
       ['399 (just below range)', 399],
       ['500', 500],
@@ -85,119 +66,86 @@ describe('errorHandler middleware', () => {
       ['null', null],
       ['true', true],
       ['object', {}],
-    ])('EH-08 invalid status %s returns 500 generic body', (_label, value) => {
-      const { res } = run({ status: value });
-      expect(res.status).toHaveBeenCalledWith(500);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Internal server error' });
-    });
+    ];
+    for (const [label, value] of invalid) {
+      expect(answer(`EH-08 ${label}`, { status: value })).toEqual(expected(`EH-08 ${label}`, 500, GENERIC));
+    }
+    expect(answer('EH-09 string statusCode', { statusCode: '422' })).toEqual(expected('EH-09 string statusCode', 500, GENERIC));
+    for (const err of [null, undefined, 'a string', 42]) {
+      expect(answer(`EH-10 ${String(err)}`, err)).toEqual(expected(`EH-10 ${String(err)}`, 500, GENERIC));
+    }
+  });
 
-    test('EH-09 invalid statusCode (string) with no status returns 500', () => {
-      const { res } = run({ statusCode: '422' });
-      expect(res.status).toHaveBeenCalledWith(500);
-      expect(res.json).toHaveBeenCalledWith({ error: 'Internal server error' });
+  test('EH-11..15 the body is exactly {error}, never the message, code, stack or SQL, whatever NODE_ENV; it responds once', () => {
+    // EH-11 a 5xx
+    let err = Object.assign(new Error('secret db detail'), {
+      code: '23505',
+      detail: 'Key (email)=(a@b.c) already exists',
+      sql: 'SELECT * FROM users',
     });
+    let payload = run(err).res.json.mock.calls[0][0];
+    expect(payload).toEqual({ error: GENERIC });
+    const serialized = JSON.stringify(payload);
+    expect(serialized).not.toContain('secret db detail');
+    expect(serialized).not.toContain('23505');
+    expect(serialized).not.toContain('SELECT');
+    expect(serialized).not.toContain('already exists');
+    expect(serialized).not.toContain(err.stack.split('\n')[1].trim());
+    expect(serialized).not.toMatch(/\.js/);
 
-    test.each([null, undefined, 'a string', 42])(
-      'EH-10 non-object error %p returns 500 without throwing',
-      (err) => {
-        const { res } = run(err);
-        expect(res.status).toHaveBeenCalledWith(500);
-        expect(res.json).toHaveBeenCalledWith({ error: 'Internal server error' });
+    // EH-12 a 4xx
+    err = Object.assign(new Error('relation "users" does not exist'), { status: 400, code: 'ABC123' });
+    payload = run(err).res.json.mock.calls[0][0];
+    expect(payload).toEqual({ error: 'Bad Request' });
+    expect(JSON.stringify(payload)).not.toContain('relation');
+    expect(JSON.stringify(payload)).not.toContain('ABC123');
+
+    // EH-13 exactly one key
+    expect(Object.keys(run(Object.assign(new Error('m'), { status: 404 })).res.json.mock.calls[0][0])).toEqual(['error']);
+
+    // EH-14 the same generic body regardless of NODE_ENV
+    const prev = process.env.NODE_ENV;
+    try {
+      for (const env of ['development', 'production', 'test', undefined]) {
+        if (env === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = env;
+        expect(run(new Error('secret db detail')).res.json).toHaveBeenCalledWith({ error: GENERIC });
       }
-    );
+    } finally {
+      if (prev === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = prev;
+    }
+
+    // EH-15 responds exactly once and does not call next
+    const { res, next } = run(new Error('x'));
+    expect(res.status).toHaveBeenCalledTimes(1);
+    expect(res.json).toHaveBeenCalledTimes(1);
+    expect(next).not.toHaveBeenCalled();
   });
 
-  describe('response body', () => {
-    test('EH-11 5xx body never includes message, code, stack or SQL text', () => {
-      const err = Object.assign(new Error('secret db detail'), {
-        code: '23505',
-        detail: 'Key (email)=(a@b.c) already exists',
-        sql: 'SELECT * FROM users',
-      });
-      const { res } = run(err);
-      const payload = res.json.mock.calls[0][0];
-      expect(payload).toEqual({ error: 'Internal server error' });
-      const serialized = JSON.stringify(payload);
-      expect(serialized).not.toContain('secret db detail');
-      expect(serialized).not.toContain('23505');
-      expect(serialized).not.toContain('SELECT');
-      expect(serialized).not.toContain('already exists');
-      expect(serialized).not.toContain(err.stack.split('\n')[1].trim());
-      expect(serialized).not.toMatch(/\.js/);
-    });
+  test('EH-16..20 every error is logged once; with headers already sent it delegates to next(err) and writes nothing', () => {
+    let err = new Error('secret db detail');
+    run(err);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(errorSpy).toHaveBeenCalledWith(err);
 
-    test('EH-12 4xx body never includes err.message or err.code', () => {
-      const err = Object.assign(new Error('relation "users" does not exist'), { status: 400, code: 'ABC123' });
-      const { res } = run(err);
-      const payload = res.json.mock.calls[0][0];
-      expect(payload).toEqual({ error: 'Bad Request' });
-      expect(JSON.stringify(payload)).not.toContain('relation');
-      expect(JSON.stringify(payload)).not.toContain('ABC123');
-    });
+    // EH-17 4xx errors too
+    err = Object.assign(new Error('nope'), { status: 404 });
+    run(err);
+    expect(errorSpy).toHaveBeenCalledWith(err);
 
-    test('EH-13 body has exactly one key, "error"', () => {
-      const { res } = run(Object.assign(new Error('m'), { status: 404 }));
-      expect(Object.keys(res.json.mock.calls[0][0])).toEqual(['error']);
-    });
+    // EH-18 EH-19 headers already sent
+    err = new Error('late failure');
+    let { res, next } = run(err, { headersSent: true });
+    expect(errorSpy).toHaveBeenCalledWith(err);
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(next).toHaveBeenCalledWith(err);
+    expect(res.status).not.toHaveBeenCalled();
+    expect(res.json).not.toHaveBeenCalled();
 
-    test('EH-14 same generic body regardless of NODE_ENV', () => {
-      const prev = process.env.NODE_ENV;
-      try {
-        for (const env of ['development', 'production', 'test', undefined]) {
-          if (env === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = env;
-          const { res } = run(new Error('secret db detail'));
-          expect(res.json).toHaveBeenCalledWith({ error: 'Internal server error' });
-        }
-      } finally {
-        if (prev === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = prev;
-      }
-    });
-
-    test('EH-15 responds exactly once and does not call next', () => {
-      const { res, next } = run(new Error('x'));
-      expect(res.status).toHaveBeenCalledTimes(1);
-      expect(res.json).toHaveBeenCalledTimes(1);
-      expect(next).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('logging', () => {
-    test('EH-16 logs the error via console.error', () => {
-      const err = new Error('secret db detail');
-      run(err);
-      expect(errorSpy).toHaveBeenCalledTimes(1);
-      expect(errorSpy).toHaveBeenCalledWith(err);
-    });
-
-    test('EH-17 logs 4xx errors too', () => {
-      const err = Object.assign(new Error('nope'), { status: 404 });
-      run(err);
-      expect(errorSpy).toHaveBeenCalledWith(err);
-    });
-
-    test('EH-18 logs even when headers were already sent', () => {
-      const err = new Error('late');
-      run(err, { headersSent: true });
-      expect(errorSpy).toHaveBeenCalledWith(err);
-    });
-  });
-
-  describe('headers already sent', () => {
-    test('EH-19 delegates to next(err) and writes nothing', () => {
-      const err = new Error('late failure');
-      const { res, next } = run(err, { headersSent: true });
-      expect(next).toHaveBeenCalledTimes(1);
-      expect(next).toHaveBeenCalledWith(err);
-      expect(res.status).not.toHaveBeenCalled();
-      expect(res.json).not.toHaveBeenCalled();
-    });
-
-    test('EH-20 delegates even for a 4xx-status error', () => {
-      const err = Object.assign(new Error('x'), { status: 404 });
-      const { res, next } = run(err, { headersSent: true });
-      expect(next).toHaveBeenCalledWith(err);
-      expect(res.status).not.toHaveBeenCalled();
-      expect(res.json).not.toHaveBeenCalled();
-    });
+    // EH-20 also for a 4xx-status error
+    err = Object.assign(new Error('x'), { status: 404 });
+    ({ res, next } = run(err, { headersSent: true }));
+    expect(next).toHaveBeenCalledWith(err);
+    expect(res.status).not.toHaveBeenCalled();
+    expect(res.json).not.toHaveBeenCalled();
   });
 });

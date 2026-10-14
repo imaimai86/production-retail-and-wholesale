@@ -66,17 +66,17 @@ describe('Inventory model', () => {
   afterEach(() => jest.clearAllMocks());
 
   describe('transfer', () => {
-    test('T-M1 moves stock to a new destination and returns the destination row', async () => {
-      const s = useFakeInventory([{ id: 1, product_id: 1, location: 'A', quantity: 10 }]);
+    test('T-M1..3 T-M9 moves stock to a new or existing destination, down to 0 at the source, and touches no other product', async () => {
+      let s = useFakeInventory([{ id: 1, product_id: 1, location: 'A', quantity: 10 }]);
       const result = await Inventory.transfer(1, 'A', 'B', 4);
       expect(s.qty(1, 'A')).toBe(6);
       expect(s.qty(1, 'B')).toBe(4);
+      // the destination row is returned
       expect(result).toMatchObject({ product_id: 1, location: 'B', quantity: 4 });
       expect(db.transaction).toHaveBeenCalledTimes(1);
-    });
 
-    test('T-M2 adds to an existing destination and conserves the total', async () => {
-      const s = useFakeInventory([
+      // T-M2 an existing destination is added to and the total conserved
+      s = useFakeInventory([
         { id: 1, product_id: 1, location: 'A', quantity: 10 },
         { id: 2, product_id: 1, location: 'B', quantity: 3 }
       ]);
@@ -84,59 +84,15 @@ describe('Inventory model', () => {
       expect(s.qty(1, 'A')).toBe(6);
       expect(s.qty(1, 'B')).toBe(7);
       expect(s.qty(1, 'A') + s.qty(1, 'B')).toBe(13);
-    });
 
-    test('T-M3 transfers exactly the available quantity, leaving the source at 0', async () => {
-      const s = useFakeInventory([{ id: 1, product_id: 1, location: 'A', quantity: 5 }]);
+      // T-M3 exactly the available quantity
+      s = useFakeInventory([{ id: 1, product_id: 1, location: 'A', quantity: 5 }]);
       await Inventory.transfer(1, 'A', 'B', 5);
       expect(s.qty(1, 'A')).toBe(0);
       expect(s.qty(1, 'B')).toBe(5);
-    });
 
-    test('T-M4 rejects a transfer larger than the source stock and changes nothing', async () => {
-      const s = useFakeInventory([
-        { id: 1, product_id: 1, location: 'A', quantity: 5 },
-        { id: 2, product_id: 1, location: 'B', quantity: 2 }
-      ]);
-      const err = await rejection(Inventory.transfer(1, 'A', 'B', 6));
-      expect(err.code).toBe('INSUFFICIENT_STOCK');
-      expect(err.message).toBe('Insufficient stock');
-      expect(s.qty(1, 'A')).toBe(5);
-      expect(s.qty(1, 'B')).toBe(2);
-    });
-
-    test('T-M5 rejects when the source row does not exist and creates no destination', async () => {
-      const s = useFakeInventory([]);
-      const err = await rejection(Inventory.transfer(1, 'A', 'B', 1));
-      expect(err.code).toBe('INSUFFICIENT_STOCK');
-      expect(s.qty(1, 'B')).toBeUndefined();
-      expect(s.inventory).toEqual([]);
-    });
-
-    test('T-M6 rejects when the source row has quantity 0', async () => {
-      const s = useFakeInventory([{ id: 1, product_id: 1, location: 'A', quantity: 0 }]);
-      const err = await rejection(Inventory.transfer(1, 'A', 'B', 1));
-      expect(err.code).toBe('INSUFFICIENT_STOCK');
-      expect(s.qty(1, 'A')).toBe(0);
-      expect(s.qty(1, 'B')).toBeUndefined();
-    });
-
-    test('T-M7 does not touch the destination when the source check fails', async () => {
-      const s = useFakeInventory([{ id: 1, product_id: 1, location: 'A', quantity: 1 }]);
-      await rejection(Inventory.transfer(1, 'A', 'B', 2));
-      expect(s.log.some(sql => /^INSERT INTO inventory/i.test(sql))).toBe(false);
-      s.inventory.forEach(r => expect(r.quantity).toBeGreaterThanOrEqual(0));
-    });
-
-    test('T-M8 matches the source location case-sensitively', async () => {
-      const s = useFakeInventory([{ id: 1, product_id: 1, location: 'Retail', quantity: 10 }]);
-      const err = await rejection(Inventory.transfer(1, 'retail', 'B', 1));
-      expect(err.code).toBe('INSUFFICIENT_STOCK');
-      expect(s.qty(1, 'Retail')).toBe(10);
-    });
-
-    test('T-M9 leaves other products at the same location unchanged', async () => {
-      const s = useFakeInventory([
+      // T-M9 other products at the same location are unchanged
+      s = useFakeInventory([
         { id: 1, product_id: 1, location: 'A', quantity: 10 },
         { id: 2, product_id: 2, location: 'A', quantity: 10 }
       ]);
@@ -144,19 +100,54 @@ describe('Inventory model', () => {
       expect(s.qty(2, 'A')).toBe(10);
       expect(s.qty(2, 'B')).toBeUndefined();
     });
+
+    test('T-M4..8 rejects with INSUFFICIENT_STOCK when the source is short, empty, missing or differs in case, and changes nothing', async () => {
+      // T-M4 larger than the source stock
+      let s = useFakeInventory([
+        { id: 1, product_id: 1, location: 'A', quantity: 5 },
+        { id: 2, product_id: 1, location: 'B', quantity: 2 }
+      ]);
+      let err = await rejection(Inventory.transfer(1, 'A', 'B', 6));
+      expect(err.code).toBe('INSUFFICIENT_STOCK');
+      expect(err.message).toBe('Insufficient stock');
+      expect(s.qty(1, 'A')).toBe(5);
+      expect(s.qty(1, 'B')).toBe(2);
+
+      // T-M5 no source row: no destination is created
+      s = useFakeInventory([]);
+      err = await rejection(Inventory.transfer(1, 'A', 'B', 1));
+      expect(err.code).toBe('INSUFFICIENT_STOCK');
+      expect(s.qty(1, 'B')).toBeUndefined();
+      expect(s.inventory).toEqual([]);
+
+      // T-M6 the source row has quantity 0
+      s = useFakeInventory([{ id: 1, product_id: 1, location: 'A', quantity: 0 }]);
+      err = await rejection(Inventory.transfer(1, 'A', 'B', 1));
+      expect(err.code).toBe('INSUFFICIENT_STOCK');
+      expect(s.qty(1, 'A')).toBe(0);
+      expect(s.qty(1, 'B')).toBeUndefined();
+
+      // T-M7 the destination is not touched when the source check fails
+      s = useFakeInventory([{ id: 1, product_id: 1, location: 'A', quantity: 1 }]);
+      await rejection(Inventory.transfer(1, 'A', 'B', 2));
+      expect(s.log.some(sql => /^INSERT INTO inventory/i.test(sql))).toBe(false);
+      s.inventory.forEach(r => expect(r.quantity).toBeGreaterThanOrEqual(0));
+
+      // T-M8 the source location is matched case-sensitively
+      s = useFakeInventory([{ id: 1, product_id: 1, location: 'Retail', quantity: 10 }]);
+      err = await rejection(Inventory.transfer(1, 'retail', 'B', 1));
+      expect(err.code).toBe('INSUFFICIENT_STOCK');
+      expect(s.qty(1, 'Retail')).toBe(10);
+    });
   });
 
-  test('getAll default', async () => {
+  test('getAll pages with LIMIT and OFFSET, 10 and 0 by default', async () => {
     db.query.mockResolvedValue({ rows: [] });
     await Inventory.getAll();
     expect(db.query).toHaveBeenCalledWith(
       'SELECT * FROM inventory ORDER BY id LIMIT $1 OFFSET $2',
       [10, 0]
     );
-  });
-
-  test('getAll with params', async () => {
-    db.query.mockResolvedValue({ rows: [] });
     await Inventory.getAll({ limit: 3, offset: 6 });
     expect(db.query).toHaveBeenCalledWith(
       'SELECT * FROM inventory ORDER BY id LIMIT $1 OFFSET $2',

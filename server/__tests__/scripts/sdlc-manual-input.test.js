@@ -15,22 +15,22 @@ function tmpRepo() {
 }
 
 describe('FROM validation in scripts/sdlc.sh', () => {
-  test('an unknown FROM exits 1 with the message and creates nothing', () => {
+  test('an unknown FROM exits 1 with the message and creates nothing; every valid FROM is accepted; bash -n passes', () => {
+    // one directory for every value: a rejected value leaves it as it was, and an accepted one stops at the missing brief
     const dir = tmpRepo();
-    const r = spawnSync('bash', ['scripts/sdlc.sh', 'alpha'], { cwd: dir, env: { ...process.env, FROM: 'bogus' }, encoding: 'utf8' });
+    const run = from => spawnSync('bash', ['scripts/sdlc.sh', 'alpha'], { cwd: dir, env: { ...process.env, FROM: from }, encoding: 'utf8' });
+
+    const r = run('bogus');
     expect(r.status).toBe(1);
     expect(r.stdout).toContain('ERROR: unknown FROM=bogus (use spec, plan, red-tests, implement, review or test-repair)');
     expect(fs.readdirSync(dir).sort()).toEqual(['.git', 'scripts']);
-  });
 
-  test.each(['spec', 'plan', 'red-tests', 'implement', 'test-repair', 'review'])('FROM=%s is accepted (fails later, not on validation)', from => {
-    const dir = tmpRepo();
-    const r = spawnSync('bash', ['scripts/sdlc.sh', 'alpha'], { cwd: dir, env: { ...process.env, FROM: from }, encoding: 'utf8' });
-    expect(r.stdout).not.toContain('unknown FROM');
-    expect(r.stdout).toContain('Missing Docs/backlog/alpha/brief.md');
-  });
+    for (const from of ['spec', 'plan', 'red-tests', 'implement', 'test-repair', 'review']) {
+      const ok = run(from);
+      expect([from, ok.stdout.includes('unknown FROM')]).toEqual([from, false]);
+      expect(ok.stdout).toContain('Missing Docs/backlog/alpha/brief.md');
+    }
 
-  test('bash -n passes', () => {
     expect(spawnSync('bash', ['-n', path.join(root, 'scripts/sdlc.sh')]).status).toBe(0);
   });
 });
@@ -44,20 +44,17 @@ describe('manual_input', () => {
     return spawnSync('bash', ['-c', script], { encoding: 'utf8' }).stdout;
   };
 
-  test('prints only the requested stage section as binding input', () => {
+  test('prints only the requested stage section as binding input, nothing when it is missing, and every agent stage prompt includes it', () => {
     const out = run('## plan\nUse a queue.\n\n## implement\nKeep it small.\nNo new deps.\n', 'implement');
     expect(out).toContain('MANUAL INPUT');
     expect(out).toContain('Keep it small.\nNo new deps.');
     expect(out).not.toContain('Use a queue.');
-  });
 
-  test('prints nothing when the file, the section or its text is missing', () => {
+    // the file, the section or its text is missing
     expect(run(null, 'plan')).toBe('');
     expect(run('## plan\nx\n', 'review')).toBe('');
     expect(run('## review\n   \n', 'review')).toBe('');
-  });
 
-  test('every agent stage prompt includes its input', () => {
     // agent() appends the manual input for every stage except the test-repair/test-audit ones.
     expect(sdlc).toContain('prompt="$prompt$(manual_input "$pstage")"');
     expect(sdlc).toMatch(/case "\$pstage" in test-repair\|test-audit\) ;;/);
