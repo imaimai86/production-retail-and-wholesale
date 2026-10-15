@@ -160,6 +160,38 @@ describe('sdlc-mod.sh with settings', () => {
   });
 });
 
+describe('sdlc-mod.sh and a base without the pipeline', () => {
+  test('a base branch without scripts/sdlc.sh is refused before any worktree is made, with what to do', () => {
+    const base = tmp('sdlc-mod-nobase-');
+    const repo = path.join(base, 'repo');
+    write(repo, 'README.md', 'x\n');
+    write(repo, 'Docs/backlog/alpha/brief.md', '# alpha\n');
+    git(repo, 'init', '-q', '-b', 'main');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'init');
+    // the pipeline exists only in the working tree, on another branch
+    git(repo, 'checkout', '-q', '-b', 'try-pipeline');
+    fs.mkdirSync(path.join(repo, 'scripts'));
+    fs.copyFileSync(path.join(root, 'scripts/sdlc-mod.sh'), path.join(repo, 'scripts/sdlc-mod.sh'));
+    write(repo, 'scripts/sdlc.sh', '#!/usr/bin/env bash\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'pipeline');
+    const wts = path.join(base, 'wts');
+    const run = extra => spawnSync('bash', [path.join(repo, 'scripts/sdlc-mod.sh'), 'run', 'alpha'],
+      { cwd: repo, encoding: 'utf8', env: { ...process.env, ...GIT_ENV, SDLC_WT_BASE: wts, SDLC_PLUGIN_DIRS: '', ...extra } });
+
+    const r = run({ SDLC_BASE: 'main' });
+    expect(r.status).toBe(1);
+    // the reason is recorded where the control pane shows it
+    const record = JSON.parse(fs.readFileSync(path.join(repo, '.git/sdlc-runs/alpha.json'), 'utf8'));
+    expect(record).toMatchObject({ state: 'exited', exit_code: '1' });
+    expect(record.message).toContain('scripts/sdlc.sh is not committed on main, which the worktree starts from. Commit the pipeline to main, or start from a branch that has it: SDLC_BASE=<branch>');
+    expect(fs.existsSync(path.join(wts, 'alpha'))).toBe(false);
+    expect(git(repo, 'branch', '--list', 'sdlc/alpha')).toBe('');
+    expect(run({ SDLC_BASE: 'try-pipeline' }).status).toBe(0);
+  });
+});
+
 describe('guard hook with settings', () => {
   const GUARD = path.join(root, '.claude/helpers/sdlc-guard.cjs');
   const repo = () => {

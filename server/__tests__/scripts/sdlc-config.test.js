@@ -83,6 +83,39 @@ describe('detection', () => {
 });
 
 describe('detection in real-world layouts', () => {
+  test('test patterns come from the runner config when it lists them literally: vitest include, jest testMatch or roots', () => {
+    const vitest = project({
+      'package.json': { scripts: { test: 'vitest run' } },
+      'vitest.config.ts': "import { configDefaults, defineConfig } from 'vitest/config';\nexport default defineConfig({\n  test: {\n"
+        + "    environment: 'jsdom',\n    include: ['__tests__/**/*.{test,spec}.?(c|m)[jt]s?(x)'],\n    exclude: [...configDefaults.exclude, 'tests/e2e/**'],\n  },\n});\n",
+    });
+    expect(detect(vitest)[0].testGlobs).toEqual(['__tests__/**/*.{test,spec}.?(c|m)[jt]s?(x)']);
+
+    // vite.config: only the test block counts, not optimizeDeps.include
+    const vite = project({
+      'package.json': { scripts: { test: 'vitest' } }, 'vitest.workspace.ts': '',
+      'vite.config.ts': "export default { optimizeDeps: { include: ['react'] }, test: { include: ['src/**/*.spec.ts'] } };\n",
+    });
+    expect(detect(vite)[0].testGlobs).toEqual(['src/**/*.spec.ts']);
+
+    const jestRoots = project({ 'package.json': { scripts: { test: 'jest' } }, 'jest.config.js': "module.exports = { roots: ['<rootDir>/spec'] };\n" });
+    expect(detect(jestRoots)[0].testGlobs).toEqual(['spec/**/__tests__/**/*.[jt]s?(x)', 'spec/**/?(*.)+(spec|test).[jt]s?(x)']);
+    const jestMatch = project({ 'package.json': { scripts: { test: 'jest' } }, 'jest.config.js': "module.exports = { testMatch: ['<rootDir>/test/**/*.it.js'], roots: ['x'] };\n" });
+    expect(detect(jestMatch)[0].testGlobs).toEqual(['test/**/*.it.js']);
+    const pkgRoots = project({ 'package.json': { scripts: { test: 'jest' }, jest: { roots: ['<rootDir>'] } } });
+    expect(detect(pkgRoots)[0].testGlobs).toEqual(['**/__tests__/**/*.[jt]s?(x)', '**/?(*.)+(spec|test).[jt]s?(x)']);
+  });
+
+  test('a list that cannot be read without running the config keeps the runner defaults', () => {
+    const { literalList } = require(helper);
+    expect(literalList("include: [...shared, 'a/**']", 'include')).toBeNull();
+    expect(literalList('include: patterns', 'include')).toBeNull();
+    expect(literalList('include: []', 'include')).toBeNull();
+    expect(literalList("include: [ // tests\n 'a/**', /* b */ 'b\\'s/**',\n]", 'include')).toEqual(['a/**', "b's/**"]);
+    const dir = project({ 'package.json': { scripts: { test: 'vitest run' } }, 'vitest.config.mjs': 'export default { test: { include: globs } };\n' });
+    expect(detect(dir)[0].testGlobs).toEqual(['**/*.{test,spec}.?(c|m)[jt]s?(x)']);
+  });
+
   test('follows the scripts a test script runs, and finds a runner called by its path', () => {
     const [s] = detect(project({ 'package.json': {
       scripts: { test: 'npm run lint && npm run cover', cover: 'istanbul cover ../../node_modules/mocha/bin/_mocha -- --recursive', lint: 'eslint .' },
