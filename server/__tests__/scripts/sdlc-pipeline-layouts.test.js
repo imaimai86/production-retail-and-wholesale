@@ -4,6 +4,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const root = path.resolve(__dirname, '../../..');
+const { cleanEnv } = require('../../test-utils/sdlcSettings');
 const GIT_ENV = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
 const git = (cwd, ...args) => spawnSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...GIT_ENV } }).stdout.trim();
 const write = (dir, rel, text) => {
@@ -50,8 +51,8 @@ function project(files, stages) {
   return { dir, fake };
 }
 
-function runPipeline({ dir, fake }, slug, docs) {
-  const env = { ...process.env, ...GIT_ENV, FAKE_DIR: fake, FAKE_DOCS: docs, PATH: `${path.join(fake, 'bin')}:${process.env.PATH}` };
+function runPipeline({ dir, fake }, slug, docs, extra = {}) {
+  const env = { ...cleanEnv(extra), ...GIT_ENV, FAKE_DIR: fake, FAKE_DOCS: docs, PATH: `${path.join(fake, 'bin')}:${process.env.PATH}` };
   delete env.CI;
   const r = spawnSync('bash', ['scripts/sdlc.sh', slug], { cwd: dir, encoding: 'utf8', env, timeout: 240000 });
   const read = f => (fs.existsSync(path.join(fake, f)) ? fs.readFileSync(path.join(fake, f), 'utf8') : '');
@@ -77,7 +78,8 @@ const besideSource = () => project({
   plan: 'echo "plan" > "$FAKE_DOCS/plan-1.md"',
   'red-tests': `echo "cases" > "$FAKE_DOCS/test-cases-1.md"
 printf "import { test } from 'node:test';\\nimport assert from 'node:assert/strict';\\nimport { sum } from './sum.mjs';\\ntest('sum adds', () => assert.equal(sum(2, 3), 5));\\n" > src/sum.test.mjs`,
-  implement: `printf 'export const sum = (a, b) => a + b;\\n' > src/sum.mjs
+  implement: `env > "$FAKE_DIR/implement-env.txt"
+printf 'export const sum = (a, b) => a + b;\\n' > src/sum.mjs
 [ -z "\${FAKE_TOUCH_TEST:-}" ] || echo "// edited" >> src/sum.test.mjs`,
   review: 'echo "reviewed" > "$FAKE_DOCS/review-1.md"',
 });
@@ -125,6 +127,17 @@ describe('the pipeline on a project unlike this one', () => {
     } finally {
       delete process.env.FAKE_TOUCH_TEST;
     }
+  });
+});
+
+describe('what a run passes on', () => {
+  test('FROM steers this run only: the agents and the tests they run do not inherit it', () => {
+    const p = besideSource();
+    const r = runPipeline(p, 'add-sum', 'work/items/add-sum', { FROM: 'spec' });
+    expect(r.status).toBe(0);
+    const env = fs.readFileSync(path.join(p.fake, 'implement-env.txt'), 'utf8');
+    expect(env).toContain('FAKE_DOCS=work/items/add-sum');
+    expect(env).not.toMatch(/^FROM=/m);
   });
 });
 

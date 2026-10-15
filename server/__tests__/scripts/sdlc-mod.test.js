@@ -64,8 +64,9 @@ function mkRepo() {
   fs.cpSync(path.join(template, 'repo'), repo, { recursive: true });
 }
 
+const { cleanEnv } = require('../../test-utils/sdlcSettings');
 const env = extra => ({
-  ...process.env, ...GIT_ENV, SDLC_WT_BASE: wts, SDLC_PLUGIN_DIRS: '', ...extra,
+  ...cleanEnv(), ...GIT_ENV, SDLC_WT_BASE: wts, SDLC_PLUGIN_DIRS: '', ...extra,
 });
 
 function mod(args, extra = {}) {

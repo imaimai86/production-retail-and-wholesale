@@ -43,6 +43,8 @@ case "$FROM" in
   spec) FROM_N=1;; plan) FROM_N=2;; red-tests) FROM_N=3;; implement) FROM_N=4;; test-repair) FROM_N=5;; review) FROM_N=6;;
   *) echo "ERROR: unknown FROM=$FROM (use spec, plan, red-tests, implement, review or test-repair)"; exit 1;;
 esac
+# FROM says where THIS run starts; nothing it starts (tests, agents, pipelines the tests start) may inherit it.
+export -n FROM
 ROOT="$(pwd)"
 CHECK="node scripts/sdlc-testcheck.cjs"
 # Project settings: sdlc.config.json, completed by detection (see `node scripts/sdlc-config.cjs show`). The code search
@@ -208,6 +210,8 @@ render_prompt() {
   local f="scripts/prompts/prompt-$1.md" t
   [ -f "$f" ] || { echo "ERROR: missing prompt file $f" >&2; exit 1; }
   t=$(cat "$f")
+  # Every stage ends with the tool rules (a refused shell command stops the run): scripts/prompts/parts/tools.md.
+  if [ -f scripts/prompts/parts/tools.md ]; then t="$t"$'\n\n'"$(cat scripts/prompts/parts/tools.md)"; fi
   t=${t//\{\{DOCS\}\}/$DOCS}; t=${t//\{\{LOG\}\}/$LOG}; t=${t//\{\{TEST_DIR\}\}/$TEST_DIR}
   t=${t//\{\{TEST_CMD\}\}/$TEST_CMD}; t=${t//\{\{RED_SHA\}\}/${RED_SHA:-}}; t=${t//\{\{SLUG\}\}/$SLUG}
   t=${t//\{\{TEST_FRAMEWORK\}\}/"${SDLC_TEST_FRAMEWORK:-tests in the style the project already uses}"}

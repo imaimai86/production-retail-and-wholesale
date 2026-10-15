@@ -36,6 +36,12 @@ SDLC_WT_LINKS=(server/node_modules node_modules graft graphify-out .env)
 eval "$(node "$ROOT/scripts/sdlc-config.cjs" env "$ROOT" 2>/dev/null)" || true
 BACKLOG_DIR="$SDLC_BACKLOG_DIR"; BRANCH_PREFIX="$SDLC_BRANCH_PREFIX"
 WT_BASE="${SDLC_WT_BASE:-${SDLC_WT_BASE_DEFAULT:-$(dirname "$ROOT")/$(basename "$ROOT")-sdlc}}"
+# The wrapper's own controls are read above and in pick_base; the pipeline, its tests and the pipelines they start must
+# not inherit them (FROM is passed on on purpose: sdlc.sh reads it, then stops exporting it).
+SDLC_BASE_SET="${SDLC_BASE:-}"; export -n SDLC_BASE SDLC_WT_BASE SDLC_MAX_PARALLEL SDLC_ALLOW_MERGED WATCH_INTERVAL
+# Repository-wide permission rules live in the main working tree, where sdlc.sh reads them, whichever checkout runs this.
+MAIN_TREE="$(git -C "$ROOT" worktree list --porcelain 2>/dev/null | awk '/^worktree /{print substr($0,10); exit}')" || MAIN_TREE=""
+PERM_REPO="${MAIN_TREE:-$ROOT}/.claude/sdlc-permissions.json"
 
 now() { date +%Y-%m-%dT%H:%M:%S; }
 usage() { echo "Usage: $0 run <slug> | stop <slug> | discard <slug> [--yes] [--stop] | restart <slug> [--yes] | status | changes <slug> [--json] | changes --all [<slug>...] | watch <slug> [--once] | permit <slug> allow|always|deny [n|all] | model list [--json] | model add <provider> --endpoint <url> --key-env <VAR> --models a,b [--effort] | model add-model|remove-model <provider> <model> | model remove <provider> | model test <provider>/<model>" >&2; exit 2; }
@@ -76,7 +82,7 @@ running_count() {
 
 # The ref a new branch starts from.
 pick_base() {
-  local p base="${SDLC_BASE:-${SDLC_GIT_BASE:-}}"
+  local p base="${SDLC_BASE_SET:-${SDLC_GIT_BASE:-}}"
   if [ -z "$base" ]; then
     for p in origin/main main HEAD; do git -C "$ROOT" rev-parse --verify -q "$p" >/dev/null && { base="$p"; break; }; done
   fi
@@ -410,7 +416,7 @@ cmd_permit() {
   wt="$(json_get "$f" worktree 2>/dev/null || true)"
   if [ -z "$wt" ] || [ ! -d "$wt" ]; then wt="$WT_BASE/$slug"; fi
   [ -d "$wt" ] || { echo "No pipeline for $slug" >&2; exit 1; }
-  node "$ROOT/scripts/sdlc-permissions.cjs" decide "$wt/$BACKLOG_DIR/$slug/logs/permissions.json" "$which" "$choice" "$ROOT/.claude/sdlc-permissions.json"
+  node "$ROOT/scripts/sdlc-permissions.cjs" decide "$wt/$BACKLOG_DIR/$slug/logs/permissions.json" "$which" "$choice" "$PERM_REPO"
 }
 
 case "${1:-}" in

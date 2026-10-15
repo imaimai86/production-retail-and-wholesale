@@ -19,4 +19,16 @@ function addSdlcSettings(dir, settings = SETTINGS) {
   fs.writeFileSync(path.join(dir, 'sdlc.config.json'), `${JSON.stringify(settings, null, 2)}\n`);
 }
 
-module.exports = { SETTINGS, addSdlcSettings };
+// The variables that steer a pipeline run (where it starts, its base branch, its worktrees...). A test that starts
+// sdlc.sh or sdlc-mod.sh gets an environment without them, so a developer's shell (or a pipeline running these very
+// tests) cannot change what the test runs.
+const PIPELINE_CONTROLS = ['FROM', 'SDLC_BASE', 'SDLC_WT_BASE', 'SDLC_MAX_PARALLEL', 'SDLC_ALLOW_MERGED', 'SDLC_PLUGIN_DIRS',
+  'WATCH_INTERVAL', 'SDLC_MODEL', 'SDLC_EFFORT', 'CI'];
+function cleanEnv(extra = {}) {
+  const env = { ...process.env };
+  for (const k of PIPELINE_CONTROLS) delete env[k];
+  for (const k of Object.keys(env)) if (/^(MODEL|EFFORT)_[A-Z_]+$/.test(k)) delete env[k];
+  return { ...env, ...extra };
+}
+
+module.exports = { SETTINGS, addSdlcSettings, cleanEnv, PIPELINE_CONTROLS };
