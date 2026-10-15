@@ -6,6 +6,7 @@ const { spawnSync } = require('child_process');
 const root = path.resolve(__dirname, '../../..');
 const configPath = path.join(root, 'scripts/sdlc-config.cjs');
 const { expandGlob, testSpec, testFiles, renderSkill } = require(configPath);
+const { cleanEnv } = require('../../test-utils/sdlcSettings');
 const GIT_ENV = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
 
 const tmp = (p = 'sdlc-wiring-') => fs.mkdtempSync(path.join(os.tmpdir(), p));
@@ -150,7 +151,7 @@ describe('sdlc-mod.sh with settings', () => {
     git(repo, 'add', '-A');
     git(repo, 'commit', '-q', '-m', 'init');
     const wts = path.join(base, 'wts');
-    const r = spawnSync('bash', [path.join(repo, 'scripts/sdlc-mod.sh'), 'run', 'alpha'], { cwd: repo, encoding: 'utf8', env: { ...process.env, ...GIT_ENV, SDLC_WT_BASE: wts, SDLC_PLUGIN_DIRS: '' } });
+    const r = spawnSync('bash', [path.join(repo, 'scripts/sdlc-mod.sh'), 'run', 'alpha'], { cwd: repo, encoding: 'utf8', env: { ...cleanEnv(), ...GIT_ENV, SDLC_WT_BASE: wts, SDLC_PLUGIN_DIRS: '' } });
     expect(r.status).toBe(0);
     const wt = path.join(wts, 'alpha');
     expect(fs.readFileSync(path.join(wt, 'ran.txt'), 'utf8')).toBe('ran alpha on feature/alpha\n');
@@ -178,7 +179,7 @@ describe('sdlc-mod.sh and a base without the pipeline', () => {
     git(repo, 'commit', '-q', '-m', 'pipeline');
     const wts = path.join(base, 'wts');
     const run = extra => spawnSync('bash', [path.join(repo, 'scripts/sdlc-mod.sh'), 'run', 'alpha'],
-      { cwd: repo, encoding: 'utf8', env: { ...process.env, ...GIT_ENV, SDLC_WT_BASE: wts, SDLC_PLUGIN_DIRS: '', ...extra } });
+      { cwd: repo, encoding: 'utf8', env: { ...cleanEnv(), ...GIT_ENV, SDLC_WT_BASE: wts, SDLC_PLUGIN_DIRS: '', ...extra } });
 
     const r = run({ SDLC_BASE: 'main' });
     expect(r.status).toBe(1);
@@ -189,6 +190,58 @@ describe('sdlc-mod.sh and a base without the pipeline', () => {
     expect(fs.existsSync(path.join(wts, 'alpha'))).toBe(false);
     expect(git(repo, 'branch', '--list', 'sdlc/alpha')).toBe('');
     expect(run({ SDLC_BASE: 'try-pipeline' }).status).toBe(0);
+  });
+});
+
+describe('sdlc-mod.sh controls and permission rules', () => {
+  // A repository on main with the wrapper and a stub pipeline that records what it inherited.
+  const repoWithStub = () => {
+    const base = tmp('sdlc-mod-env-');
+    const repo = path.join(base, 'repo');
+    write(repo, 'scripts/sdlc.sh', '#!/usr/bin/env bash\nenv | grep -E "^(FROM|SDLC_BASE|SDLC_WT_BASE|SDLC_MAX_PARALLEL|SDLC_ALLOW_MERGED)=" | sort > inherited.txt\n');
+    fs.chmodSync(path.join(repo, 'scripts/sdlc.sh'), 0o755);
+    for (const f of ['sdlc-mod.sh', 'sdlc-permissions.cjs']) fs.copyFileSync(path.join(root, 'scripts', f), path.join(repo, 'scripts', f));
+    write(repo, 'Docs/backlog/alpha/brief.md', '# alpha\n');
+    git(repo, 'init', '-q', '-b', 'main');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-q', '-m', 'init');
+    return { base, repo };
+  };
+  const mod = (cwd, script, args, extra) => spawnSync('bash', [script, ...args], { cwd, encoding: 'utf8', env: cleanEnv({ ...GIT_ENV, ...extra }) });
+
+  test('the pipeline gets FROM but not the wrapper\'s own controls', () => {
+    const { base, repo } = repoWithStub();
+    const wts = path.join(base, 'wts');
+    const r = mod(repo, path.join(repo, 'scripts/sdlc-mod.sh'), ['run', 'alpha'],
+      { FROM: 'plan', SDLC_BASE: 'main', SDLC_WT_BASE: wts, SDLC_MAX_PARALLEL: '2', SDLC_ALLOW_MERGED: '1', SDLC_PLUGIN_DIRS: '' });
+    expect(r.status).toBe(0);
+    expect(fs.readFileSync(path.join(wts, 'alpha/inherited.txt'), 'utf8')).toBe('FROM=plan\n');
+  });
+
+  test('permit ... always saves the rule in the main working tree, also when run from another checkout', () => {
+    const { base, repo } = repoWithStub();
+    const runner = path.join(base, 'runner');
+    git(repo, 'worktree', 'add', '-q', '--detach', runner, 'main');
+    // a paused run with one refused action, as sdlc.sh records it
+    const wt = path.join(base, 'wts/alpha');
+    write(wt, 'Docs/backlog/alpha/logs/permissions.json', { pending: [{ stage: 'red-tests', tool: 'Bash', detail: 'cd x && ls', rule: 'Bash(cd:*)', protected: false }], allow: [], bypass: [], denied: [] });
+    write(repo, '.git/sdlc-runs/alpha.json', { slug: 'alpha', worktree: wt, pid: 0, state: 'exited', exit_code: '2' });
+    const r = mod(runner, path.join(runner, 'scripts/sdlc-mod.sh'), ['permit', 'alpha', 'always', 'all'], {});
+    expect(r.status).toBe(0);
+    expect(JSON.parse(fs.readFileSync(path.join(repo, '.claude/sdlc-permissions.json'), 'utf8')).allow).toEqual(['Bash(cd:*)']);
+    expect(fs.existsSync(path.join(runner, '.claude/sdlc-permissions.json'))).toBe(false);
+  });
+});
+
+describe('every stage prompt ends with the tool rules', () => {
+  test('render_prompt appends scripts/prompts/parts/tools.md, with its placeholders filled', () => {
+    const src = fs.readFileSync(path.join(root, 'scripts/sdlc.sh'), 'utf8');
+    const fn = src.slice(src.indexOf('render_prompt() {'), src.indexOf('\n# agent <log-name> <stage>'));
+    const dir = project({ 'scripts/prompts/prompt-demo.md': 'Do {{SLUG}}.', 'scripts/prompts/parts/tools.md': 'Run only {{TEST_CMD}}.\n' });
+    const run = () => spawnSync('bash', ['-c', `set -euo pipefail\nDOCS=d; LOG=l; TEST_DIR=t; TEST_CMD="npm test"; SLUG=s\n${fn}\nrender_prompt demo`], { cwd: dir, encoding: 'utf8' });
+    expect(run().stdout).toBe('Do s.\n\nRun only npm test.');
+    fs.rmSync(path.join(dir, 'scripts/prompts/parts/tools.md'));
+    expect(run().stdout).toBe('Do s.');
   });
 });
 
