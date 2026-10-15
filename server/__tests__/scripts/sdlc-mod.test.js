@@ -312,6 +312,36 @@ describe('sdlc-mod.sh discard and restart', () => {
     expect(fs.existsSync(path.join(repo, '.git/sdlc-runs/slow-one.json'))).toBe(false);
   });
 
+  // Runs the wrapper in its own process group: a `kill 0` in it then hits only that group, never jest.
+  function modIsolated(args) {
+    return new Promise(resolve => {
+      const child = spawn('bash', [path.join(repo, 'scripts/sdlc-mod.sh'), ...args], { cwd: repo, env: env(), stdio: 'ignore', detached: true });
+      live.push(child);
+      child.on('close', (code, signal) => resolve({ code, signal }));
+    });
+  }
+
+  test('stop and discard --stop never signal anything for a run that is not running (pid 0 of a refused start, or a stale pid)', async () => {
+    git(repo, ...MERGED('alpha'));
+    expect(mod(['run', 'alpha']).status).toBe(5);
+    expect(registry('alpha').pid).toBe(0);
+
+    expect(await modIsolated(['stop', 'alpha'])).toEqual({ code: 0, signal: null });
+    expect(await modIsolated(['discard', 'alpha', '--yes', '--stop'])).toEqual({ code: 0, signal: null });
+    expect(fs.existsSync(path.join(repo, '.git/sdlc-runs/alpha.json'))).toBe(false);
+    expect(fs.existsSync(path.join(repo, '.git/sdlc-runs/alpha.interrupt'))).toBe(false);
+
+    // A finished run whose recorded pid now belongs to another process: that process is left alone.
+    expect(mod(['run', 'fail-one']).status).toBe(1);
+    const other = spawn('sleep', ['300'], { stdio: 'ignore' });
+    live.push(other);
+    const f = path.join(repo, '.git/sdlc-runs/fail-one.json');
+    fs.writeFileSync(f, JSON.stringify({ ...registry('fail-one'), pid: other.pid }));
+    expect(await modIsolated(['stop', 'fail-one'])).toEqual({ code: 0, signal: null });
+    expect(await modIsolated(['discard', 'fail-one', '--yes', '--stop'])).toEqual({ code: 0, signal: null });
+    expect(alive(other.pid)).toBe(true);
+  });
+
   test('restart needs --yes (exit 6); with it the run starts again from scratch, unless the item is already merged (exit 5)', () => {
     // a slug that never ran simply runs
     expect(mod(['restart', 'alpha', '--yes']).status).toBe(0);
