@@ -193,3 +193,36 @@ describe('guard hook with settings', () => {
     expect(hook(dir, 'stop', {})).toMatchObject({ status: 0, stdout: '' });
   });
 });
+
+describe('command lines a shell did not split', () => {
+  const { argsProblem } = require(configPath);
+  const CONFIG_CLI = { commands: ['detect', 'code-search', 'init-tests'], valued: ['--runner', '--test-dir'], flags: ['--json', '--list'] };
+
+  test('a command or option arriving with what follows it as one argument is named, with the words to pass instead', () => {
+    expect(argsProblem(['code-search --list', '.'], CONFIG_CLI)).toBe('"code-search --list" arrived as one argument, so the shell did not split it '
+      + '(zsh does this with an unquoted $var). Pass each word separately: code-search --list');
+    expect(argsProblem(['init-tests', '--runner vitest'], CONFIG_CLI)).toMatch(/^"--runner vitest" arrived as one argument/);
+  });
+
+  test('unknown commands and options and a missing command are errors; spaces in values and paths are fine', () => {
+    expect(argsProblem(['frob'], CONFIG_CLI)).toBe('unknown command "frob" (commands: detect, code-search, init-tests)');
+    expect(argsProblem(['detect', '--jsno'], CONFIG_CLI)).toBe('unknown option "--jsno"');
+    expect(argsProblem([], CONFIG_CLI)).toBe('no command given');
+    expect(argsProblem(['detect', './my project'], CONFIG_CLI)).toBeNull();
+    expect(argsProblem(['init-tests', '--test-dir', 'detect --json'], CONFIG_CLI)).toBeNull();
+    expect(argsProblem(['init-tests', '.', '--runner', 'vitest', '--json'], CONFIG_CLI)).toBeNull();
+  });
+
+  test('both tools stop with exit 2, the reason and their usage', () => {
+    for (const [tool, args, reason, usage] of [
+      ['sdlc-config.cjs', ['code-search --list', '.'], '"code-search --list" arrived as one argument', 'code-search [dir] [--list'],
+      ['sdlc-runners.cjs', ['run --out x'], '"run --out x" arrived as one argument', 'Usage: sdlc-runners.cjs run'],
+      ['sdlc-runners.cjs', ['run', '--outt', 'x'], 'unknown option "--outt"', 'Usage: sdlc-runners.cjs run'],
+    ]) {
+      const r = spawnSync('node', [path.join(root, 'scripts', tool), ...args], { encoding: 'utf8' });
+      expect(r.status).toBe(2);
+      expect(r.stderr).toContain(`ERROR: ${reason}`);
+      expect(r.stderr).toContain(usage);
+    }
+  });
+});

@@ -929,12 +929,33 @@ function shellEnv(config) {
   return Object.entries(lines).map(([k, v]) => `${k}=${v}`).join('\n') + '\n';
 }
 
-module.exports = { CONFIG_FILE, RUNNERS, agentRules, testFramework, layout, globToRegex, expandGlob, testSpec, testFiles, CODE_INDEXERS, codeIndexers, codeSearchErrors, codeSearchFor, codeSearchGuide, renderTemplate, renderSkill, detect, detectPackage, suggest, setupPlan, provision, locateTestDir, packagesBelow, resolve, validate, testDir, allowedTools, worktreeBase, shellEnv };
+module.exports = { argsProblem, CONFIG_FILE, RUNNERS, agentRules, testFramework, layout, globToRegex, expandGlob, testSpec, testFiles, CODE_INDEXERS, codeIndexers, codeSearchErrors, codeSearchFor, codeSearchGuide, renderTemplate, renderSkill, detect, detectPackage, suggest, setupPlan, provision, locateTestDir, packagesBelow, resolve, validate, testDir, allowedTools, worktreeBase, shellEnv };
 
 // The project root for <dir>: the top of its git work tree, else <dir> itself.
 function findRoot(dir) {
   const r = spawnSync('git', ['-C', dir, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' });
   return r.status === 0 ? r.stdout.trim() : dir;
+}
+
+// What is wrong with a command line, or null: a command or option that arrived as one argument with what follows it (zsh
+// passes an unquoted $var as one word, where bash splits it), an unknown option, a missing or unknown command. The value
+// of a valued option is never checked: a test name or a path may hold spaces.
+function argsProblem(args, { commands, valued = [], flags = [] }) {
+  const known = new Set([...valued, ...flags]);
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (valued.includes(args[i - 1])) continue;
+    const words = a.trim().split(/\s+/);
+    if (words.length > 1 && (commands.includes(words[0]) || known.has(words[0]))) {
+      return `"${a}" arrived as one argument, so the shell did not split it (zsh does this with an unquoted $var). `
+        + `Pass each word separately: ${words.join(' ')}`;
+    }
+    if (a.startsWith('--') && !known.has(a)) return `unknown option "${a}"`;
+  }
+  const cmd = args.find((a, i) => !a.startsWith('--') && !valued.includes(args[i - 1]));
+  if (!cmd) return 'no command given';
+  if (!commands.includes(cmd)) return `unknown command "${cmd}" (commands: ${commands.join(', ')})`;
+  return null;
 }
 
 // --- CLI -------------------------------------------------------------------------------------------------------------
@@ -1051,10 +1072,17 @@ if (require.main === module) {
   const json = flag('--json');
   const dir = path.resolve(dirArg || '.');
   const usage = () => {
-    console.error('Usage: sdlc-config.cjs detect [dir] [--json] | show [dir] | env [dir] | suggest [dir] [--test-dir <folder>] [--json]\n'
-      + '       sdlc-config.cjs init-tests [dir] [--test-dir <folder>] [--language javascript|typescript] [--runner <name>] [--yes] [--dry-run] [--no-install]');
+    console.error('Usage: sdlc-config.cjs detect [dir] [--json] | show [dir] | env [dir] | layout [dir] | suggest [dir] [--test-dir <folder>] [--json]\n'
+      + '       sdlc-config.cjs init-tests [dir] [--test-dir <folder>] [--language javascript|typescript] [--runner <name>] [--yes] [--dry-run] [--no-install]\n'
+      + '       sdlc-config.cjs code-search [dir] [--list | --use <name|auto|none> | --sh] | skill <name> [dir]');
     process.exit(2);
   };
+  const problem = argsProblem(args, {
+    commands: ['detect', 'show', 'env', 'layout', 'suggest', 'init-tests', 'code-search', 'skill'],
+    valued: ['--runner', '--language', '--test-dir', '--use'],
+    flags: ['--json', '--yes', '--dry-run', '--no-install', '--list', '--sh'],
+  });
+  if (problem) { console.error(`ERROR: ${problem}`); usage(); }
   if (cmd === 'skill') {
     // skill <name> [dir]: the skill text for the project in dir (default: the current folder). Used by .claude/commands stubs.
     const [, name, at] = args.filter((a, i) => !a.startsWith('--') && !valueAt.has(i));

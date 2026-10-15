@@ -311,6 +311,8 @@ if (require.main === module) {
       + '       sdlc-runners.cjs parse jest|vitest|mocha|node-test|junit <report> [--root <dir>] [--stderr <file>]');
     process.exit(2);
   };
+  const problem = config.argsProblem(args, { commands: ['run', 'parse'], valued: [...valued] });
+  if (problem) { console.error(`ERROR: ${problem}`); usage(); }
   const [cmd] = positional;
 
   if (cmd === 'parse') {
