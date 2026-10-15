@@ -78,7 +78,8 @@ const besideSource = () => project({
   plan: 'echo "plan" > "$FAKE_DOCS/plan-1.md"',
   'red-tests': `echo "cases" > "$FAKE_DOCS/test-cases-1.md"
 printf "import { test } from 'node:test';\\nimport assert from 'node:assert/strict';\\nimport { sum } from './sum.mjs';\\ntest('sum adds', () => assert.equal(sum(2, 3), 5));\\n" > src/sum.test.mjs`,
-  implement: `env > "$FAKE_DIR/implement-env.txt"
+  implement: `[ -z "\${FAKE_NO_IMPL:-}" ] || exit 0
+env > "$FAKE_DIR/implement-env.txt"
 printf 'export const sum = (a, b) => a + b;\\n' > src/sum.mjs
 [ -z "\${FAKE_TOUCH_TEST:-}" ] || echo "// edited" >> src/sum.test.mjs`,
   review: 'echo "reviewed" > "$FAKE_DOCS/review-1.md"',
@@ -138,6 +139,23 @@ describe('what a run passes on', () => {
     const env = fs.readFileSync(path.join(p.fake, 'implement-env.txt'), 'utf8');
     expect(env).toContain('FAKE_DOCS=work/items/add-sum');
     expect(env).not.toMatch(/^FROM=/m);
+  });
+});
+
+describe('a paused run brought up to date with its base branch', () => {
+  test('tests committed by the developer after Red tests (a merge, say) are not "modified during implementation"', () => {
+    const p = besideSource();
+    // the first run stops at Implement: nothing implemented, one attempt
+    const first = runPipeline(p, 'add-sum', 'work/items/add-sum', { MAX_ATTEMPTS: '1', FAKE_NO_IMPL: '1' });
+    expect(first.status).toBe(1);
+    expect(first.stdout).toContain('GREEN GATE FAILED');
+    // the developer brings the branch up to date: a commit that changes an existing test
+    fs.appendFileSync(path.join(p.dir, 'src/existing.test.mjs'), "test('one is still 1', () => assert.equal(one(), 1));\n");
+    git(p.dir, 'commit', '-qam', "Merge branch 'main' into feature/add-sum");
+    const resumed = runPipeline(p, 'add-sum', 'work/items/add-sum', { FROM: 'implement' });
+    expect(resumed.stdout).not.toContain('GUARD FAILED');
+    expect(resumed.status).toBe(0);
+    expect(resumed.stdout).toContain('DONE: add-sum on feature/add-sum');
   });
 });
 

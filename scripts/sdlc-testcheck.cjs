@@ -12,7 +12,9 @@
 // Env: SDLC_TEST_DIRS (colon-separated test folders), SDLC_TEST_PATHSPECS (the test files for git, one per line) and
 // SDLC_KEY_DIR (keys are relative to it); defaults: this repo's layout.
 //   merge-retry <now.json> <test-issues.md> <flaky-tests.md> <retry.json>...   unclaimed failures that passed on re-run become passed
-//   resumecheck <red_sha> <test-issues.md> <slug>  preconditions for FROM=test-repair (read-only; empty red_sha = no commit)
+//   resumecheck <red_sha> <test-issues.md> <slug> [<lock_sha>]  preconditions for FROM=test-repair (read-only; empty red_sha =
+//                                                  no commit); test changes count from <lock_sha> (default red_sha), the
+//                                                  commit the run continues from (a merge into a paused run is not a change)
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
@@ -181,6 +183,7 @@ if (cmd === 'claimed') {
   if (b === undefined || c === undefined) { console.error('usage: sdlc-testcheck.cjs resumecheck <red_sha> <test-issues.md> <slug>'); process.exit(1); }
   const errs = [], slug = c, tryGit = (...g) => { try { return git(...g); } catch { return null; } };
   let sha = a || '';
+  const lock = process.argv[6] || sha;
   if (!sha) errs.push(`no red-tests commit found for ${slug} (expected a commit with subject "test(${slug}): add failing tests")`);
   else if (tryGit('rev-parse', '--verify', '--quiet', sha + '^{commit}') === null) { errs.push(`red-tests commit ${sha} is not a known commit`); sha = ''; }
   if (!fs.existsSync(b)) errs.push(`claim file is missing: ${b}`);
@@ -192,10 +195,10 @@ if (cmd === 'claimed') {
     if (repaired) errs.push(`test repair was already accepted in commit ${repaired}: use FROM=review`);
     const lines = out => (out || '').split('\n').filter(Boolean);
     const untracked = lines(tryGit('ls-files', '--others', '--exclude-standard'));
-    const tests = [...new Set([...lines(tryGit('diff', '--name-only', sha, '--', ...TEST_SPECS)),
+    const tests = [...new Set([...lines(tryGit('diff', '--name-only', lock, '--', ...TEST_SPECS)),
       ...lines(tryGit('ls-files', '--others', '--exclude-standard', '--', ...TEST_SPECS))])];
     const specs = TEST_SPECS.map(shellWord).join(' ');
-    if (tests.length) errs.push(`tests changed since the red-tests commit ${sha.slice(0, 7)}: ${tests.join(', ')}; restore with: git checkout ${sha} -- ${specs} && git clean -fd ${specs}`);
+    if (tests.length) errs.push(`tests changed since ${lock === sha ? 'the red-tests commit' : 'the commit the run continues from'} ${lock.slice(0, 7)}: ${tests.join(', ')}; restore with: git checkout ${lock} -- ${specs} && git clean -fd ${specs}`);
     const testSet = new Set(tests);
     const impl = [...new Set([...lines(tryGit('diff', '--name-only', sha)), ...untracked])].filter(f => !testSet.has(f) && !f.startsWith('Docs/'));
     if (!impl.length) errs.push(`no implementation change since the red-tests commit (changes only to tests (${TEST_SPECS.join(', ')}) or Docs/ do not count)`);
