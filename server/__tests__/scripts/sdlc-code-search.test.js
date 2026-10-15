@@ -162,7 +162,9 @@ describe('sdlc.sh', () => {
   const bash = (cwd, body, env = pathWith()) => spawnSync('bash', ['-c', `set -euo pipefail\n${body}`],
     { cwd, encoding: 'utf8', env: { PATH: `${env.PATH}:${nodeBin}` } });
   const setup = slice('code_search_setup() {', '\ncode_search_setup\n');
-  const show = 'code_search_setup\necho "CS=$CODE_SEARCH"\nprintf "%s|" "${ALLOWED[@]}"';
+  // the settings' project commands (sdlc-config env: SDLC_AGENT_RULES), as for this repository
+  const rules = 'SDLC_AGENT_RULES=("Bash(npm test:*)" "Bash(npm run lint:*)" "Bash(npm run generate-spec:*)")\n';
+  const show = `${rules}code_search_setup\necho "CS=$CODE_SEARCH"\nprintf "%s|" "\${ALLOWED[@]}"`;
   const BASE_START = 'Read|Write|Edit|Glob|Grep|';
   const TESTS = 'Bash(npm test:*)|Bash(npm run lint:*)|Bash(npm run generate-spec:*)|';
   const GIT = 'Bash(ls:*)|Bash(git status:*)|Bash(git diff:*)|Bash(git log:*)|';

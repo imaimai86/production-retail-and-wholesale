@@ -8,17 +8,30 @@
 //   claimed   <test-issues.md>                     print claimed test keys
 //   unclaimed <now.json> <test-issues.md>          print failing test keys that are not claimed
 //   retry-plan                                     stdin: keys; print "<file>\t<jest -t pattern>" per file (empty pattern = whole file)
+//   retry-args                                     stdin: keys; print "<file from root>\t<name>\t..." per file (no names = whole file)
+// Env: SDLC_TEST_DIRS (colon-separated test folders), SDLC_TEST_PATHSPECS (the test files for git, one per line) and
+// SDLC_KEY_DIR (keys are relative to it); defaults: this repo's layout.
 //   merge-retry <now.json> <test-issues.md> <flaky-tests.md> <retry.json>...   unclaimed failures that passed on re-run become passed
 //   resumecheck <red_sha> <test-issues.md> <slug>  preconditions for FROM=test-repair (read-only; empty red_sha = no commit)
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
-const TEST_DIR = 'server/__tests__';
-const rel = p => p.replace(/\\/g, '/').replace(/^.*?(server\/__tests__\/)/, '$1').replace(/^server\//, '');
+// The project's test folders and the folder test keys are relative to, from sdlc.sh (sdlc.config.json); this repo's
+// layout when run on its own. SDLC_TEST_DIRS is colon-separated.
+const TEST_DIRS = (process.env.SDLC_TEST_DIRS || 'server/__tests__').split(':').filter(Boolean);
+const KEY_DIR = process.env.SDLC_KEY_DIR || 'server';
+// The test files as git pathspecs (folders, or ":(glob)" patterns for tests beside the source), one per line.
+const TEST_SPECS = (process.env.SDLC_TEST_PATHSPECS || TEST_DIRS.join('\n')).split('\n').filter(Boolean);
+const shellWord = w => (/^[\w./@-]+$/.test(w) ? w : `'${w.replace(/'/g, `'\\''`)}'`);
+const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const fromRoot = p => p.replace(/\\/g, '/').replace(new RegExp(`^(?:.*/)?(${TEST_DIRS.map(escRe).join('|')})/`), '$1/');
+const rel = p => (KEY_DIR === '.' ? fromRoot(p) : fromRoot(p).replace(new RegExp(`^${escRe(KEY_DIR)}/`), ''));
+// A key's file as a path from the project root.
+const rootPath = f => (KEY_DIR === '.' ? f : `${KEY_DIR}/${f}`);
 const fail = msgs => { console.error(msgs.map(m => 'REJECT: ' + m).join('\n')); process.exit(1); };
 
-const fileOf = f => rel(path.relative(path.join(process.cwd(), 'server'), f.name) || f.name);
+const fileOf = f => rel(path.relative(path.join(process.cwd(), KEY_DIR), f.name) || f.name);
 const readJson = file => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
 
 const isRunResult = j => Boolean(j) && Array.isArray(j.tests);
@@ -65,7 +78,7 @@ function claims(file) {
   return fs.readFileSync(file, 'utf8').split('\n')
     .map(l => l.replace(/^[-*]\s*/, '').split(' :: ').map(s => s.trim()))
     .filter(p => p.length >= 3 && p[0] && p[1] && p[2])
-    .map(([f, name, ...why]) => ({ file: rel(f.replace(/^server\//, '')), name, why: why.join(' :: '), key: `${rel(f.replace(/^server\//, ''))}::${norm(name)}` }));
+    .map(([f, name, ...why]) => ({ file: rel(f), name, why: why.join(' :: '), key: `${rel(f)}::${norm(name)}` }));
 }
 
 const norm = s => s.replace(/\s*›\s*/g, ' ').replace(/\s+/g, ' ').trim();
@@ -99,6 +112,16 @@ if (cmd === 'claimed') {
     const pat = names.includes('<suite failed to run>') ? '' : '^(?:' + names.map(escapeRe).join('|') + ')$';
     console.log(`${file}\t${pat}`);
   }
+} else if (cmd === 'retry-args') {
+  // stdin: keys; print "<file from the project root>\t<full test name>\t..." per file (no names = the whole file), for
+  // node scripts/sdlc-runners.cjs run --file <file> --test <name>...
+  const byFile = new Map();
+  for (const key of fs.readFileSync(0, 'utf8').split('\n').filter(Boolean)) {
+    const i = key.indexOf('::'), file = key.slice(0, i), name = key.slice(i + 2);
+    if (!byFile.has(file)) byFile.set(file, []);
+    byFile.get(file).push(name);
+  }
+  for (const [file, names] of byFile) console.log([rootPath(file), ...(names.includes('<suite failed to run>') ? [] : names)].join('\t'));
 } else if (cmd === 'merge-retry') {
   if (!a || !b || !c) usage('merge-retry <now.json> <test-issues.md> <flaky-tests.md> <retry.json>...');
   const keys = retrySet(a, b);
@@ -130,9 +153,9 @@ if (cmd === 'claimed') {
   for (const x of cl) if (!/(spec|decision|round|S-R|isolat|mock)/i.test(x.why)) errs.push(`claim gives no spec/decision/isolation justification: ${x.key}`);
   if (errs.length) fail(errs);
 } else if (cmd === 'diffcheck') {
-  const cl = claims(b), errs = [], allowed = new Set(cl.map(x => 'server/' + x.file));
-  const changed = new Set(git('diff', '--name-only', a, '--', TEST_DIR).split('\n').filter(Boolean));
-  git('ls-files', '--others', '--exclude-standard', '--', TEST_DIR).split('\n').filter(Boolean).forEach(f => changed.add(f));
+  const cl = claims(b), errs = [], allowed = new Set(cl.map(x => rootPath(x.file)));
+  const changed = new Set(git('diff', '--name-only', a, '--', ...TEST_SPECS).split('\n').filter(Boolean));
+  git('ls-files', '--others', '--exclude-standard', '--', ...TEST_SPECS).split('\n').filter(Boolean).forEach(f => changed.add(f));
   if (!changed.size) errs.push('no test file was changed');
   for (const f of changed) {
     if (!allowed.has(f)) { errs.push(`changed a test file that was not claimed: ${f}`); continue; }
@@ -169,13 +192,16 @@ if (cmd === 'claimed') {
     if (repaired) errs.push(`test repair was already accepted in commit ${repaired}: use FROM=review`);
     const lines = out => (out || '').split('\n').filter(Boolean);
     const untracked = lines(tryGit('ls-files', '--others', '--exclude-standard'));
-    const tests = [...new Set([...lines(tryGit('diff', '--name-only', sha, '--', TEST_DIR)), ...untracked.filter(f => f.startsWith(TEST_DIR + '/'))])];
-    if (tests.length) errs.push(`tests changed since the red-tests commit ${sha.slice(0, 7)}: ${tests.join(', ')}; restore with: git checkout ${sha} -- ${TEST_DIR} && git clean -fd ${TEST_DIR}`);
-    const impl = [...new Set([...lines(tryGit('diff', '--name-only', sha)), ...untracked])].filter(f => !f.startsWith(TEST_DIR + '/') && !f.startsWith('Docs/'));
-    if (!impl.length) errs.push(`no implementation change since the red-tests commit (changes only under ${TEST_DIR}/ or Docs/ do not count)`);
+    const tests = [...new Set([...lines(tryGit('diff', '--name-only', sha, '--', ...TEST_SPECS)),
+      ...lines(tryGit('ls-files', '--others', '--exclude-standard', '--', ...TEST_SPECS))])];
+    const specs = TEST_SPECS.map(shellWord).join(' ');
+    if (tests.length) errs.push(`tests changed since the red-tests commit ${sha.slice(0, 7)}: ${tests.join(', ')}; restore with: git checkout ${sha} -- ${specs} && git clean -fd ${specs}`);
+    const testSet = new Set(tests);
+    const impl = [...new Set([...lines(tryGit('diff', '--name-only', sha)), ...untracked])].filter(f => !testSet.has(f) && !f.startsWith('Docs/'));
+    if (!impl.length) errs.push(`no implementation change since the red-tests commit (changes only to tests (${TEST_SPECS.join(', ')}) or Docs/ do not count)`);
   }
   if (errs.length) fail(errs);
 } else {
-  console.error('usage: sdlc-testcheck.cjs precheck|diffcheck|namecheck|redcheck|claimed|unclaimed|retry-plan|merge-retry|resumecheck ...');
+  console.error('usage: sdlc-testcheck.cjs precheck|diffcheck|namecheck|redcheck|claimed|unclaimed|retry-plan|retry-args|merge-retry|resumecheck ...');
   process.exit(1);
 }

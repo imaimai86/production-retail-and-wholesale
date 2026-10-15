@@ -20,7 +20,7 @@ describe('scripts/sdlc.sh Ship wiring', () => {
 
     // the Red tests and Test repair commits are unchanged
     expect(sdlc).toContain('git commit -q -m "test($SLUG): repair invalid tests (mechanically checked and audited)"');
-    expect(sdlc).toContain('git add "$DOCS" "$TEST_DIR"');
+    expect(sdlc).toContain('git add -A -- "$DOCS"; add_tests');
 
     for (const f of ['sdlc.sh', 'sdlc-ship.sh']) {
       expect([f, spawnSync('bash', ['-n', path.join(root, 'scripts', f)]).status]).toEqual([f, 0]);

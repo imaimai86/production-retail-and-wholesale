@@ -6,7 +6,9 @@
 //   node scripts/sdlc-config.cjs code-search [dir] [--list | --use <name|auto|none> | --sh]
 //        the code indexer the agents search with (graft, graphify, one declared in agent.codeIndexers) or "none" (Grep and
 //        Glob): --list shows each and whether it is available, --use saves the choice, --sh prints it for sdlc.sh
-//   node scripts/sdlc-config.cjs skill <name> [dir]      a skill from scripts/skills/ in its graft or Grep/Glob version
+//   node scripts/sdlc-config.cjs skill <name> [dir]      a skill from scripts/skills/ for this project (code search, test folder,
+//                                                        test command, framework and backlog folder filled in)
+//   node scripts/sdlc-config.cjs layout [dir]            test, source and backlog folders and the test command, as JSON
 //   node scripts/sdlc-config.cjs suggest [dir] [--test-dir <folder>] [--json]  for a project without tests: supported test frameworks, best first; writes nothing
 //   node scripts/sdlc-config.cjs init-tests [dir] [--test-dir <folder>] [--language javascript|typescript] [--runner <name>] [--yes] [--dry-run] [--no-install]
 //        --test-dir: where the tests go, from [dir] (e.g. __tests__, server/__tests__, client/_test); the package set up is the
@@ -655,11 +657,25 @@ function codeSearchGuide(search, root, partsDir = PARTS_DIR) {
 const renderTemplate = (text, guide) => text.split('{{CODE_SEARCH}}').join(guide);
 
 // The skill <name> (skills/<name>.md) for this project: its {{CODE_SEARCH}} filled for the indexer in use, or Grep/Glob.
+// Its {{TEST_DIR}}, {{TEST_CMD}}, {{TEST_FRAMEWORK}} and {{BACKLOG_DIR}} come from the settings; when they cannot be
+// resolved, from wording that tells the agent to find out.
 function renderSkill(name, root, { env = process.env, skillsDir = SKILLS_DIR, partsDir = PARTS_DIR } = {}) {
   if (!/^[a-z0-9-]+$/.test(name) || !exists(path.join(skillsDir, `${name}.md`))) return null;
   const file = readSettings(root);
   const search = codeSearchFor(root, codeSearchErrors(file).length ? {} : file, env);
-  return renderTemplate(fs.readFileSync(path.join(skillsDir, `${name}.md`), 'utf8'), codeSearchGuide(search, root, partsDir));
+  const { config } = resolve(root, { env });
+  const values = config ? {
+    TEST_DIR: layout(config).testDirs.join(', '), TEST_FILES: testFiles(config), TEST_CMD: layout(config).testCmd,
+    TEST_FRAMEWORK: testFramework(config), BACKLOG_DIR: config.backlogDir, BRANCH_PREFIX: config.git.branchPrefix,
+    TEST_PATHSPECS: layout(config).testPathspecs.map(x => (/^[\w./@-]+$/.test(x) ? x : `'${x}'`)).join(' '),
+  } : {
+    TEST_DIR: "the project's test folder", TEST_FILES: "the project's test files", TEST_CMD: "the project's test command",
+    TEST_FRAMEWORK: 'tests in the style the project already uses', BACKLOG_DIR: (typeof file.backlogDir === 'string' && file.backlogDir) || 'Docs/backlog',
+    BRANCH_PREFIX: 'sdlc/', TEST_PATHSPECS: '<the test files>',
+  };
+  let text = renderTemplate(fs.readFileSync(path.join(skillsDir, `${name}.md`), 'utf8'), codeSearchGuide(search, root, partsDir));
+  for (const [k, v] of Object.entries(values)) text = text.split(`{{${k}}}`).join(v);
+  return text;
 }
 const systemTimezone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 const validTimezone = tz => { try { new Intl.DateTimeFormat('en', { timeZone: tz }); return true; } catch { return false; } };
@@ -783,20 +799,95 @@ function testDir(suite) {
   return parts.join('/') || '.';
 }
 
-// The tools every stage agent may use: file tools, code search, the test and lint commands, extra commands, read-only git.
+// A glob (**, *, ?, [..], {a,b}, ?(a|b), +(..), *(..), @(..)) as an anchored regular expression.
+function globToRegex(glob) {
+  let re = '';
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i];
+    const ext = /[?+*@!]/.test(c) && glob[i + 1] === '(';
+    if (ext) {
+      let depth = 0; let j = i + 1;
+      for (; j < glob.length; j++) { if (glob[j] === '(') depth++; else if (glob[j] === ')' && --depth === 0) break; }
+      const body = glob.slice(i + 2, j).split('|').map(globToRegex).map(r => r.slice(1, -1)).join('|');
+      re += c === '!' ? '[^/]*' : `(?:${body})${{ '?': '?', '+': '+', '*': '*', '@': '' }[c]}`;
+      i = j;
+    } else if (c === '*' && glob[i + 1] === '*') {
+      if (glob[i + 2] === '/') { re += '(?:.*/)?'; i += 2; } else { re += '.*'; i += 1; }
+    } else if (c === '*') re += '[^/]*';
+    else if (c === '?') re += '[^/]';
+    else if (c === '[') { const j = glob.indexOf(']', i); re += j > i ? glob.slice(i, j + 1) : '\\['; i = j > i ? j : i; }
+    else if (c === '{') { const j = glob.indexOf('}', i); re += `(?:${glob.slice(i + 1, j).split(',').map(globToRegex).map(r => r.slice(1, -1)).join('|')})`; i = j; }
+    else re += /[.+^$()|\\]/.test(c) ? `\\${c}` : c;
+  }
+  return `^${re}$`;
+}
+
+// A glob as globs git understands (":(glob)" pathspecs know **, *, ? and [..] only): {a,b} and the extglobs ?(..), @(..),
+// +(..), *(..) are expanded into their alternatives (+ and * as one occurrence, * also as none). At most 64 globs.
+function expandGlob(glob) {
+  const m = glob.match(/([?@+*])\(([^()]*)\)|\{([^{}]*)\}/);
+  if (!m) return [glob];
+  const [whole, kind, ext, brace] = m;
+  const alts = brace !== undefined ? brace.split(',') : ext.split('|');
+  const options = kind === '?' || kind === '*' ? ['', ...alts] : alts;
+  const out = [...new Set(options.flatMap(o => expandGlob(glob.slice(0, m.index) + o + glob.slice(m.index + whole.length))))];
+  return out.slice(0, 64);
+}
+
+// Where a suite's tests are: a folder when every glob takes all of one folder ("__tests__/**": server/__tests__), else the
+// globs themselves ("src/**/*.test.ts": tests beside the source, whose folder also holds source). Paths are from the root.
+function testSpec(suite) {
+  const prefix = suite.dir === '.' ? '' : `${suite.dir}/`;
+  const globs = suite.testGlobs.map(g => prefix + g.replace(/^\.\//, ''));
+  const whole = globs.map(g => g.match(/^([^*?[\]{}()!+@]+?)\/\*\*(?:\/\*)?$/)).filter(Boolean).map(m => m[1]);
+  const dir = whole.length === globs.length && new Set(whole).size === 1 ? whole[0] : null;
+  if (dir) return { folder: dir, globs, pathspecs: [dir], patterns: [`^${dir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/`] };
+  return { folder: null, globs, pathspecs: [...new Set(globs.flatMap(expandGlob))].map(g => `:(glob)${g}`), patterns: globs.map(globToRegex) };
+}
+// The test files in words, for prompts and skills ({{TEST_FILES}}).
+const testFiles = config => config.suites.map(testSpec).map(t => (t.folder ? `${t.folder}/` : `files matching ${t.globs.join(' or ')}`)).join('; ');
+
+// The project commands the stage agents may run: each suite's test command, lint, and agent.allowCommands.
+const agentRules = config => [...new Set([
+  ...config.suites.map(s => `Bash(${s.testCmd}:*)`),
+  ...(config.lint ? [`Bash(${config.lint}:*)`] : []),
+  ...config.agent.allowCommands.map(c => `Bash(${c}:*)`),
+])];
+
+// The tools every stage agent may use: file tools, code search, the project commands, read-only git.
 function allowedTools(config) {
   const ix = config.agent.codeIndexer || { tools: [], commands: [] };
   const bash = cmd => `Bash(${cmd}:*)`;
   return [...new Set([
     'Read', 'Write', 'Edit', 'Glob', 'Grep',
     ...ix.tools,
-    ...config.suites.map(s => bash(s.testCmd)),
-    ...(config.lint ? [bash(config.lint)] : []),
-    ...config.agent.allowCommands.map(bash),
+    ...agentRules(config),
     ...ix.commands.map(bash),
     bash('ls'), bash('git status'), bash('git diff'), bash('git log'),
   ])];
 }
+
+// How the tests are written, for prompts and skills ({{TEST_FRAMEWORK}}): per suite, its runner and language.
+const FRAMEWORK_TEXT = {
+  jest: 'Jest tests (describe/test and expect; mock with jest.fn and jest.mock)',
+  vitest: "Vitest tests (import { describe, it, expect, vi } from 'vitest'; mock with vi.fn and vi.mock)",
+  mocha: 'Mocha tests (describe/it, with node:assert or the assertion library the project already uses)',
+  'node-test': "node:test tests (describe/it from 'node:test', assert from 'node:assert/strict')",
+  'generic-junit': 'tests in the style the project already uses',
+};
+function testFramework(config) {
+  const one = s => `${FRAMEWORK_TEXT[s.runner]}, in ${s.language === 'typescript' ? 'TypeScript' : 'JavaScript'}`;
+  return config.suites.length === 1 ? one(config.suites[0]) : config.suites.map(s => `for ${s.dir}/: ${one(s)}`).join('; ');
+}
+// Test-repair keys name test files relative to this folder: the suite's folder when there is one suite, else the root.
+const keyDir = config => (config.suites.length === 1 ? config.suites[0].dir : '.');
+// The folders the pipeline guards and compares: tests (read-only after Red tests) and source (the rest of each suite).
+// testPathspecs: for git (folders, or ":(glob)" patterns); testPatterns: regular expressions on paths from the root.
+const layout = config => ({
+  root: config.root, backlogDir: config.backlogDir, testDirs: config.suites.map(testDir), sourceDirs: config.suites.map(s => s.dir),
+  testCmd: config.suites.map(s => s.testCmd).join(' && '), keyDir: keyDir(config), testFiles: testFiles(config),
+  testPathspecs: config.suites.flatMap(s => testSpec(s).pathspecs), testPatterns: config.suites.flatMap(s => testSpec(s).patterns),
+});
 
 const worktreeBase = config =>
   path.resolve(config.root, config.worktree.base.replace(/\{repo\}/g, path.basename(config.root)));
@@ -816,7 +907,7 @@ function shellEnv(config) {
     SDLC_SUITE_DIRS: arr(config.suites.map(s => s.dir)),
     SDLC_RUNNERS: arr(config.suites.map(s => s.runner)),
     SDLC_INTEGRATION_CMD: q(config.integration ? config.integration.cmd : ''),
-    SDLC_INTEGRATION_CI: q(config.integration ? config.integration.ci : 'skip'),
+    SDLC_INTEGRATION_CI_DEFAULT: q(config.integration ? config.integration.ci : 'skip'),
     SDLC_LINT_CMD: q(config.lint || ''),
     SDLC_BRANCH_PREFIX: q(config.git.branchPrefix),
     SDLC_GIT_BASE: q(config.git.base || ''),
@@ -824,6 +915,12 @@ function shellEnv(config) {
     SDLC_WT_BASE_DEFAULT: q(worktreeBase(config)),
     SDLC_WT_LINKS: arr(config.worktree.link),
     SDLC_ALLOWED: arr(allowedTools(config)),
+    SDLC_AGENT_RULES: arr(agentRules(config)),
+    SDLC_KEY_DIR: q(keyDir(config)),
+    SDLC_TEST_PATHSPECS: arr(layout(config).testPathspecs),
+    SDLC_TEST_FILES: q(testFiles(config)),
+    SDLC_SOURCE_DIRS: arr(config.suites.map(s => s.dir)),
+    SDLC_TEST_FRAMEWORK: q(testFramework(config)),
     SDLC_CODE_SEARCH: q(config.agent.codeSearch),
     SDLC_SHIP_ENV_EXAMPLE: q(config.ship.envExample ? 1 : 0),
     SDLC_SHIP_MAX_BYTES: q(config.ship.maxFileBytes),
@@ -832,12 +929,33 @@ function shellEnv(config) {
   return Object.entries(lines).map(([k, v]) => `${k}=${v}`).join('\n') + '\n';
 }
 
-module.exports = { CONFIG_FILE, RUNNERS, CODE_INDEXERS, codeIndexers, codeSearchErrors, codeSearchFor, codeSearchGuide, renderTemplate, renderSkill, detect, detectPackage, suggest, setupPlan, provision, locateTestDir, packagesBelow, resolve, validate, testDir, allowedTools, worktreeBase, shellEnv };
+module.exports = { argsProblem, CONFIG_FILE, RUNNERS, agentRules, testFramework, layout, globToRegex, expandGlob, testSpec, testFiles, CODE_INDEXERS, codeIndexers, codeSearchErrors, codeSearchFor, codeSearchGuide, renderTemplate, renderSkill, detect, detectPackage, suggest, setupPlan, provision, locateTestDir, packagesBelow, resolve, validate, testDir, allowedTools, worktreeBase, shellEnv };
 
 // The project root for <dir>: the top of its git work tree, else <dir> itself.
 function findRoot(dir) {
   const r = spawnSync('git', ['-C', dir, 'rev-parse', '--show-toplevel'], { encoding: 'utf8' });
   return r.status === 0 ? r.stdout.trim() : dir;
+}
+
+// What is wrong with a command line, or null: a command or option that arrived as one argument with what follows it (zsh
+// passes an unquoted $var as one word, where bash splits it), an unknown option, a missing or unknown command. The value
+// of a valued option is never checked: a test name or a path may hold spaces.
+function argsProblem(args, { commands, valued = [], flags = [] }) {
+  const known = new Set([...valued, ...flags]);
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (valued.includes(args[i - 1])) continue;
+    const words = a.trim().split(/\s+/);
+    if (words.length > 1 && (commands.includes(words[0]) || known.has(words[0]))) {
+      return `"${a}" arrived as one argument, so the shell did not split it (zsh does this with an unquoted $var). `
+        + `Pass each word separately: ${words.join(' ')}`;
+    }
+    if (a.startsWith('--') && !known.has(a)) return `unknown option "${a}"`;
+  }
+  const cmd = args.find((a, i) => !a.startsWith('--') && !valued.includes(args[i - 1]));
+  if (!cmd) return 'no command given';
+  if (!commands.includes(cmd)) return `unknown command "${cmd}" (commands: ${commands.join(', ')})`;
+  return null;
 }
 
 // --- CLI -------------------------------------------------------------------------------------------------------------
@@ -954,16 +1072,30 @@ if (require.main === module) {
   const json = flag('--json');
   const dir = path.resolve(dirArg || '.');
   const usage = () => {
-    console.error('Usage: sdlc-config.cjs detect [dir] [--json] | show [dir] | env [dir] | suggest [dir] [--test-dir <folder>] [--json]\n'
-      + '       sdlc-config.cjs init-tests [dir] [--test-dir <folder>] [--language javascript|typescript] [--runner <name>] [--yes] [--dry-run] [--no-install]');
+    console.error('Usage: sdlc-config.cjs detect [dir] [--json] | show [dir] | env [dir] | layout [dir] | suggest [dir] [--test-dir <folder>] [--json]\n'
+      + '       sdlc-config.cjs init-tests [dir] [--test-dir <folder>] [--language javascript|typescript] [--runner <name>] [--yes] [--dry-run] [--no-install]\n'
+      + '       sdlc-config.cjs code-search [dir] [--list | --use <name|auto|none> | --sh] | skill <name> [dir]');
     process.exit(2);
   };
+  const problem = argsProblem(args, {
+    commands: ['detect', 'show', 'env', 'layout', 'suggest', 'init-tests', 'code-search', 'skill'],
+    valued: ['--runner', '--language', '--test-dir', '--use'],
+    flags: ['--json', '--yes', '--dry-run', '--no-install', '--list', '--sh'],
+  });
+  if (problem) { console.error(`ERROR: ${problem}`); usage(); }
   if (cmd === 'skill') {
     // skill <name> [dir]: the skill text for the project in dir (default: the current folder). Used by .claude/commands stubs.
     const [, name, at] = args.filter((a, i) => !a.startsWith('--') && !valueAt.has(i));
     const text = name ? renderSkill(name, path.resolve(at || '.')) : null;
     if (text === null) { console.error(`ERROR: no skill "${name || ''}" (skills: ${fs.readdirSync(SKILLS_DIR).map(f => f.replace(/\.md$/, '')).join(', ')})`); process.exit(2); }
     process.stdout.write(text);
+    process.exit(0);
+  }
+  if (cmd === 'layout') {
+    // layout [dir]: { backlogDir, testDirs, sourceDirs, testCmd, keyDir } as JSON, for the guards.
+    const { config, errors } = resolve(dir);
+    if (errors.length) { for (const e of errors) console.error(`ERROR: ${e}`); process.exit(1); }
+    process.stdout.write(JSON.stringify(layout(config)) + '\n');
     process.exit(0);
   }
   if (cmd === 'code-search') {

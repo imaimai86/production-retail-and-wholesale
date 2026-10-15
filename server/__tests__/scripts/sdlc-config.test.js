@@ -5,7 +5,7 @@ const { spawnSync } = require('child_process');
 
 const root = path.resolve(__dirname, '../../..');
 const helper = path.join(root, 'scripts/sdlc-config.cjs');
-const { detect, suggest, setupPlan, provision, resolve, testDir, allowedTools, worktreeBase, shellEnv, codeIndexers } = require(helper);
+const { detect, suggest, setupPlan, provision, resolve, testDir, allowedTools, worktreeBase, shellEnv, codeIndexers, agentRules } = require(helper);
 
 // A throwaway project: { 'path/file': text or object (written as JSON) }.
 function project(files) {
@@ -207,8 +207,6 @@ describe('settings', () => {
 describe('this repository', () => {
   // The values the scripts hard-code today; sdlc.config.json must reproduce them exactly.
   const sdlcSh = fs.readFileSync(path.join(root, 'scripts/sdlc.sh'), 'utf8');
-  const modSh = fs.readFileSync(path.join(root, 'scripts/sdlc-mod.sh'), 'utf8');
-  const shVar = name => sdlcSh.match(new RegExp(`^${name}="([^"]*)"`, 'm'))[1];
 
   // sdlc.sh's code_search_setup, run in a temp folder with or without graft (a stand-in on PATH and a graft/ index).
   const shAllowed = withGraft => {
@@ -219,22 +217,24 @@ describe('this repository', () => {
     const bin = path.join(cwd, 'bin');
     fs.mkdirSync(bin);
     if (withGraft) { fs.writeFileSync(path.join(bin, 'graft'), '#!/bin/sh\n', { mode: 0o755 }); fs.mkdirSync(path.join(cwd, 'graft')); }
-    const r = spawnSync('bash', ['-c', `set -euo pipefail\nLOG=logs\n${fn}\ncode_search_setup >/dev/null\nprintf '%s\\n' "\${ALLOWED[@]}"`],
+    const rules = `SDLC_AGENT_RULES=(${agentRules(ok(root)).map(r => `'${r}'`).join(' ')})`;
+    const r = spawnSync('bash', ['-c', `set -euo pipefail\nLOG=logs\n${rules}\n${fn}\ncode_search_setup >/dev/null\nprintf '%s\\n' "\${ALLOWED[@]}"`],
       { cwd, encoding: 'utf8', env: { PATH: `${bin}:/usr/bin:/bin:${path.dirname(process.execPath)}` } });
     return r.stdout.trim().split('\n');
   };
 
-  test('sdlc.config.json resolves to the constants in sdlc.sh and sdlc-mod.sh', () => {
+  // Before the scripts read the settings, these were constants in sdlc.sh and sdlc-mod.sh; the settings must keep them.
+  test('sdlc.config.json gives the values sdlc.sh and sdlc-mod.sh used before they read settings', () => {
     const c = ok(root);
     expect(c.suites).toHaveLength(1);
-    expect(c.suites[0].testCmd).toBe(shVar('TEST_CMD'));
-    expect(testDir(c.suites[0])).toBe(shVar('TEST_DIR'));
-    expect(`${c.backlogDir}/index.md`).toBe(shVar('BACKLOG'));
+    expect(c.suites[0].testCmd).toBe('npm test');
+    expect(testDir(c.suites[0])).toBe('server/__tests__');
+    expect(`${c.backlogDir}/index.md`).toBe('Docs/backlog/index.md');
     for (const withGraft of [true, false]) {
       const agent = { ...c.agent, codeSearch: withGraft ? 'graft' : 'none', codeIndexer: withGraft ? codeIndexers({}).graft : null };
       expect(allowedTools({ ...c, agent })).toEqual(shAllowed(withGraft));
     }
-    expect(c.worktree.link).toEqual(modSh.match(/for p in (server\/node_modules[^;]*);/)[1].split(' '));
+    expect(c.worktree.link).toEqual(['server/node_modules', 'node_modules', 'graft', '.env']);
     expect(worktreeBase(c)).toBe(path.join(path.dirname(root), `${path.basename(root)}-sdlc`));
     expect(c.git.branchPrefix).toBe('sdlc/');
     expect(c.integration).toEqual({ cmd: 'bash scripts/sdlc-integration.sh', ci: 'skip' });

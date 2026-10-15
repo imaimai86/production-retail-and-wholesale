@@ -52,6 +52,17 @@ describe('parsing each runner\'s report', () => {
     }
   });
 
+  test('node:test on Node 18 names ES module files by file: URL; they come out as paths', () => {
+    const lines = [
+      { event: 'start', name: 'esm ok', nesting: 0, file: 'file:///project/src/a.test.mjs' },
+      { event: 'pass', name: 'esm ok', nesting: 0, file: 'file:///project/src/a.test.mjs' },
+      { event: 'fail', name: 'file:///project/src/b.test.mjs', nesting: 0, file: 'file:///project/src/b.test.mjs', failureType: 'testCodeFailure', message: 'boom' },
+    ].map(l => JSON.stringify(l)).join('\n');
+    const parts = parseNodeTest(lines, { root: '/project' });
+    expect(parts.tests).toEqual([{ file: 'src/a.test.mjs', name: 'esm ok', status: 'passed', message: null }]);
+    expect(parts.suiteErrors).toEqual([{ file: 'src/b.test.mjs', message: 'boom' }]);
+  });
+
   test('JUnit XML: nested suites, classnames, file attributes, failures, errors, skips and entities', () => {
     const xml = `<?xml version="1.0"?><testsuites>
       <testsuite name="test/a.test.js" file="test/a.test.js">

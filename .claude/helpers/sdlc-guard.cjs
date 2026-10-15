@@ -2,7 +2,9 @@
 // SDLC guard hooks. State lives in .claude/sdlc-state.json: { phase, slug, red_sha, attempts }.
 //   node sdlc-guard.cjs set <phase> <slug> [red_sha]   (phase: implement | review)
 //   node sdlc-guard.cjs clear
-//   node sdlc-guard.cjs pre-tool   (PreToolUse hook: protect server/__tests__)
+//   node sdlc-guard.cjs pre-tool   (PreToolUse hook: protect the test files)
+// The test files and test command come from the project settings (scripts/sdlc-config.cjs layout); when they cannot be
+// read, this repo's: server/__tests__ and npm test.
 //   node sdlc-guard.cjs stop       (Stop hook: green gate)
 const fs = require('fs');
 const path = require('path');
@@ -17,6 +19,21 @@ const read = () => { try { return JSON.parse(fs.readFileSync(STATE, 'utf8')); } 
 const write = s => fs.writeFileSync(STATE, JSON.stringify(s, null, 2));
 const stdin = () => { try { return JSON.parse(fs.readFileSync(0, 'utf8') || '{}'); } catch { return {}; } };
 const active = s => s && GUARDED.includes(s.phase);
+
+// { testPatterns: [regexp source on paths from the root], testDirs, testFiles, testCmd } for this project.
+function layout() {
+  try {
+    const config = require(path.join(ROOT, 'scripts', 'sdlc-config.cjs'));
+    const r = config.resolve(ROOT);
+    if (r.config) return config.layout(r.config);
+  } catch { /* no helper, or settings that cannot be resolved */ }
+  return { testPatterns: ['^server/__tests__/'], testDirs: ['server/__tests__'], testFiles: 'server/__tests__/', testCmd: 'npm test' };
+}
+// A path (absolute, or from the root) as a path from the root.
+const fromRoot = p => {
+  const n = String(p).replace(/\\/g, '/').replace(/^['"]|['"]$/g, '');
+  return path.isAbsolute(n) ? path.relative(ROOT, n).split(path.sep).join('/') : n.replace(/^\.\//, '');
+};
 const [, , cmd, a, b, c] = process.argv;
 
 if (cmd === 'set') {
@@ -31,24 +48,30 @@ if (cmd === 'set') {
   if (!active(s)) process.exit(0);
   const input = stdin();
   const ti = input.tool_input || {};
-  const inTests = p => typeof p === 'string' && /(^|\/)server\/__tests__\//.test(p.replace(/\\/g, '/'));
+  const l = layout();
+  const patterns = l.testPatterns.map(x => new RegExp(x));
+  const inTests = p => typeof p === 'string' && p !== '' && patterns.some(re => re.test(fromRoot(p)));
   let blocked = false;
   if (input.tool_name === 'Bash') {
     const cmdline = ti.command || '';
     const writes = /(\bsed\s+-i|\btee\b|\brm\b|\bmv\b|\bcp\b|>|\bgit\s+(checkout|restore|apply)\b)/.test(cmdline);
-    blocked = /__tests__/.test(cmdline) && writes;
+    // a word of the command that is a test file, a test folder, or inside one
+    const words = cmdline.split(/[\s;&|<>()]+/).filter(Boolean);
+    const touchesTests = words.some(w => inTests(w) || l.testDirs.some(d => d !== '.' && fromRoot(w).replace(/\/+$/, '') === d));
+    blocked = writes && touchesTests;
   } else {
     blocked = inTests(ti.file_path) || inTests(ti.notebook_path);
   }
   if (blocked) {
-    console.error(`BLOCKED: server/__tests__ is read-only during the '${s.phase}' phase of ${s.slug}. Fix the source code, not the tests. If a test is truly wrong, stop and tell the user.`);
+    console.error(`BLOCKED: the tests (${l.testFiles}) are read-only during the '${s.phase}' phase of ${s.slug}. Fix the source code, not the tests. If a test is truly wrong, stop and tell the user.`);
     process.exit(2);
   }
 } else if (cmd === 'stop') {
   // Green gate: don't let the session end while tests fail (bounded by MAX_ATTEMPTS).
   const s = read();
   if (!active(s)) process.exit(0);
-  const r = spawnSync('npm', ['test'], { cwd: ROOT, encoding: 'utf8' });
+  const l = layout();
+  const r = spawnSync('sh', ['-c', l.testCmd], { cwd: ROOT, encoding: 'utf8' });
   if (r.status === 0) process.exit(0);
   s.attempts = (s.attempts || 0) + 1;
   write(s);
@@ -59,7 +82,7 @@ if (cmd === 'set') {
   const tail = (r.stdout + r.stderr).split('\n').slice(-40).join('\n');
   console.log(JSON.stringify({
     decision: 'block',
-    reason: `npm test is failing (attempt ${s.attempts}/${MAX_ATTEMPTS}). Fix the source, not server/__tests__.\n\n${tail}`,
+    reason: `${l.testCmd} is failing (attempt ${s.attempts}/${MAX_ATTEMPTS}). Fix the source, not the tests (${l.testFiles}).\n\n${tail}`,
   }));
 } else {
   console.error('usage: sdlc-guard.cjs set|clear|pre-tool|stop');

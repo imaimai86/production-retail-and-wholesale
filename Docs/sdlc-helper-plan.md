@@ -160,8 +160,11 @@ Each phase leaves this repo working.
    Tests: detection fixtures per ecosystem; loading config with defaults.
 2. **Runner adapters and `RunResult`.** Jest adapter first; `sdlc-testcheck.cjs` reads `RunResult`. Then vitest,
    mocha, node:test and generic-junit (pytest and go after launch). Tests: recorded runner output in fixtures, parsed into `RunResult`.
-3. **Remove the hard-coded parts** in the table in section 4, one row at a time, with this repo's pipeline tests
-   staying green.
+3. **Remove the hard-coded parts** (done 2026-10-15). `sdlc.sh`, `sdlc-mod.sh`, `sdlc-testcheck.cjs`, the guard hook
+   and plugin, the stage prompts and the slash commands read the settings. Tests are described to git as folders or
+   `:(glob)` patterns (tests beside the source), and every test run goes through the adapters. Checked end to end with a
+   stand-in `claude`: a node:test project with tests beside the source, another backlog folder and branch prefix, and a
+   project laid out like this one.
 4. **Extract into `sdlc-helper`.** New repo; port the engine to TypeScript; CLI with `add`, `list`, `detect`,
    `doctor`, `config`, `run`, `stop`, `restart`, `discard`, `status`, `watch`, `changes`, `permit`, `model`,
    `backlog`. This repo then uses the published package and drops its copies of the scripts.
