@@ -1,1 +1,2 @@
-npm run generate-spec && git add server/openapi-spec.json
+# Lint first, as CI does: a lint error stops the commit before anything else runs.
+npm run lint --prefix server && npm run generate-spec && git add server/openapi-spec.json
