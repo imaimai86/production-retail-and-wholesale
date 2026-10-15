@@ -5,7 +5,7 @@ const { spawnSync } = require('child_process');
 
 const root = path.resolve(__dirname, '../../..');
 const configPath = path.join(root, 'scripts/sdlc-config.cjs');
-const { expandGlob, testSpec, testFiles, layout, resolve, renderSkill } = require(configPath);
+const { expandGlob, testSpec, testFiles, renderSkill } = require(configPath);
 const GIT_ENV = { GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
 
 const tmp = (p = 'sdlc-wiring-') => fs.mkdtempSync(path.join(os.tmpdir(), p));
