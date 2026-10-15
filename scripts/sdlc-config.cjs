@@ -170,10 +170,52 @@ function typeScriptEvidence(dir, root, deps) {
 }
 const isTypeScript = (dir, root, deps) => typeScriptEvidence(dir, root, deps).length > 0;
 
-// Test file patterns the package states itself (jest testMatch, mocha spec), else null.
+// The strings of `key: [ ... ]` in <text> when the list holds only string literals, else null (a spread or a variable
+// cannot be known without running the config).
+function literalList(text, key) {
+  const m = new RegExp(`\\b${key}\\s*:\\s*\\[`).exec(text || '');
+  if (!m) return null;
+  const items = [];
+  let other = '';
+  for (let i = m.index + m[0].length; i < text.length; i++) {
+    const c = text[i];
+    if (c === ']') return other.replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\//g, '').replace(/[\s,]/g, '') === '' && items.length ? items : null;
+    if (c === "'" || c === '"' || c === '`') {
+      let v = '';
+      for (i++; i < text.length && text[i] !== c; i++) v += text[i] === '\\' ? text[++i] : text[i];
+      items.push(v);
+    } else other += c;
+  }
+  return null;
+}
+// The text of the first file in <dir> whose name matches <re>.
+function configText(dir, re) {
+  let files = [];
+  try { files = fs.readdirSync(dir).filter(f => re.test(f)).sort(); } catch { return null; }
+  for (const f of files) { try { return fs.readFileSync(path.join(dir, f), 'utf8'); } catch { /* next */ } }
+  return null;
+}
+const JEST_MATCH = ['**/__tests__/**/*.[jt]s?(x)', '**/?(*.)+(spec|test).[jt]s?(x)'];
+
+// Test file patterns the package states itself, else null: jest testMatch or roots (package.json or jest.config.*),
+// vitest include (in the test block of vitest.config.* or vite.config.*), mocha spec. Only literal lists are read.
 function packageGlobs(runner, pkg, dir) {
-  const strip = g => g.replace(/^<rootDir>\//, '').replace(/^\.\//, '');
-  if (runner === 'jest' && pkg.jest && Array.isArray(pkg.jest.testMatch)) return pkg.jest.testMatch.map(strip);
+  const strip = g => g.replace(/^<rootDir>\/?/, '').replace(/^\.\//, '');
+  if (runner === 'jest') {
+    const conf = configText(dir, CONFIG_FILES.jest);
+    const own = pkg.jest && typeof pkg.jest === 'object' ? pkg.jest : {};
+    const match = (Array.isArray(own.testMatch) && own.testMatch) || literalList(conf, 'testMatch');
+    if (match) return match.map(strip);
+    const roots = (Array.isArray(own.roots) && own.roots) || literalList(conf, 'roots');
+    if (roots) return roots.map(strip).flatMap(r => JEST_MATCH.map(g => (r ? `${r.replace(/\/+$/, '')}/${g}` : g)));
+    return null;
+  }
+  if (runner === 'vitest') {
+    const conf = configText(dir, CONFIG_FILES.vitest) || configText(dir, /^vite\.config\.(js|cjs|mjs|ts|cts|mts)$/);
+    const block = conf && /\btest\s*:\s*\{/.exec(conf);
+    const include = block ? literalList(conf.slice(block.index), 'include') : null;
+    return include ? include.map(strip) : null;
+  }
   let spec = runner === 'mocha' && pkg.mocha ? pkg.mocha.spec : undefined;
   if (runner === 'mocha' && spec === undefined) {
     try { spec = readJson(path.join(dir, '.mocharc.json')).spec; } catch { /* none */ }
@@ -929,7 +971,7 @@ function shellEnv(config) {
   return Object.entries(lines).map(([k, v]) => `${k}=${v}`).join('\n') + '\n';
 }
 
-module.exports = { argsProblem, CONFIG_FILE, RUNNERS, agentRules, testFramework, layout, globToRegex, expandGlob, testSpec, testFiles, CODE_INDEXERS, codeIndexers, codeSearchErrors, codeSearchFor, codeSearchGuide, renderTemplate, renderSkill, detect, detectPackage, suggest, setupPlan, provision, locateTestDir, packagesBelow, resolve, validate, testDir, allowedTools, worktreeBase, shellEnv };
+module.exports = { argsProblem, literalList, packageGlobs, CONFIG_FILE, RUNNERS, agentRules, testFramework, layout, globToRegex, expandGlob, testSpec, testFiles, CODE_INDEXERS, codeIndexers, codeSearchErrors, codeSearchFor, codeSearchGuide, renderTemplate, renderSkill, detect, detectPackage, suggest, setupPlan, provision, locateTestDir, packagesBelow, resolve, validate, testDir, allowedTools, worktreeBase, shellEnv };
 
 // The project root for <dir>: the top of its git work tree, else <dir> itself.
 function findRoot(dir) {

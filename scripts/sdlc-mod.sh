@@ -123,6 +123,10 @@ cmd_run() {
     if [ -z "${SDLC_ALLOW_MERGED:-}" ] && is_merged "$slug" "$base"; then
       fail_start "$slug" 5 "$slug is already merged into $base. Delete branch $branch and its backlog entry, or set SDLC_ALLOW_MERGED=1 to run it again."
     fi
+    # The pipeline itself must be on the branch the worktree starts from: a worktree has only what is committed there.
+    if ! git -C "$ROOT" cat-file -e "$branch:scripts/sdlc.sh" 2>/dev/null && ! git -C "$ROOT" cat-file -e "$base:scripts/sdlc.sh" 2>/dev/null; then
+      fail_start "$slug" 1 "scripts/sdlc.sh is not committed on $base, which the worktree starts from. Commit the pipeline to $base, or start from a branch that has it: SDLC_BASE=<branch> (or git.base in sdlc.config.json)."
+    fi
     # The brief must be in the main working tree or already committed on the branch.
     if [ ! -f "$ROOT/$docs/brief.md" ] && ! git -C "$ROOT" cat-file -e "$branch:$docs/brief.md" 2>/dev/null \
        && ! git -C "$ROOT" cat-file -e "$base:$docs/brief.md" 2>/dev/null; then
