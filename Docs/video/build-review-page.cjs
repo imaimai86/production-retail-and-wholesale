@@ -128,10 +128,10 @@ main ul::after { content: ""; display: block; clear: both; }
 </style>
 <div class="wrap">
   <header class="top">
-    <span class="eyebrow">Script review · draft 2</span>
+    <span class="eyebrow">Script review · draft 3</span>
     <h1>The Software Factory</h1>
     <p>Main YouTube video and eleven Shorts on the SDLC pipeline, the sdlc-monitor plugin and the /triage intake. Voice-over is set in serif, on-screen directions in tinted boxes. Green chips are Remotion scenes; amber chips are screen captures.</p>
-    <div class="meta"><span>Main video ≈ 23 min · 16:9</span><span>11 Shorts · 45–60 s · 9:16</span><span>Source: Docs/video/sdlc-video-script.md</span></div>
+    <div class="meta"><span>Main video ≈ 24 min · 16:9</span><span>11 Shorts · 45–60 s · 9:16</span><span>Source: Docs/video/sdlc-video-script.md</span></div>
   </header>
   <div class="layout">
     <nav class="rail" aria-label="Chapters"><a class="l2" href="#thumbnails">Thumbnails</a>${nav}</nav>

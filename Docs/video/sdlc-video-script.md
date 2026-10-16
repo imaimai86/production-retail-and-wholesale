@@ -1,6 +1,6 @@
 # Video script: "The Software Factory: an AI SDLC pipeline that is not allowed to cheat"
 
-Main video (about 23 minutes, 16:9) plus 11 Shorts (45 to 60 seconds each, 9:16).
+Main video (about 24 minutes, 16:9) plus 11 Shorts (45 to 60 seconds each, 9:16).
 Audience: fresh software engineers and open-source contributors who have used an AI coding assistant but never built
 a process around one. Tone: friendly, concrete, a little playful, no hype words. Every claim in this script can be
 checked against the repository (see the fact-check table at the end).
@@ -85,9 +85,10 @@ separate stations, each output checked by a machine".
 > from the previous station. And after every station, a script, not a model, checks the result. Pass, and the work moves
 > on. Fail, and it's rejected with a reason.
 >
-> The project we're looking at is a real one: a Node.js and PostgreSQL backend for a production unit and its retail and
-> wholesale shop. Products, stock, invoices, GST. Ordinary business software. Which is exactly why it's a good test bed:
-> the factory has to work on boring, real code, not on a demo.
+> The factory runs on a real project: an open-source Node.js and PostgreSQL backend I started for a company that
+> produces goods, sells them in its own shop and sells to dealers from the warehouse. Products, stock, invoices, GST.
+> Ordinary business software. Which is exactly why it's a good test bed: the factory has to work on boring, real code,
+> not on a demo.
 
 ---
 
@@ -380,7 +381,27 @@ the backlog shelf, `Docs/backlog/index.md`.
 
 ---
 
-### 5. How to use it (16:30 to 20:30)
+### 5. How to use it today (16:30 to 21:30)
+
+**SCREEN:** `[R:WhereItLives]` A warehouse building labelled `production-retail-and-wholesale` (stock, own shop,
+dealers and retailers, accounting). Inside it, a small glowing room labelled "software factory". A dotted outline next
+to the building shows where the factory will move out on its own: "standalone library", then "app for developers".
+
+**VO:**
+> Before we run it, a word on where this factory lives, because I want to be upfront about it.
+>
+> It's built into an open-source project I started a while back and never finished: `production-retail-and-wholesale`.
+> It's a proof of concept for a company that makes its own products, sells them in its own shop, and sells to dealers
+> and retailers straight from the warehouse. Warehouse and stock management, sales, and accounting.
+>
+> I built the factory inside that project to finish it, so today it's wired to that one codebase. It isn't reusable
+> yet. You can't drop it into your own repo and run it.
+>
+> That's changing. I'm pulling it out into a standalone open-source library, and eventually an app, to support
+> developers on any project. I've only just started on that, and I'll keep posting steady progress on this channel.
+>
+> So what you'll see now is how to try it today, inside this project. It's the best way to see every station working
+> for real, and the best starting point if you want to help build the standalone version.
 
 **SCREEN:** `[R:Checklist]` Prerequisites ticking in: Node.js, git, Claude Code, graft, PostgreSQL or Docker.
 
@@ -473,14 +494,15 @@ claude --plugin-dir .claude/plugins/sdlc-monitor
 
 ---
 
-### 6. Where it's going: the roadmap and ai-sdlc-helper (20:30 to 22:15)
+### 6. Where it's going: the roadmap and ai-sdlc-helper (21:30 to 23:15)
 
 **SCREEN:** `[R:Roadmap]` A road with two lanes: "Next in this repo" and "ai-sdlc-helper".
 
 **VO:**
-> Today, this factory is wired into one project: Jest tests in `server/__tests__`, `npm test`, PostgreSQL. The next
-> big step is to lift it out so any project can use it. We call it the ai-sdlc-helper. The working name in the plan is
-> `sdlc-helper`, and the final name is still open.
+> As I said, today this factory is wired into one project: Jest tests in `server/__tests__`, `npm test`, PostgreSQL.
+> The next big step is to lift it out so any project can use it: first as a standalone open-source library, and
+> eventually as an app for developers. I call it the ai-sdlc-helper. The working name in the plan is `sdlc-helper`,
+> and the final name is still open.
 
 **SCREEN:** Two boxes: "npm package: the engine (CLI, pipeline, test adapters, registries, prompts)" and "Claude Code
 plugin: the interface (slash commands, control pane, guard hooks, working rules)".
@@ -513,12 +535,14 @@ plugin: the interface (slash commands, control pane, guard hooks, working rules)
 
 ---
 
-### 7. Join us (22:15 to 23:15)
+### 7. Join us (23:15 to 24:15)
 
 **SCREEN:** `[R:CallToAction]` The repo URL, the MIT license badge, and a grid of "help wanted" tiles.
 
 **VO:**
-> This is open source, MIT licensed, and it's early. That's the best time to join. Here's where help matters most:
+> This is open source, MIT licensed, and it's early. I've only just started turning the factory into a standalone
+> library, and I'll keep posting progress here as it grows. Early is the best time to join, because the shape of the
+> library is still being decided. Here's where help matters most:
 >
 > - **Test runner adapters.** If you know Vitest, Mocha, pytest or Go testing well, an adapter is a small, well-defined
 >   piece of work.
@@ -532,6 +556,7 @@ plugin: the interface (slash commands, control pane, guard hooks, working rules)
 > - **Docs and tutorials,** for the next fresh engineer who opens the repo.
 >
 > Pick a backlog item, open an issue, or just run the factory and tell us what you saw. Links are in the description.
+> Subscribe if you want to follow along: the next videos will show the library taking shape, step by step.
 > If you made it this far, you now know more about AI software factories than most people who talk about them.
 > Thanks for watching, and see you in the pull requests.
 
@@ -619,7 +644,8 @@ repo: link in the description."
 - **Hook:** "We built an AI software factory for one project. Now we want it in yours."
 - **Beat 1:** `[R:Roadmap]` "ai-sdlc-helper: an npm engine plus a Claude Code plugin, configured by one sdlc.config.json."
 - **Beat 2:** "Jest, Vitest, Mocha and node:test first, plus JUnit XML for every other language."
-- **Beat 3:** "We need adapter authors, prompt tinkerers, UI people, Windows testers and brave early users."
+- **Beat 3:** "Today it lives inside my warehouse-and-sales proof of concept and isn't reusable yet. I've just started pulling it out into a library, and later an app."
+- **Beat 4:** "We need adapter authors, prompt tinkerers, UI people, Windows testers and brave early users. I'll post progress as it grows."
 - **Payoff:** "MIT licensed. Pick an item, open an issue."
 - **CTA.**
 
@@ -641,7 +667,7 @@ repo: link in the description."
 > guessing requirements or committing secrets. MIT licensed. Contributions welcome.
 >
 > 0:00 The pitch · 0:50 What is a software factory · 3:30 The pattern and the intake · 8:30 What's unusual · 12:00 Safeguards ·
-> 16:30 How to use it · 20:30 Roadmap and ai-sdlc-helper · 22:15 Join us
+> 16:30 How to use it today · 21:30 Roadmap and ai-sdlc-helper · 23:15 Join us
 >
 > Repo: https://github.com/imaimai86/production-retail-and-wholesale
 
@@ -668,6 +694,7 @@ and `remotion-render` to export. Build each scene as a composition with props so
 | `Worktrees` | Main 3, Short 7 | 10 s | One repo, sibling worktree folders, separate branches |
 | `SafeguardStack` | Main 4 | 40 s total | Nine shields with threat and mechanism labels; collapses to "agents propose, gates dispose" |
 | `RepairChain` | Main 4 | 20 s | Seven links light up; a broken link restores the tests |
+| `WhereItLives` | Main 5 | 15 s | Warehouse building `production-retail-and-wholesale` (stock, own shop, dealers, accounting) with the factory as a room inside; a dotted outline beside it for the standalone library, then the app |
 | `Checklist` | Main 5 | 6 s | Prerequisites |
 | `Roadmap` | Main 6, Short 10 | 15 s | Two lanes: repo backlog and ai-sdlc-helper |
 | `CallToAction` | Main 7 | 15 s | Repo URL, MIT badge, help-wanted grid |
@@ -722,3 +749,5 @@ Every claim the narration makes, and where it is true in the repo. Re-check befo
 | `/triage`: split, duplicates check, graft grounding, decide by conventions, at most 4 questions per round, brief shape, P0/P1 on top, no secrets, no docs-only items, no source code, publishes to `triage/<slug>` only after an explicit yes | `.claude/commands/triage.md` |
 | One triage run produced three dependent backlog items | commit `a23b93f`, merged in pull request #82 (`triage/add-test-framework-registry-and-2-more`) |
 | MIT license | `LICENSE` |
+| Today the factory is wired to this one project and not reusable elsewhere | `Docs/sdlc-helper-plan.md` section 4 (hard-coded `npm test`, `server/__tests__`, Jest JSON, paths) |
+| The host project is a warehouse, own-shop, dealer sales and accounting proof of concept | `CLAUDE.md` "Implementation plan", `README.md` |
