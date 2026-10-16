@@ -290,7 +290,7 @@ results_at() {
 }
 # resume_hint: tell the developer how to resume at Test repair, only when resumecheck's checks 1-4 and Q2 pass now.
 resume_hint() {
-  if $CHECK resumecheck "${ORIG_RED_SHA:-}" "$DOCS/test-issues.md" "$SLUG" >/dev/null 2>&1; then
+  if $CHECK resumecheck "${ORIG_RED_SHA:-}" "$DOCS/test-issues.md" "$SLUG" "${LOCK_SHA:-}" >/dev/null 2>&1; then
     echo "Resume at Test repair once fixed: FROM=test-repair ./scripts/sdlc.sh $SLUG"
   fi
 }
@@ -397,14 +397,19 @@ if tests_pass; then echo "RED GATE FAILED: new tests pass before implementation.
 git add -A -- "$DOCS"; add_tests
 git commit -q -m "test($SLUG): add failing tests and spec/plan docs"
 RED_SHA=$(git rev-parse HEAD)
+LOCK_SHA="$RED_SHA"
 else
+  # The tests are locked at the commit the run continues from (the branch head). Agents cannot commit, so whatever is
+  # committed by now (a merge of the base branch into a paused run, say) is the developer's; only changes made from here
+  # on count as changes to the tests. Running the tests on the unimplemented source still uses the red-tests commit.
+  LOCK_SHA="$(git rev-parse HEAD)"
   # Review resumes from the latest locked tests (the red-tests commit, or the test-repair commit after it).
   REPAIR_PAT="^test($SLUG): add failing tests"
   [ "$FROM_N" -eq 6 ] && REPAIR_PAT="^test($SLUG): repair invalid tests"
   if [ "$FROM_N" -eq 5 ]; then
     stage "4b Test repair (only because the Implement agent claimed test defects)"
     RED_SHA=$(git log --format=%H -1 --grep="^test($SLUG): add failing tests")
-    $CHECK resumecheck "$RED_SHA" "$DOCS/test-issues.md" "$SLUG" || exit 1
+    $CHECK resumecheck "$RED_SHA" "$DOCS/test-issues.md" "$SLUG" "$LOCK_SHA" || exit 1
   else
     RED_SHA=$(git log --format=%H -1 --grep="^test($SLUG): add failing tests" --grep="$REPAIR_PAT")
     [ -n "$RED_SHA" ] || { echo "FROM=$FROM but no red-tests commit found for $SLUG"; exit 1; }
@@ -425,8 +430,8 @@ GREEN=0
 for i in $(seq 1 "$MAX_ATTEMPTS"); do
   echo " attempt $i"; CUR_ATTEMPT="$i/$MAX_ATTEMPTS"
   agent "impl-$i" implement
-  if [ -n "$(git diff --name-only "$RED_SHA" -- "${TEST_SPECS[@]}")" ]; then
-    echo "GUARD FAILED: tests were modified during implementation"; git diff --name-only "$RED_SHA" -- "${TEST_SPECS[@]}"; exit 1
+  if [ -n "$(git diff --name-only "$LOCK_SHA" -- "${TEST_SPECS[@]}")" ]; then
+    echo "GUARD FAILED: tests were modified during implementation"; git diff --name-only "$LOCK_SHA" -- "${TEST_SPECS[@]}"; exit 1
   fi
   if success_check; then echo " tests and integration green"; GREEN=1; break; fi
 done
@@ -441,8 +446,8 @@ if [ "$GREEN" -ne 1 ]; then
   stage "4b Test repair (only because the Implement agent claimed test defects)"
   reject() {
     echo "TEST REPAIR REJECTED: $1"
-    restore_tests "$ORIG_RED_SHA"
-    echo "   tests restored to $ORIG_RED_SHA. See $LOG/ and $DOCS/test-issues.md"
+    restore_tests "$LOCK_SHA"
+    echo "   tests restored to $LOCK_SHA. See $LOG/ and $DOCS/test-issues.md"
     [ "${2:-}" != hint ] || resume_hint
     exit 1
   }
@@ -458,11 +463,11 @@ if [ "$GREEN" -ne 1 ]; then
   agent test-repair test-repair
   if grep -q '^NO REPAIR NEEDED' "$DOCS/test-repair-1.md" 2>/dev/null; then reject "repair agent says the tests are right; the source is wrong"; fi
   [ "$(src_hash)" = "$SRC_BEFORE" ] || reject "source files were modified during test repair"
-  $CHECK diffcheck "$ORIG_RED_SHA" "$DOCS/test-issues.md" || reject "diff check failed (see above)"
-  git diff "$ORIG_RED_SHA" -- "${TEST_SPECS[@]}" > "$LOG/test-repair.diff"
+  $CHECK diffcheck "$LOCK_SHA" "$DOCS/test-issues.md" || reject "diff check failed (see above)"
+  git diff "$LOCK_SHA" -- "${TEST_SPECS[@]}" > "$LOG/test-repair.diff"
   results_now "$LOG/after.json"
   $CHECK namecheck "$LOG/red.json" "$LOG/after.json" || reject "tests were removed or renamed"
-  CHANGED=$( { git diff --name-only "$ORIG_RED_SHA" -- "${TEST_SPECS[@]}"; git ls-files --others --exclude-standard -- "${TEST_SPECS[@]}"; } | sort -u)
+  CHANGED=$( { git diff --name-only "$LOCK_SHA" -- "${TEST_SPECS[@]}"; git ls-files --others --exclude-standard -- "${TEST_SPECS[@]}"; } | sort -u)
   # shellcheck disable=SC2086
   results_at "$ORIG_RED_SHA" "$ROOT/$LOG/repaired-on-red.json" $CHANGED
   $CHECK redcheck "$LOG/red.json" "$LOG/repaired-on-red.json" || reject "a repaired test no longer fails on the unimplemented source"
@@ -475,7 +480,7 @@ if [ "$GREEN" -ne 1 ]; then
   success_check || reject "checks still fail after an audited repair; see $FAIL_LOG"
   git add -A -- "$DOCS"; add_tests
   git commit -q -m "test($SLUG): repair invalid tests (mechanically checked and audited)"
-  RED_SHA=$(git rev-parse HEAD)
+  RED_SHA=$(git rev-parse HEAD); LOCK_SHA="$RED_SHA"
   echo " test repair accepted; tests locked again at ${RED_SHA:0:7}"
 fi
 fi
@@ -483,7 +488,7 @@ fi
 # 5. REVIEW ---------------------------------------------------------------
 stage "5/6 Review"
 agent review review
-if [ -n "$(git diff --name-only "$RED_SHA" -- "${TEST_SPECS[@]}")" ]; then echo "GUARD FAILED: review modified tests"; exit 1; fi
+if [ -n "$(git diff --name-only "$LOCK_SHA" -- "${TEST_SPECS[@]}")" ]; then echo "GUARD FAILED: review modified tests"; exit 1; fi
 success_check || { echo "Checks broke after review. See $FAIL_LOG"; exit 1; }
 
 # 6. SHIP -----------------------------------------------------------------

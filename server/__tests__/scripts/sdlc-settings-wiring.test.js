@@ -103,6 +103,21 @@ describe('sdlc-testcheck with tests beside the source', () => {
     expect(resume.stderr).not.toContain('no implementation change');
   });
 
+  test('resumecheck counts test changes from the lock commit: a later commit (a merge into a paused run) is not one', () => {
+    const { dir, red } = repo();
+    write(dir, 'claims.md', 'src/a.test.ts :: a works :: contradicts the spec decision\n');
+    write(dir, 'src/a.test.ts', "test('a works', () => {}); // merged from main\n");
+    git(dir, 'commit', '-qam', "Merge branch 'main'");
+    write(dir, 'src/a.ts', 'export const a = 2;\n');
+    const head = git(dir, 'rev-parse', 'HEAD');
+    expect(check(dir, 'resumecheck', red, 'claims.md', 's').stderr).toContain('tests changed since the red-tests commit');
+    const locked = check(dir, 'resumecheck', red, 'claims.md', 's', head);
+    expect(locked.stderr).toBe('');
+    expect(locked.status).toBe(0);
+    write(dir, 'src/a.test.ts', 'edited by an agent\n');
+    expect(check(dir, 'resumecheck', red, 'claims.md', 's', head).stderr).toContain(`tests changed since the commit the run continues from ${head.slice(0, 7)}: src/a.test.ts`);
+  });
+
   test('keys are paths from the root; retry-args gives the runner each file with its failing tests', () => {
     const { dir } = repo();
     write(dir, 'claims.md', 'src/a.test.ts :: a works :: x\n');
