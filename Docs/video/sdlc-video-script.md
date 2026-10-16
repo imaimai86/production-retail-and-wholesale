@@ -1,6 +1,6 @@
 # Video script: "The Software Factory: an AI SDLC pipeline that is not allowed to cheat"
 
-Main video (about 22 minutes, 16:9) plus 10 Shorts (45 to 60 seconds each, 9:16).
+Main video (about 23 minutes, 16:9) plus 11 Shorts (45 to 60 seconds each, 9:16).
 Audience: fresh software engineers and open-source contributors who have used an AI coding assistant but never built
 a process around one. Tone: friendly, concrete, a little playful, no hype words. Every claim in this script can be
 checked against the repository (see the fact-check table at the end).
@@ -22,7 +22,7 @@ Conventions in this script:
 (spec, plan, tests, code, review), a red light turns green, and at the end a git branch slides out with two commits.
 
 **VO:**
-> You write one line. "POST /users crashes when the name is missing."
+> You paste an error from your server logs. Or you just write one line: "POST /users crashes when the name is missing."
 >
 > You get a coffee, and when you come back there's a git branch waiting. In it: a written specification, a technical plan, a set of tests
 > that failed before the fix and pass after it, the fix itself, a code review, and one clean commit.
@@ -91,17 +91,19 @@ separate stations, each output checked by a machine".
 
 ---
 
-### 2. The pattern behind this pipeline (3:30 to 7:30)
+### 2. The pattern behind this pipeline (3:30 to 8:30)
 
-**SCREEN:** `[R:PipelineMap]` The full line, left to right:
-`brief.md -> Spec -> Plan -> Red tests -> Implement (x4) -> [Test repair] -> Review -> Ship`.
-Each arrow carries a file name: `specs-1.md`, `plan-1.md`, `test-cases-1.md` plus tests, source changes, `review-1.md`, commits.
+**SCREEN:** `[R:PipelineMap]` The full line, left to right, with the intake dock in front of it:
+`report -> /triage -> backlog (brief.md) -> Spec -> Plan -> Red tests -> Implement (x4) -> [Test repair] -> Review -> Ship`.
+Each arrow carries a file name: `brief.md` and the `index.md` line, `specs-1.md`, `plan-1.md`, `test-cases-1.md` plus
+tests, source changes, `review-1.md`, commits.
 
 **VO:**
 > Here's the whole line. It's driven by one shell script, `scripts/sdlc.sh`. You give it a backlog item, a short brief,
-> and it runs these stations in order.
+> and it runs these stations in order. But a factory is only as good as the raw material that comes in, so in front of
+> the line there's an intake dock, and we'll get to it in a moment.
 >
-> The pattern has four ingredients. Let's take them one by one.
+> The pattern has four ingredients, plus the intake. Let's take them one by one.
 
 #### 2a. Ingredient one: a deterministic boss, AI workers
 
@@ -164,9 +166,56 @@ red gate; Implement agent / locked tests; Test repair agent / auditor on a diffe
 > So that's the pattern: a deterministic boss, AI workers with one job each, hand-offs through files, tests locked
 > before code, and nobody grades their own homework.
 
+#### 2e. The intake dock: `/triage` builds the backlog
+
+**SCREEN:** `[R:Triage]` A messy pile arrives at a loading dock: a pasted stack trace, a Slack-style complaint, a line
+from `Engineering/bugs.md`. A sorting station splits it into two labelled crates, `fix-user-validation` (bug, P2) and
+`add-db-health-check` (feature, P2), a third scrap marked "docs only" drops into a side tray, and the crates roll onto
+the backlog shelf, `Docs/backlog/index.md`.
+
+**VO:**
+> Every station we just saw starts from a backlog item. So where do backlog items come from? In a real team they come
+> from bug reports, error logs, customer complaints, half-finished notes. Messy stuff. If you feed messy stuff straight
+> into the line, the Spec station spends round after round asking questions.
+>
+> So the factory has an intake tool: the `/triage` command in Claude Code. You paste whatever you have, an error
+> message, a link to notes, a paragraph of complaints, and triage turns it into backlog items the pipeline can run with
+> few or no question rounds. Here's what it does, in order:
+>
+> - **Split.** One report can hide three problems. Triage makes one item per problem and marks each as a bug, where
+>   existing behaviour is wrong, or a feature, where something new is needed.
+> - **Check for duplicates.** It reads the backlog and the known-bugs list first. If an item already covers the report,
+>   it says which one and stops. No second copy.
+> - **Ground it in the code.** It uses graft to find the real files, functions and endpoints. For a bug, it confirms
+>   the cause from the code, and when it's cheap and safe, it reproduces it with the tests. It says what it verified
+>   and what it didn't.
+> - **Decide what it can.** Every question left open costs a full round at the Spec station. So triage settles what the
+>   project's own conventions already answer: the error format, the validation order, what's in and out of scope, which
+>   tests to write. It only asks you about real product decisions, up to four questions at a time, and writes your
+>   answers into the brief as decisions.
+> - **Write the item.** A `brief.md` with a fixed shape: type, priority from P0 for security or data loss down to P3
+>   for nice to have, the source, the problem, the expected behaviour, decisions, scope, tests, docs, and open
+>   questions. Plus one line in `Docs/backlog/index.md`, with P0 and P1 items placed above the rest, because the
+>   pipeline works top-down.
+>
+> And the intake has its own safety rules. It never writes source code and never starts the pipeline. It never
+> pastes a password or a token into a file; it names them instead. It refuses to make a backlog item for a
+> documentation-only change, because the pipeline builds and tests code, and a docs-only item would ship docs with no
+> feature. It tells you to edit those directly. And it never commits on its own: at the end it shows you exactly which
+> files it would publish, to a new `triage/<slug>` branch, and asks. Commit and push, commit locally only, or do
+> nothing. Anything that isn't a clear yes means do nothing.
+>
+> Here's a real run. One request, "let the pipeline work with other test frameworks", went into triage and came out as
+> three backlog items that depend on each other: a test framework registry, the pipeline gates using the configured
+> runner, and a config screen to pick the framework. Three briefs, three lines in the backlog, one commit on a
+> `triage/` branch, which then went through a normal pull request.
+
+**SCREEN:** `[CAP]` `git show --stat a23b93f`: three `brief.md` files and `Docs/backlog/index.md`. Then
+`Docs/backlog/add-test-framework-registry/brief.md`, highlighting `Type:`, `Priority:`, `Source:` and `## Decisions`.
+
 ---
 
-### 3. What is peculiar about this pipeline (7:30 to 11:00)
+### 3. What is peculiar about this pipeline (8:30 to 12:00)
 
 **SCREEN:** `[R:SectionCard]` "What's unusual here". Then each point appears as a card.
 
@@ -240,7 +289,7 @@ red gate; Implement agent / locked tests; Test repair agent / auditor on a diffe
 
 ---
 
-### 4. The safeguards, and why each one exists (11:00 to 15:30)
+### 4. The safeguards, and why each one exists (12:00 to 16:30)
 
 **SCREEN:** `[R:SafeguardStack]` A tall stack of shields. Each shield, as it is named, slides in with a short
 "threat" label on the left and "mechanism" label on the right.
@@ -331,7 +380,7 @@ red gate; Implement agent / locked tests; Test repair agent / auditor on a diffe
 
 ---
 
-### 5. How to use it (15:30 to 19:30)
+### 5. How to use it (16:30 to 20:30)
 
 **SCREEN:** `[R:Checklist]` Prerequisites ticking in: Node.js, git, Claude Code, graft, PostgreSQL or Docker.
 
@@ -355,8 +404,10 @@ graft build
 **SCREEN:** `[CAP]` Claude Code, typing `/triage POST /users returns 500 when the name is missing`.
 
 > Every job starts as a backlog item: a line in `Docs/backlog/index.md` and a short `brief.md`. You can write them by
-> hand, or paste a bug report into the `/triage` command. Triage checks for duplicates, finds the real files with
-> graft, and writes a brief that's good enough to need few or no question rounds.
+> hand, but the easy way is the intake dock we saw earlier: paste the bug report into `/triage`. It splits it, checks
+> for duplicates, finds the real files with graft, asks you only what the code can't answer, and writes the brief and
+> the backlog line. It ends with a table of the items it made and the command to run each one, and offers to publish
+> them to a `triage/<slug>` branch once you say yes. To see what's waiting, run `/backlog-list pending`.
 
 **Step 2: start a run.**
 
@@ -422,7 +473,7 @@ claude --plugin-dir .claude/plugins/sdlc-monitor
 
 ---
 
-### 6. Where it's going: the roadmap and ai-sdlc-helper (19:30 to 21:15)
+### 6. Where it's going: the roadmap and ai-sdlc-helper (20:30 to 22:15)
 
 **SCREEN:** `[R:Roadmap]` A road with two lanes: "Next in this repo" and "ai-sdlc-helper".
 
@@ -462,7 +513,7 @@ plugin: the interface (slash commands, control pane, guard hooks, working rules)
 
 ---
 
-### 7. Join us (21:15 to 22:15)
+### 7. Join us (22:15 to 23:15)
 
 **SCREEN:** `[R:CallToAction]` The repo URL, the MIT license badge, and a grid of "help wanted" tiles.
 
@@ -572,6 +623,14 @@ repo: link in the description."
 - **Payoff:** "MIT licensed. Pick an item, open an issue."
 - **CTA.**
 
+### Short 11: "From bug report to backlog in one command" (55 s)
+- **Hook:** "I paste a raw server error. One command later, it's a ready-to-build backlog item."
+- **Beat 1:** `[R:Triage]` "The /triage command splits the report into one item per problem, bug or feature, and checks the backlog for duplicates first."
+- **Beat 2:** "It finds the real file and line with a code graph, confirms the cause, and settles everything the project's conventions already answer."
+- **Beat 3:** "Out comes a brief with type, priority, scope, tests and decisions, plus one line in the backlog, P0 on top."
+- **Payoff:** "It never commits on its own. It shows you the files and asks."
+- **CTA.**
+
 ---
 
 ## Production notes
@@ -581,8 +640,8 @@ repo: link in the description."
 > implementation, review and a clean commit out, with safeguards that stop AI agents from editing their own tests,
 > guessing requirements or committing secrets. MIT licensed. Contributions welcome.
 >
-> 0:00 The pitch · 0:50 What is a software factory · 3:30 The pattern · 7:30 What's unusual · 11:00 Safeguards ·
-> 15:30 How to use it · 19:30 Roadmap and ai-sdlc-helper · 21:15 Join us
+> 0:00 The pitch · 0:50 What is a software factory · 3:30 The pattern and the intake · 8:30 What's unusual · 12:00 Safeguards ·
+> 16:30 How to use it · 20:30 Roadmap and ai-sdlc-helper · 22:15 Join us
 >
 > Repo: https://github.com/imaimai86/production-retail-and-wholesale
 
@@ -598,7 +657,8 @@ and `remotion-render` to export. Build each scene as a composition with props so
 | `TitleCard` | Main 0 | 4 s | Title and subtitle |
 | `FactoryAnalogy` | Main 1 | 15 s | Car factory: stations, conveyor, inspection, rejected-parts bin |
 | `SDLCStations` | Main 1, Short 1 | 12 s | Requirements, Design, Tests, Implementation, Review, Release |
-| `PipelineMap` | Main 2 | 20 s | `brief.md -> Spec -> Plan -> Red tests -> Implement (x4) -> [Test repair] -> Review -> Ship`, file names on arrows |
+| `PipelineMap` | Main 2 | 20 s | `report -> /triage -> brief.md -> Spec -> Plan -> Red tests -> Implement (x4) -> [Test repair] -> Review -> Ship`, file names on arrows |
+| `Triage` | Main 2e, Short 11 | 15 s | Messy reports arrive at a dock, are split into labelled crates (slug, type, priority), a "docs only" scrap drops aside, crates roll onto the backlog shelf |
 | `BossAndWorkers` | Main 2a, Short 5 | 12 s | Grey `sdlc.sh` box waking one robot at a time |
 | `FileHandOff` | Main 2b | 8 s | Documents passed robot to robot |
 | `RedGreen` | Main 2c, Short 2 | 12 s | Red rows, lock with commit hash, rows turn green |
@@ -625,6 +685,8 @@ recorded at 1440p with a large terminal font (at least 20 px) so they stay reada
    manual input box, Discard, CONFIG pane with **Test**.
 6. `git log --oneline` of a finished `sdlc/<slug>` branch.
 7. `Docs/backlog/index.md` with the completed pipeline features.
+8. A live `/triage` run on a throwaway report: the questions it asks, the result table, and the publish confirmation
+   (choose "Do nothing" so no branch is created). Then `git show --stat a23b93f` for the real three-item run.
 
 Use a throwaway backlog item for the live recording so the demo branch can be discarded afterwards.
 
@@ -657,4 +719,6 @@ Every claim the narration makes, and where it is true in the repo. Re-check befo
 | Three deprecated runners | `scripts/DEPRECATED-sdlc-run*.sh` |
 | ai-sdlc-helper: npm engine plus plugin, `sdlc.config.json`, adapters, first release Node/TS plus generic JUnit, TypeScript port, recorded-stub CI | `Docs/sdlc-helper-plan.md` |
 | Roadmap items | `Docs/backlog/index.md` (`[ ]` items) |
+| `/triage`: split, duplicates check, graft grounding, decide by conventions, at most 4 questions per round, brief shape, P0/P1 on top, no secrets, no docs-only items, no source code, publishes to `triage/<slug>` only after an explicit yes | `.claude/commands/triage.md` |
+| One triage run produced three dependent backlog items | commit `a23b93f`, merged in pull request #82 (`triage/add-test-framework-registry-and-2-more`) |
 | MIT license | `LICENSE` |

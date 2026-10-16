@@ -36,7 +36,7 @@ html = html.replace(/<!--thumb:(\d+)-->/g, (m, num) =>
 const gallery = `
 <section class="gallery" id="thumbnails" aria-labelledby="thumbs-h">
   <h2 id="thumbs-h">Thumbnails</h2>
-  <p class="lede">Eleven SVGs in <code>Docs/video/thumbnails/</code>: one 1280 × 720 for the main video, one 1080 × 1920 cover per Short. Each Short's cover also sits next to its script below.</p>
+  <p class="lede">Twelve SVGs in <code>Docs/video/thumbnails/</code>: one 1280 × 720 for the main video, one 1080 × 1920 cover per Short. Each Short's cover also sits next to its script below.</p>
   <figure class="main-thumb">${svg('main.svg')}<figcaption><b>Main video</b> · main.svg · 1280 × 720</figcaption></figure>
   <div class="shorts-grid">
     ${shortTitles.map((title, i) => title === undefined ? '' : `<figure><a href="#${toc.find(t => t.text.startsWith(`Short ${i}:`)).id}" aria-label="Short ${i} script">${svg(`short-${String(i).padStart(2, '0')}.svg`)}</a><figcaption><b>${String(i).padStart(2, '0')}</b> ${title}</figcaption></figure>`).join('\n    ')}
@@ -128,10 +128,10 @@ main ul::after { content: ""; display: block; clear: both; }
 </style>
 <div class="wrap">
   <header class="top">
-    <span class="eyebrow">Script review · draft 1</span>
+    <span class="eyebrow">Script review · draft 2</span>
     <h1>The Software Factory</h1>
-    <p>Main YouTube video and ten Shorts on the SDLC pipeline and the sdlc-monitor plugin. Voice-over is set in serif, on-screen directions in tinted boxes. Green chips are Remotion scenes; amber chips are screen captures.</p>
-    <div class="meta"><span>Main video ≈ 22 min · 16:9</span><span>10 Shorts · 45–60 s · 9:16</span><span>Source: Docs/video/sdlc-video-script.md</span></div>
+    <p>Main YouTube video and eleven Shorts on the SDLC pipeline, the sdlc-monitor plugin and the /triage intake. Voice-over is set in serif, on-screen directions in tinted boxes. Green chips are Remotion scenes; amber chips are screen captures.</p>
+    <div class="meta"><span>Main video ≈ 23 min · 16:9</span><span>11 Shorts · 45–60 s · 9:16</span><span>Source: Docs/video/sdlc-video-script.md</span></div>
   </header>
   <div class="layout">
     <nav class="rail" aria-label="Chapters"><a class="l2" href="#thumbnails">Thumbnails</a>${nav}</nav>

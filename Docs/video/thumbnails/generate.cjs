@@ -241,6 +241,25 @@ const shorts = [];
   shorts.push(short(10, ['HELP US', 'BUILD', 'AI-SDLC-', 'HELPER'], 2, ['MIT licensed.', 'Contributors wanted.'], a));
 }
 
+// 11 triage: one request in, three backlog items out
+{
+  let a = rect(60, 730, 960, 230, { fill: C.panel, stroke: C.blue, rx: 16 });
+  a += t(100, 790, 'request', { mono: true, size: 28, fill: C.muted });
+  a += t(100, 850, '"support test frameworks', { mono: true, size: 38, fill: C.blue });
+  a += t(100, 906, ' other than jest"', { mono: true, size: 38, fill: C.blue });
+  a += `<path d="M540 980 V1062 m-22 -22 l22 22 l22 -22" fill="none" stroke="${C.green}" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>`;
+  a += t(590, 1036, '/triage', { mono: true, size: 44, fill: C.green, weight: 800 });
+  ['add-test-framework-registry', 'use-configured-test-runner', 'add-framework-config-pane'].forEach((s, i) => {
+    const y = 1090 + i * 118;
+    a += rect(60, y, 960, 100, { fill: C.panel2, stroke: C.line, rx: 12 });
+    a += t(96, y + 62, s, { mono: true, size: 33 });
+    a += t(984, y + 62, 'P2', { mono: true, size: 30, fill: C.amber, anchor: 'end', weight: 700 });
+  });
+  a += `<rect x="60" y="1460" width="960" height="96" rx="12" fill="none" stroke="${C.muted}" stroke-width="3" stroke-dasharray="12 10"/>`;
+  a += t(96, 1520, 'docs only? edit it directly', { mono: true, size: 32, fill: C.muted });
+  shorts.push(short(11, ['ANY REPORT', 'TO BACKLOG', 'IN ONE', 'COMMAND'], 1, ['Shows the files and asks', 'before it commits.'], a));
+}
+
 fs.writeFileSync(path.join(OUT, 'main.svg'), mainThumb());
 shorts.forEach((s, i) => fs.writeFileSync(path.join(OUT, `short-${String(i + 1).padStart(2, '0')}.svg`), s));
 console.log('wrote', 1 + shorts.length, 'files to', OUT);
