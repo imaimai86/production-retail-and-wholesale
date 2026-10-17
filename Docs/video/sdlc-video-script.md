@@ -353,6 +353,15 @@ the backlog shelf, `Docs/backlog/index.md`.
 > outside the list, it's refused, the run pauses, and the pane shows the refused action with three buttons: **Allow
 > this run**, **Allow always**, **Deny**. Then the stage restarts. Headless agents can't ask you questions, so the
 > pipeline asks for them.
+>
+> Here's a real one. The Spec agent wanted to read the error handler with `cat` and `grep` in the shell, which isn't
+> on its list. Later the Plan agent wanted to look inside `node_modules` for a logging library. Both runs stopped and
+> asked. I allowed each, once for this run or always, and the stage started again.
+
+**SCREEN:** `[CAP]` `s11-spec-refused-actions.png`: "The spec agent was refused 2 action(s). Allow or deny each; the stage
+restarts when none is left.", each command with **Allow this run (Bash(cd:\*))**, **Allow always**, **Deny**, and
+**Allow all** / **Deny all** below. Then `c13-plan-allow-always.mp4` (18 s): the Plan agent's two refused commands,
+**Allow always** on each, the toast "Allowed: 1 more to decide", then "Allowed" and Plan running again.
 
 **7. Keys stay secret.**
 > Threat: an API key leaking into a log, a command line, or the wrong company's server. Mechanism: the model registry
@@ -475,14 +484,25 @@ claude --plugin-dir .claude/plugins/sdlc-monitor
 > that's working right now, how many files the run has changed, the documents it has produced so far, and the live
 > output. As the run moves on, the card moves across the board, column by column.
 
+**SCREEN:** `[CAP]` `c12-plan-running.mp4` (8 s): later in the same run, Spec has a tick, the Plan chip is lit,
+"1/6 stages", the agent "plan opus · medium running 00:18"; back on the board the card now sits in the Plan column.
+Freeze on `s15-board-plan-column.png`.
+
 **Step 4: answer the questions.**
 
-**SCREEN:** `[CAP]` A toast "fix-user-validation is waiting for answers"; the **Answer** button; each question with
-**Use suggested**; then **Submit answers and resume**.
+**SCREEN:** `[CAP]` `c09-spec-questions-cut.mp4` (19 s), or its three parts: `c06-paused-for-answers.mp4` (6 s), the
+card turns amber, "needs answers: 7 questions", the toast "add-json-logging is paused: 7 question(s) need answers", and
+"0/7 questions answered" above Q1; `c07-type-own-answer.mp4` (6 s), "My custom an…" typed into Q1's box and cleared;
+`c08-accept-suggested.mp4` (8 s, four cuts), **Use suggested** on Q1 to Q4, each turning into "→ accept suggested".
+Freeze on `s10-accept-suggested.png`. The recordings stop before **Submit answers and resume**; record that click
+separately.
 
-> When the Spec agent has questions, you get a toast and an **Answer** button. Each question shows its suggested
-> answer. Press **Use suggested** or type your own, then **Submit answers and resume**. If you work from the terminal,
-> you fill the `**Answer:**` lines in `questions.md` and run the same command again.
+> When the Spec agent has questions, the run pauses and the card turns amber. On this run it had seven: should an
+> error reaching the handler be logged once or twice, how to log a thrown value that isn't an Error, whether to trust
+> an incoming `X-Request-Id`, what happens when the client hangs up before the response finishes. Each one says why it
+> matters and gives a suggested answer. Press **Use suggested**, or type your own answer and press Enter, then
+> **Submit answers and resume**. Your answers are saved in `decisions.md`, so the agent never asks them again. If you
+> work from the terminal, you fill the `**Answer:**` lines in `questions.md` and run the same command again.
 
 **Step 5: steer, stop, resume.**
 
@@ -607,7 +627,7 @@ repo: link in the description."
 - **Hook:** "I gave an AI a deliberately vague bug report. It refused to guess."
 - **Beat 1:** `[CAP]` the brief: "POST /users returns 500 when name is missing."
 - **Beat 2:** "Instead of a spec, it wrote six questions. Is whitespace a valid name? What about the password field the old docs mention? Does auth run before validation?"
-- **Beat 3:** "Each with a suggested answer. I typed 'accept', the pipeline continued, and those answers are saved so it never asks twice."
+- **Beat 3:** `[CAP]` `v02-spec-questions-vertical.mp4`. "Each with a suggested answer. I pressed Use suggested, the pipeline continued, and those answers are saved so it never asks twice."
 - **Payoff:** "A wrong guess costs more than a good question."
 - **CTA.**
 
@@ -631,7 +651,7 @@ repo: link in the description."
 - **Hook:** "This is mission control for AI agents, and it lives inside Claude Code."
 - **Beat 1:** `[CAP]` `v01-select-and-run-vertical.mp4`. "One column per stage. Tick a backlog item, press Run selected, and watch the card jump into Spec with its agent, model and clock. Two run side by side."
 - **Beat 2:** `[CAP]` `c04-pipeline-view.mp4`, cropped to the stage chips and agent. "Every stage, which model is on it, the running agent, files changed, live output."
-- **Beat 3:** `[CAP]` Answer and permission screens. "Questions from the spec agent? Answer here. An agent tried a command it wasn't allowed? Allow once, always, or deny."
+- **Beat 3:** `[CAP]` `c08-accept-suggested.mp4`, then `c13-plan-allow-always.mp4`. "Questions from the spec agent? Answer here. An agent tried a command it wasn't allowed? Allow once, always, or deny."
 - **Payoff:** "Stop, steer with a note, resume at any stage."
 - **CTA.**
 
@@ -720,7 +740,7 @@ the bash orchestrator), monospace for file names and commands, no stock footage.
 recorded at 1440p with a large terminal font (at least 20 px) so they stay readable in the Shorts crop.
 
 ### Captures already cut
-From the recording `1-explore-backlog-n-start-task.mov` (47 s, 3612 × 2058, no audio). Everything is cropped to the
+From the recordings of the pane, the first `1-explore-backlog-n-start-task.mov` (47 s, 3612 × 2058, no audio). Everything is cropped to the
 pane: the weekly usage-limit warning (first 3 s) and the "bypass permissions on" status line below the pane stay out of
 frame, which matters in a video about safeguards. Clips are H.264, 30 fps, no audio.
 
@@ -739,6 +759,33 @@ frame, which matters in a video about safeguards. Clips are H.264, 30 fps, no au
 | `c04-pipeline-view.mp4` | 0:38.4–0:46.6 | Opening the running pipeline | Main 5 step 3, Short 6 |
 | `c05-full-timelapse.mp4` | whole, 2.2× | The whole flow in 20 s | Cold open B-roll, end card |
 | `v01-select-and-run-vertical.mp4` | 0:24–0:38.6 | 1080 × 1920, Backlog and Spec columns, space above for a caption | Short 6 |
+| **Recordings 2.1 and 2.2** `2.1-Spec-Dev-Qns.mov` (26 s) and `2.2-Spec-Dev-Qns.mov` (28 s), 3612 × 2058 | | | |
+| `s08-paused-questions.png` | 2.1 at 0:01 | Paused, "7 question(s) need answers", "0/7 questions answered", Q1 | Main 5 step 4 |
+| `s09-type-own-answer.png` | 2.1 at 0:16 | "My custom an…" typed into Q1's answer box | Main 5 step 4 |
+| `s10-accept-suggested.png` | 2.1 at 0:25 | Q1 "→ accept suggested", Q2 to Q4 below | Main 5 step 4 |
+| `c06-paused-for-answers.mp4` | 2.1 at 0:00–0:05.5 | The paused run, scrolling to the first question | Main 5 step 4 |
+| `c07-type-own-answer.mp4` | 2.1 at 0:12.5–0:18.5 | Typing your own answer, then clearing it | Main 5 step 4 |
+| `c08-accept-suggested.mp4` | 2.1 at 0:22; 2.2 at 0:08, 0:17, 0:27 | **Use suggested** on Q1 to Q4, four cuts | Main 3 card 1, 5 step 4, Short 6 |
+| `c09-spec-questions-cut.mp4` | c06 + c07 + c08 | The whole question flow in 19 s | Main 5 step 4 |
+| `v02-spec-questions-vertical.mp4` | same as c09 | 1080 × 1920, the left part of the question column (lines run off the right edge; caption over it) | Short 3 |
+| **Recording 3** `3-Permissions.mov` (14 s, 3524 × 1970) | | | |
+| `s11-spec-refused-actions.png` | 0:00.5 | Spec agent refused 2 actions, the buttons, **Allow all** / **Deny all** | Main 4 safeguard 6 |
+| `s12-allowed.png` | 0:11.5 | "Saving your answer…", "Allowed" | Main 4 safeguard 6 |
+| `c10-allow-all.mp4` | 0:00–0:12.6 | **Allow all**, saving, allowed | Main 4 safeguard 6 |
+| **Recording 4** `4-Spec.mov` (17 s, 3612 × 2058) | | | |
+| `c11-spec-allow-always.mp4` | whole | Spec agent refused `cat` / `grep`, **Allow always**, Spec restarts as spec-2 | Main 4 safeguard 6 |
+| `s13-spec-restarted.png` | 0:15.5 | "add-json-logging running", agent spec-2 | Main 4 safeguard 6 |
+| **Recording 5** `5-plan.mov` (8 s, 3612 × 2058) | | | |
+| `c12-plan-running.mp4` | whole | Spec ticked, Plan running 1/6, then the board with the card in Plan | Main 5 step 3 |
+| `s14-plan-running.png` | 0:00.5 | Pipeline view, Plan agent running 00:10 | Main 5 step 3 |
+| `s15-board-plan-column.png` | 0:07.5 | The board, card in the Plan column | Main 5 step 3, Short 6 |
+| **Recording 6** `6-allow-permission-allo-always.mov` (23 s, 3612 × 2058) | | | |
+| `c13-plan-allow-always.mp4` | 0:00–0:18 | Plan agent refused 2 commands, **Allow always** on each, Plan restarts | Main 4 safeguard 6, Short 6 |
+| `s16-plan-refused.png` | 0:04.5 | "The plan agent was refused 2 action(s)" with both commands | Main 4 safeguard 6 |
+| `s17-one-more-to-decide.png` | 0:12 | Toast "Allowed: 1 more to decide" | Main 4 safeguard 6 |
+
+Left out on purpose: the end of recording 3, where the pane briefly says "Paused, but questions.md has no questions I
+can read" after **Allow all**, and the long stretches of scrolling with no clicks in recordings 2.1 and 2.2.
 
 The ticket view of `add-json-logging` also shows "Discarded. To get the old branch back: git branch
 sdlc/add-json-logging 365573f…", a real example of the discard safeguard (Main 4, safeguard 9).
@@ -748,9 +795,9 @@ sdlc/add-json-logging 365573f…", a real example of the discard safeguard (Main
 2. `Docs/backlog/fix-user-validation-v2/decisions.md`: Q1 to Q6.
 3. `.claude/plugins/sdlc-guard/hooks/register.ts`: `refuse()` and `FAILED`.
 4. A real run: `bash scripts/sdlc-mod.sh run <slug>` and `watch <slug>` in a split terminal.
-5. The `sdlc-monitor` pane, the parts not in recording 1: the run moving through later columns (Plan, Red tests,
-   Implement with an attempt number), the Answer screen, refused-action buttons, Stop, Resume at a stage, the manual
-   input box, Discard, and the CONFIG pane with **Test**.
+5. The `sdlc-monitor` pane, the parts not recorded yet: **Submit answers and resume**, the run in Red tests and
+   Implement (with an attempt number), Stop, Resume at a stage, the manual input box, Discard, and the CONFIG pane
+   with **Test**.
 6. `git log --oneline` of a finished `sdlc/<slug>` branch.
 7. `Docs/backlog/index.md` with the completed pipeline features.
 8. A live `/triage` run on a throwaway report: the questions it asks, the result table, and the publish confirmation
