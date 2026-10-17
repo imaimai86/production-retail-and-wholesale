@@ -54,20 +54,11 @@ const capLabel = {
   'c02-read-briefs.mp4': 'Read three briefs · 10 s at 1.6×', 'c03-select-and-run.mp4': 'Select and run · 15 s',
   'c04-pipeline-view.mp4': 'Open the pipeline · 8 s', 'c05-full-timelapse.mp4': 'Whole flow · 20 s at 2.2×',
   'v01-select-and-run-vertical.mp4': 'Vertical, for Short 6 · 15 s',
-  's08-paused-questions.png': 'Paused: 7 questions', 's09-accept-suggested.png': 'Use suggested → accept suggested',
-  's10-refused-actions.png': 'Spec agent refused 2 actions', 's11-allowed.png': 'Allowed',
-  's12-spec-restarted.png': 'Spec restarts as spec-2', 's13-plan-running.png': 'Plan running',
-  's14-board-plan-column.png': 'Card in the Plan column', 's15-plan-refused.png': 'Plan agent refused 2 actions',
-  's16-one-more-to-decide.png': 'Allowed: 1 more to decide',
-  'c06-paused-for-answers.mp4': 'Paused for answers · 6 s', 'c07-accept-suggested.mp4': 'Use suggested on Q1–Q4 · 7 s',
-  'c08-allow-refused-actions.mp4': 'Allow all refused actions · 13 s', 'c09-spec-allow-always.mp4': 'Spec: Allow always, restart · 17 s',
-  'c10-plan-running.mp4': 'Plan running, card in Plan · 8 s', 'c11-plan-allow-always.mp4': 'Plan: Allow always on each · 18 s',
-  'v02-spec-questions-vertical.mp4': 'Vertical questions, for Short 3 · 10 s',
 };
 const captures = capFiles.length ? `
 <section class="captures" id="captures" aria-labelledby="caps-h">
   <h2 id="caps-h">Captures</h2>
-  <p class="lede">Cut from six recordings of the pane (start a task, Spec questions, refused actions, Plan), cropped to the pane so the usage warning and the permissions status line stay out of frame. Files in <code>Docs/video/captures/</code>.</p>
+  <p class="lede">Cut from recording 1 (explore the backlog, start a task), cropped to the pane so the usage warning and the permissions status line stay out of frame. Files in <code>Docs/video/captures/</code>.</p>
   <h3>Clips</h3>
   <div class="cap-grid">${capFiles.filter(f => f.endsWith('.mp4')).map(f =>
     `<figure class="${f.startsWith('v') ? 'tall' : ''}"><video src="captures/${f}" controls muted loop playsinline preload="metadata"></video><figcaption><b>${capLabel[f] || f}</b> ${f}</figcaption></figure>`).join('')}</div>
@@ -164,7 +155,7 @@ main ul::after { content: ""; display: block; clear: both; }
 </style>
 <div class="wrap">
   <header class="top">
-    <span class="eyebrow">Script review · draft 5</span>
+    <span class="eyebrow">Script review · draft 4</span>
     <h1>The Software Factory</h1>
     <p>Main YouTube video and eleven Shorts on the SDLC pipeline, the sdlc-monitor plugin and the /triage intake. Voice-over is set in serif, on-screen directions in tinted boxes. Green chips are Remotion scenes; amber chips are screen captures.</p>
     <div class="meta"><span>Main video ≈ 24 min · 16:9</span><span>11 Shorts · 45–60 s · 9:16</span><span>Source: Docs/video/sdlc-video-script.md</span></div>
