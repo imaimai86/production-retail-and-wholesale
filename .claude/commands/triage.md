@@ -24,6 +24,7 @@ The Spec stage stops and asks whenever the brief is ambiguous, so every unanswer
 - Scope: which files and endpoints are in, and what is explicitly out.
 - Tests: where they live (`server/__tests__/`, mirroring the code layout) and the cases to cover. Every case must run the real code. Never plan a test that reads, greps or asserts on documentation (README.md, CLAUDE.md, AGENTS.md, any *.md); documentation goes under `## Docs` and is checked in the Review stage.
 - Docs: which of `server/API.md`, `schema.md`, `README.md` or `AGENTS.md` change.
+- Dependencies: name any new package, but never make "the developer installs it first" a precondition and never ask a stage before Implement to read `server/node_modules`. The Plan stage confirms the API from the published docs and pins the version; the pipeline installs it at the start of Implement.
 - Data and migrations: new migration number, backfill values, and how existing rows are treated.
 
 Use AskUserQuestion (at most 4 questions per round) only for choices that the code and conventions cannot settle: product decisions, breaking API changes, security trade-offs. Put the answers into the brief as decisions. Anything still unknown goes under "Open questions" in the brief, never guessed.

@@ -1,2 +1,2 @@
 Slug: $ARGUMENTS
-Read `Docs/backlog/$ARGUMENTS/specs-1.md`. Use Graft to find affected code, then write the technical plan to `Docs/backlog/$ARGUMENTS/plan-1.md`. No source edits.
+Read `Docs/backlog/$ARGUMENTS/specs-1.md`. Use Graft to find affected code, then write the technical plan to `Docs/backlog/$ARGUMENTS/plan-1.md`. No source edits. For a new package, confirm its API from the published README and type definitions (context7, or WebFetch npm/unpkg), never by guessing and never by installing it, and list it under `## Dependencies` as `- runtime: <name>@<exact version>` or `- dev: <name>@<exact version>`.
