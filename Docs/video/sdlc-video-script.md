@@ -444,20 +444,36 @@ bash scripts/sdlc-mod.sh watch fix-user-validation
 
 **Step 3: or use the control pane.**
 
-**SCREEN:** `[CAP]` Claude Code started with the plugin; the **SDLC** button above the prompt; the overview with pending
-items and checkboxes; **Run selected**; then a pipeline view with stage chips, progress bar, current agent, elapsed
-time, attempt `2/4`, test progress and "Files changed per stage".
+**SCREEN:** `[CAP]` Real recording, in four beats (files in `Docs/video/captures/`):
+1. `s01-sdlc-button.png`, then `c01-open-board.mp4` (7 s): press **SDLC**; the board opens with a column per stage,
+   Backlog (20), Spec, Plan, Red tests, Implement, Review, and the header "0 running · 0 paused · up to 2 at once".
+2. `c02-read-briefs.mp4` (10 s, played at 1.6×): **Open** on three cards, `add-auth-token-table`,
+   `add-db-health-check`, `add-json-logging`; each shows its ticket, the `brief.md` with type, priority, source,
+   problem and expected behaviour. Freeze on `s03-ticket-brief.png`.
+3. `c03-select-and-run.mp4` (15 s): tick `add-json-logging`, **Run selected (1)**, "Starting add-json-logging…", the
+   toast "Started 1, queued 0 (at most 2 run at once).", and the card moving into the Spec column as
+   "spec-1 (opus · medium) · 00:03".
+4. `c04-pipeline-view.mp4` (8 s): open the card: "add-json-logging running · 0/6 stages", the stage chips with each
+   stage's model and effort (Spec opus, Plan opus, Red tests sonnet, Implement sonnet, Review opus, Commit), the agent
+   "spec-1 opus · medium running 00:03", "Files 0 changed since base · 0 uncommitted", and the first lines of output.
+   Freeze on `s07-pipeline-view.png`.
 
 ```bash
 claude --plugin-dir .claude/plugins/sdlc-monitor
 ```
 
 > Most people will prefer the pane. Start Claude Code with the `sdlc-monitor` plugin and press **SDLC**, or type
-> `/sdlc-monitor`. The overview lists pending backlog items with checkboxes and every pipeline with its state:
-> running, paused, done, failed or interrupted, and how many files it has changed. Tick two items, press **Run
-> selected**. Open a pipeline and you see each stage as a chip, the model and effort under each stage, the agent that's
-> running right now with its elapsed time and attempt number, test progress, the documents produced so far, and which
-> files each stage changed.
+> `/sdlc-monitor`. It opens as a board, one column per stage. On the left is the backlog: every pending item as a card
+> with its type, priority and title. Press **Open** on a card and you read its ticket, the brief that triage wrote,
+> before you commit to building it.
+>
+> Tick the ones you want and press **Run selected**. At most two run at once and the rest wait in a queue, so the
+> header always says how many slots are free. Watch the card: a few seconds later it leaves the backlog and lands in
+> the Spec column, with the agent's name, its model and effort, and a running clock.
+>
+> Open it, and you get the pipeline view: every stage as a chip, with the model and effort it will use, the agent
+> that's working right now, how many files the run has changed, the documents it has produced so far, and the live
+> output. As the run moves on, the card moves across the board, column by column.
 
 **Step 4: answer the questions.**
 
@@ -613,8 +629,8 @@ repo: link in the description."
 
 ### Short 6: "Mission control inside Claude Code" (55 s)
 - **Hook:** "This is mission control for AI agents, and it lives inside Claude Code."
-- **Beat 1:** `[CAP]` The SDLC overview. "Tick backlog items, press Run selected. Two pipelines run side by side."
-- **Beat 2:** `[CAP]` The pipeline view. "Every stage, which model is on it, the running agent, its attempt number, test progress, files changed per stage."
+- **Beat 1:** `[CAP]` `v01-select-and-run-vertical.mp4`. "One column per stage. Tick a backlog item, press Run selected, and watch the card jump into Spec with its agent, model and clock. Two run side by side."
+- **Beat 2:** `[CAP]` `c04-pipeline-view.mp4`, cropped to the stage chips and agent. "Every stage, which model is on it, the running agent, files changed, live output."
 - **Beat 3:** `[CAP]` Answer and permission screens. "Questions from the spec agent? Answer here. An agent tried a command it wasn't allowed? Allow once, always, or deny."
 - **Payoff:** "Stop, steer with a note, resume at any stage."
 - **CTA.**
@@ -703,13 +719,38 @@ Style: dark background, one accent colour per role (red for failing, green for p
 the bash orchestrator), monospace for file names and commands, no stock footage. Real screen captures (`[CAP]`) are
 recorded at 1440p with a large terminal font (at least 20 px) so they stay readable in the Shorts crop.
 
-### Screen captures to record
+### Captures already cut
+From the recording `1-explore-backlog-n-start-task.mov` (47 s, 3612 × 2058, no audio). Everything is cropped to the
+pane: the weekly usage-limit warning (first 3 s) and the "bypass permissions on" status line below the pane stay out of
+frame, which matters in a video about safeguards. Clips are H.264, 30 fps, no audio.
+
+| File | Source time | What it shows | Used in |
+|---|---|---|---|
+| `s01-sdlc-button.png` | 0:02 | The **SDLC** and **CONFIG** buttons, "0 pending" | Main 5 step 3 |
+| `s02-board-backlog.png` | 0:08 | The board: Backlog (20) and empty stage columns, "up to 2 at once", "2 slot(s) free" | Main 5 step 3 |
+| `s03-ticket-brief.png` | 0:20 | Ticket view of `add-json-logging`: the brief with type, priority, source, problem, expected behaviour; **Start** | Main 2e, 5 step 1 |
+| `s04-run-selected.png` | 0:26 | `[x] add-json-logging` ticked, **Run selected (1)** pressed | Main 5 step 3 |
+| `s05-starting.png` | 0:31 | "Starting add-json-logging…" | Main 5 step 3 |
+| `s06-started-in-spec.png` | 0:37 | Toast "Started 1, queued 0 (at most 2 run at once)." and the card in Spec: "spec-1 (opus · medium) · 00:03" | Main 5 step 3, Short 6 |
+| `s07-pipeline-view.png` | 0:45 | Pipeline view: 0/6 stages, stage chips with models, agent spec-1 running, files 0 changed, recent output | Main 3 card 7, 5 step 3, Short 8 |
+| `c01-open-board.mp4` | 0:02.6–0:09.5 | Pressing **SDLC** and the board loading | Main 5 step 3 |
+| `c02-read-briefs.mp4` | 0:10–0:26, 1.6× | Opening three tickets | Main 2e, 5 step 1 |
+| `c03-select-and-run.mp4` | 0:24–0:38.6 | Tick, Run selected, Starting, toast, card lands in Spec | Main 5 step 3 |
+| `c04-pipeline-view.mp4` | 0:38.4–0:46.6 | Opening the running pipeline | Main 5 step 3, Short 6 |
+| `c05-full-timelapse.mp4` | whole, 2.2× | The whole flow in 20 s | Cold open B-roll, end card |
+| `v01-select-and-run-vertical.mp4` | 0:24–0:38.6 | 1080 × 1920, Backlog and Spec columns, space above for a caption | Short 6 |
+
+The ticket view of `add-json-logging` also shows "Discarded. To get the old branch back: git branch
+sdlc/add-json-logging 365573f…", a real example of the discard safeguard (Main 4, safeguard 9).
+
+### Screen captures still to record
 1. `scripts/sdlc.sh`: the `agent()` function and the red gate and test-lock lines.
 2. `Docs/backlog/fix-user-validation-v2/decisions.md`: Q1 to Q6.
 3. `.claude/plugins/sdlc-guard/hooks/register.ts`: `refuse()` and `FAILED`.
 4. A real run: `bash scripts/sdlc-mod.sh run <slug>` and `watch <slug>` in a split terminal.
-5. The `sdlc-monitor` pane: overview, pipeline view, Answer screen, refused-action buttons, Stop, Resume at a stage,
-   manual input box, Discard, CONFIG pane with **Test**.
+5. The `sdlc-monitor` pane, the parts not in recording 1: the run moving through later columns (Plan, Red tests,
+   Implement with an attempt number), the Answer screen, refused-action buttons, Stop, Resume at a stage, the manual
+   input box, Discard, and the CONFIG pane with **Test**.
 6. `git log --oneline` of a finished `sdlc/<slug>` branch.
 7. `Docs/backlog/index.md` with the completed pipeline features.
 8. A live `/triage` run on a throwaway report: the questions it asks, the result table, and the publish confirmation

@@ -43,6 +43,30 @@ const gallery = `
   </div>
 </section>`;
 
+// Captures cut from the screen recordings, published next to the page under captures/.
+const capDir = require('path').dirname(TH) + '/captures';
+const capFiles = fs.existsSync(capDir) ? fs.readdirSync(capDir).sort() : [];
+const capLabel = {
+  's01-sdlc-button.png': 'SDLC and CONFIG buttons', 's02-board-backlog.png': 'The board, backlog loaded',
+  's03-ticket-brief.png': 'Ticket view: the brief', 's04-run-selected.png': 'Ticked, Run selected (1)',
+  's05-starting.png': 'Starting add-json-logging…', 's06-started-in-spec.png': 'Toast, card lands in Spec',
+  's07-pipeline-view.png': 'Pipeline view', 'c01-open-board.mp4': 'Open the board · 7 s',
+  'c02-read-briefs.mp4': 'Read three briefs · 10 s at 1.6×', 'c03-select-and-run.mp4': 'Select and run · 15 s',
+  'c04-pipeline-view.mp4': 'Open the pipeline · 8 s', 'c05-full-timelapse.mp4': 'Whole flow · 20 s at 2.2×',
+  'v01-select-and-run-vertical.mp4': 'Vertical, for Short 6 · 15 s',
+};
+const captures = capFiles.length ? `
+<section class="captures" id="captures" aria-labelledby="caps-h">
+  <h2 id="caps-h">Captures</h2>
+  <p class="lede">Cut from recording 1 (explore the backlog, start a task), cropped to the pane so the usage warning and the permissions status line stay out of frame. Files in <code>Docs/video/captures/</code>.</p>
+  <h3>Clips</h3>
+  <div class="cap-grid">${capFiles.filter(f => f.endsWith('.mp4')).map(f =>
+    `<figure class="${f.startsWith('v') ? 'tall' : ''}"><video src="captures/${f}" controls muted loop playsinline preload="metadata"></video><figcaption><b>${capLabel[f] || f}</b> ${f}</figcaption></figure>`).join('')}</div>
+  <h3>Stills</h3>
+  <div class="cap-grid">${capFiles.filter(f => f.endsWith('.png')).map(f =>
+    `<figure><img src="captures/${f}" alt="${capLabel[f] || f}" loading="lazy"><figcaption><b>${capLabel[f] || f}</b> ${f}</figcaption></figure>`).join('')}</div>
+</section>` : '';
+
 const nav = toc.filter(t => t.lv === 2 || /^\d\. /.test(t.text) || /^Short \d+:/.test(t.text))
   .map(t => `<a class="l${t.lv}" href="#${t.id}">${t.text.replace(/^Short (\d+): &quot;(.+?)&quot;.*/, '$1 · $2').replace(/ \(\d+:\d+ to \d+:\d+\)$/, '')}</a>`).join('');
 
@@ -117,6 +141,9 @@ figcaption b { color: var(--ink); }
 .shorts-grid a:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
 .shorts-grid a:hover svg { transform: translateY(-3px); }
 .shorts-grid svg { transition: transform .15s ease; }
+.cap-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 22px 16px; align-items: start; }
+.cap-grid img, .cap-grid video { display: block; width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--rule); background: #0c1316; }
+.cap-grid figure.tall video { max-width: 260px; }
 .inline-thumb { float: right; width: 190px; margin: 4px 0 16px 28px; }
 main h3 + p, main h3 ~ ul { overflow-wrap: anywhere; }
 main ul::after { content: ""; display: block; clear: both; }
@@ -128,14 +155,14 @@ main ul::after { content: ""; display: block; clear: both; }
 </style>
 <div class="wrap">
   <header class="top">
-    <span class="eyebrow">Script review · draft 3</span>
+    <span class="eyebrow">Script review · draft 4</span>
     <h1>The Software Factory</h1>
     <p>Main YouTube video and eleven Shorts on the SDLC pipeline, the sdlc-monitor plugin and the /triage intake. Voice-over is set in serif, on-screen directions in tinted boxes. Green chips are Remotion scenes; amber chips are screen captures.</p>
     <div class="meta"><span>Main video ≈ 24 min · 16:9</span><span>11 Shorts · 45–60 s · 9:16</span><span>Source: Docs/video/sdlc-video-script.md</span></div>
   </header>
   <div class="layout">
-    <nav class="rail" aria-label="Chapters"><a class="l2" href="#thumbnails">Thumbnails</a>${nav}</nav>
-    <main>${gallery}${html}</main>
+    <nav class="rail" aria-label="Chapters"><a class="l2" href="#thumbnails">Thumbnails</a>${captures ? '<a class="l2" href="#captures">Captures</a>' : ''}${nav}</nav>
+    <main>${gallery}${captures}${html}</main>
   </div>
 </div>
 `;
