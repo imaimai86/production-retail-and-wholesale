@@ -106,7 +106,7 @@ if (cmd === 'claimed') {
   if (cl.length > max) errs.push(`${cl.length} tests claimed wrong; the limit is ${max}`);
   for (const k of keys) if (!all.has(k)) errs.push(`claimed test does not exist: ${k}`);
   for (const k of failed) if (!keys.has(k)) errs.push(`failing test is NOT claimed as a test defect (source bug, not test repair): ${k}`);
-  for (const x of cl) if (!/(spec|decision|round|S-R|isolat|mock)/i.test(x.why)) errs.push(`claim gives no spec/decision/isolation justification: ${x.key}`);
+  for (const x of cl) if (!/(spec|plan|decision|round|S-R|isolat|mock)/i.test(x.why)) errs.push(`claim gives no spec/plan/decision/isolation justification: ${x.key}`);
   if (errs.length) fail(errs);
 } else if (cmd === 'diffcheck') {
   const cl = claims(b), errs = [], allowed = new Set(cl.map(x => 'server/' + x.file));

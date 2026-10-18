@@ -343,6 +343,30 @@ test('a pipeline in Spec resumes from the start', async ($, on) => {
   await ui.unmount()
 })
 
+for (const [stage, from] of [['Plan', 'plan'], ['Red tests', 'red-tests']]) {
+  test(`a pipeline that failed at ${stage} resumes at that stage, not at Spec`, async ($, on) => {
+    const w = world(on, [{ slug: 'alpha', state: 'failed', stage }])
+    const ui = await open($)
+    await ui.press({ key: 'open-alpha' })
+    expect((await ui.find({ key: 'resume' }))?.props.label).toBe(`Resume from ${stage}`)
+    await ui.press({ key: 'resume' })
+    expect(w.envs[w.calls.findIndex(c => c[1] === '-c')].FROM).toBe(from)
+    await ui.unmount()
+  })
+}
+
+test('a paused pipeline with nothing left to answer or decide says so and offers Resume at its stage', async ($, on) => {
+  const w = world(on, [{ slug: 'alpha', state: 'paused', stage: 'Implement' }])
+  const ui = await open($)
+  await ui.press({ key: 'open-alpha' })
+  expect(await text(ui, /Paused at Implement with nothing left to answer or decide/)).toBeDefined()
+  expect(await text(ui, /questions\.md has no questions/)).toBeUndefined()
+  expect((await ui.find({ key: 'resume' }))?.props.label).toBe('Resume from Implement')
+  await ui.press({ key: 'resume' })
+  expect(w.envs[w.calls.findIndex(c => c[1] === '-c')].FROM).toBe('implement')
+  await ui.unmount()
+})
+
 test('a run whose process is gone reads as stopped, and the wrapper exit code decides failed', async ($, on) => {
   world(on, [
     { slug: 'gone', state: 'running', stage: 'Plan', alive: false },
