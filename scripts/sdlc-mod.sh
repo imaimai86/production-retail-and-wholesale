@@ -157,7 +157,8 @@ cmd_run() {
   export SDLC_SLUG="$slug"
 
   rc=0
-  (cd "$wt" && exec bash scripts/sdlc.sh "$slug") >>"$wt/$docs/logs/run.out" 2>&1 &
+  # SDLC_BASE only picks the base of a new worktree: the pipeline (and the tests it runs) must not inherit it.
+  (cd "$wt" && unset SDLC_BASE && exec bash scripts/sdlc.sh "$slug") >>"$wt/$docs/logs/run.out" 2>&1 &
   CHILD=$!
   trap 'killtree "$CHILD"' TERM INT
   wait "$CHILD" || rc=$?

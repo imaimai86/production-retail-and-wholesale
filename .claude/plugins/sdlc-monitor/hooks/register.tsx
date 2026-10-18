@@ -27,6 +27,8 @@ const INPUT_STAGES = [
 // Files listed per stage in the run view before "+N more".
 const FILES_SHOWN = 8
 const RESUME_AT_IMPLEMENT = ['Implement', 'Test repair', 'Review', 'Commit']
+// Stages before Implement that a failed run resumes at, so a Plan failure does not run Spec (and its questions) again.
+const RESUME_AT_STAGE: Record<string, string> = { Plan: 'plan', 'Red tests': 'red-tests' }
 
 const EMPTY: Snapshot = { now: 0, runs: [], pending: [], discarded: {} }
 const snapshot = atom({ plugin: 'sdlc-monitor', key: 'snapshot' } as const, EMPTY)
@@ -535,7 +537,7 @@ async function startNow($: EngineInterface, slug: string) {
   await launchWithNotice($, slug, '')
 }
 
-const resumeFrom = (run: Run) => (RESUME_AT_IMPLEMENT.includes(run.stage) ? 'implement' : '')
+const resumeFrom = (run: Run) => (RESUME_AT_IMPLEMENT.includes(run.stage) ? 'implement' : RESUME_AT_STAGE[run.stage] ?? '')
 
 // The refresh in progress, if any. A second caller does not start another one: it gets the running one's result, and a forced
 // refresh (the Refresh button) waits for it to end and then runs its own, so two refreshes never overlap.
@@ -1242,7 +1244,9 @@ export const register: Register = on => {
     const answered = run.questions.filter(q => drafts[`${run.slug}:${q.n}`]).length
     const canStop = run.managed && (run.state === 'running' || run.state === 'starting')
     const canDiscard = run.managed
-    const canResume = run.managed && (run.state === 'failed' || run.state === 'interrupted' || run.state === 'stopped')
+    // A paused run with nothing left to answer or decide (asks decided outside the pane) can only go on by resuming.
+    const pausedIdle = run.state === 'paused' && run.questions.length === 0 && run.permissions.length === 0
+    const canResume = run.managed && (run.state === 'failed' || run.state === 'interrupted' || run.state === 'stopped' || pausedIdle)
 
     detail = (
       <Box flexDirection="column" paddingX={1} gap={1} minHeight={tall} backgroundColor={P.ground}>
@@ -1272,7 +1276,7 @@ export const register: Register = on => {
           {canResume && (
             <Button
               key="resume"
-              label={lbl('resume', resumeFrom(run) ? 'Resume from Implement' : 'Resume', 'Resuming...')}
+              label={lbl('resume', resumeFrom(run) ? `Resume from ${resumeFrom(run) === 'implement' ? 'Implement' : run.stage}` : 'Resume', 'Resuming...')}
               variant="primary"
               onPress={() => act($, 'resume', `Resuming ${run.slug}`, () => launchWithNotice($, run.slug, resumeFrom(run)))}
             />
@@ -1469,7 +1473,7 @@ export const register: Register = on => {
             )}
           </Box>
         )}
-        {run.state === 'paused' && run.questions.length === 0 && run.permissions.length === 0 && <Text color={P.wait} backgroundColor={P.ground}>Paused, but questions.md has no questions I can read: open Docs/backlog/{run.slug}/questions.md.</Text>}
+        {pausedIdle && <Text color={P.wait} backgroundColor={P.ground}>Paused at {run.stage || 'start'} with nothing left to answer or decide: press Resume to continue (or check Docs/backlog/{run.slug}/questions.md).</Text>}
 
         <Box flexDirection="column" borderStyle="single" borderColor={P.line} paddingX={1} backgroundColor={P.ground}>
           <Text bold color={P.text} backgroundColor={P.ground}>Recent output</Text>

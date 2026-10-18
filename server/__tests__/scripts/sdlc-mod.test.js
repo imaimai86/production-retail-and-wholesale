@@ -16,7 +16,7 @@ const GIT_ENV = {
 // A stub pipeline: records where and how it ran, then sleeps if the slug asks for it.
 const STUB = `#!/usr/bin/env bash
 slug="$1"
-echo "cwd=$(pwd -P) slug=$slug sdlc_slug=\${SDLC_SLUG:-} plugins=\${CLAUDE_CODE_PLUGIN_DIRS:-} from=\${FROM:-}" >> "$(pwd -P)/ran.txt"
+echo "cwd=$(pwd -P) slug=$slug sdlc_slug=\${SDLC_SLUG:-} plugins=\${CLAUDE_CODE_PLUGIN_DIRS:-} from=\${FROM:-} base=\${SDLC_BASE-unset}" >> "$(pwd -P)/ran.txt"
 case "$slug" in
   slow*) sleep 300 & echo $! > "$(pwd -P)/sleep.pid"; wait $! ;;
   fail*) exit 1 ;;
@@ -64,9 +64,13 @@ function mkRepo() {
   fs.cpSync(path.join(template, 'repo'), repo, { recursive: true });
 }
 
-const env = extra => ({
-  ...process.env, ...GIT_ENV, SDLC_WT_BASE: wts, SDLC_PLUGIN_DIRS: '', ...extra,
-});
+// The developer's own SDLC_BASE (set to try a branch in the pane) names a ref the test repos do not have: only a test sets it.
+const env = extra => {
+  const e = { ...process.env, ...GIT_ENV, SDLC_WT_BASE: wts, SDLC_PLUGIN_DIRS: '' };
+  delete e.SDLC_BASE;
+
+  return { ...e, ...extra };
+};
 
 function mod(args, extra = {}) {
   return spawnSync('bash', [path.join(repo, 'scripts/sdlc-mod.sh'), ...args], { cwd: repo, encoding: 'utf8', env: env(extra) });
@@ -133,6 +137,15 @@ describe('sdlc-mod.sh run', () => {
 
     expect(mod(['run', 'alpha']).status).toBe(0);
     expect(fs.readFileSync(path.join(wt, 'ran.txt'), 'utf8').trim().split('\n')).toHaveLength(2);
+  });
+
+  test('SDLC_BASE picks the base of the new worktree but is not passed on to the pipeline (or the tests it runs)', () => {
+    git(repo, 'branch', 'try-me');
+    const r = mod(['run', 'alpha'], { SDLC_BASE: 'try-me' });
+    expect(r.status).toBe(0);
+    const wt = path.join(fs.realpathSync(wts), 'alpha');
+    expect(fs.readFileSync(path.join(wt, 'ran.txt'), 'utf8')).toContain('base=unset');
+    expect(git(wt, 'rev-parse', 'HEAD')).toBe(git(repo, 'rev-parse', 'try-me'));
   });
 
   test('passes the plugin folders and FROM through, copies an uncommitted brief, and records a failing exit code', () => {
