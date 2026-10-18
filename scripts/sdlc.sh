@@ -70,7 +70,9 @@ ALLOWED=(Read Write Edit Glob Grep mcp__graft
   "Bash(cd:*)" "Bash(pwd)" "Bash(cat:*)" "Bash(head:*)" "Bash(tail:*)" "Bash(wc:*)" "Bash(grep:*)" "Bash(rg:*)"
   "Bash(stat:*)" "Bash(file:*)" "Bash(diff:*)" "Bash(sort:*)" "Bash(uniq:*)" "Bash(cut:*)" "Bash(tr:*)" "Bash(jq:*)"
   "Bash(which:*)" "Bash(command -v:*)" "Bash(readlink:*)" "Bash(realpath:*)" "Bash(dirname:*)" "Bash(basename:*)"
-  "Bash(git show:*)" "Bash(git ls-files:*)" "Bash(git rev-parse:*)" "Bash(git blame:*)" "Bash(git worktree list:*)")
+  "Bash(git show:*)" "Bash(git ls-files:*)" "Bash(git rev-parse:*)" "Bash(git blame:*)" "Bash(git worktree list:*)"
+  # GET-only web reads through a wrapper (allowed hosts only); curl itself stays out.
+  "Bash(bash scripts/sdlc-fetch.sh:*)")
 # Plan reads the published docs and type definitions of a new library from the web (it is installed only in Implement).
 PLAN_TOOLS=(WebFetch WebSearch mcp__context7)
 
