@@ -65,7 +65,12 @@ PERM_REPO="$(git worktree list --porcelain | awk '/^worktree /{print substr($0,1
 
 ALLOWED=(Read Write Edit Glob Grep mcp__graft
   "Bash(npm test:*)" "Bash(npm run lint:*)" "Bash(npm run generate-spec:*)" "Bash(graft:*)"
-  "Bash(ls:*)" "Bash(git status:*)" "Bash(git diff:*)" "Bash(git log:*)")
+  "Bash(ls:*)" "Bash(git status:*)" "Bash(git diff:*)" "Bash(git log:*)"
+  # Read-only commands every stage may run without a prompt (no find: -exec/-delete; no interpreters, curl or wget).
+  "Bash(cd:*)" "Bash(pwd)" "Bash(cat:*)" "Bash(head:*)" "Bash(tail:*)" "Bash(wc:*)" "Bash(grep:*)" "Bash(rg:*)"
+  "Bash(stat:*)" "Bash(file:*)" "Bash(diff:*)" "Bash(sort:*)" "Bash(uniq:*)" "Bash(cut:*)" "Bash(tr:*)" "Bash(jq:*)"
+  "Bash(which:*)" "Bash(command -v:*)" "Bash(readlink:*)" "Bash(realpath:*)" "Bash(dirname:*)" "Bash(basename:*)"
+  "Bash(git show:*)" "Bash(git ls-files:*)" "Bash(git rev-parse:*)" "Bash(git blame:*)" "Bash(git worktree list:*)")
 # Plan reads the published docs and type definitions of a new library from the web (it is installed only in Implement).
 PLAN_TOOLS=(WebFetch WebSearch mcp__context7)
 
