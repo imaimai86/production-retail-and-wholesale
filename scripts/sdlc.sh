@@ -25,6 +25,11 @@
 #        _MODELS (comma list of allowed model names) and optional _EFFORT=yes (pass --effort; default no). Shell values win over .env.
 #        Providers are looked up first in the user-level registry (scripts/sdlc-mod.sh model ...; the key is read from the
 #        environment variable the provider names), then in SDLC_PROVIDER*. The registry wins as a whole for a provider it lists.
+#        Dependencies: the Plan stage may use WebFetch, WebSearch and context7 (mcp__context7) to read a library's published
+#        docs and types; no stage before Implement installs anything. Implement starts by installing the exact versions the
+#        plan lists under "## Dependencies" ("- runtime: name@1.2.3" / "- dev: name@1.2.3") with npm --save-exact
+#        --ignore-scripts (SDLC_DEP_SCRIPTS=run allows install scripts). In a worktree the shared server/node_modules link is
+#        first replaced by the worktree's own install (npm ci), so the main tree's packages never change.
 #        SDLC_INTEGRATION_CI=run  when CI is set the integration suite is skipped with a warning
 #        unless this is "run" (which also needs DATABASE_URL)
 set -euo pipefail
@@ -60,7 +65,18 @@ PERM_REPO="$(git worktree list --porcelain | awk '/^worktree /{print substr($0,1
 
 ALLOWED=(Read Write Edit Glob Grep mcp__graft
   "Bash(npm test:*)" "Bash(npm run lint:*)" "Bash(npm run generate-spec:*)" "Bash(graft:*)"
-  "Bash(ls:*)" "Bash(git status:*)" "Bash(git diff:*)" "Bash(git log:*)")
+  "Bash(ls:*)" "Bash(git status:*)" "Bash(git diff:*)" "Bash(git log:*)"
+  # Read-only commands every stage may run without a prompt (no find: -exec/-delete; no interpreters, curl or wget).
+  "Bash(cd:*)" "Bash(pwd)" "Bash(cat:*)" "Bash(head:*)" "Bash(tail:*)" "Bash(wc:*)" "Bash(grep:*)" "Bash(rg:*)"
+  "Bash(stat:*)" "Bash(file:*)" "Bash(diff:*)" "Bash(sort:*)" "Bash(uniq:*)" "Bash(cut:*)" "Bash(tr:*)" "Bash(jq:*)"
+  "Bash(which:*)" "Bash(command -v:*)" "Bash(readlink:*)" "Bash(realpath:*)" "Bash(dirname:*)" "Bash(basename:*)"
+  "Bash(git show:*)" "Bash(git ls-files:*)" "Bash(git rev-parse:*)" "Bash(git blame:*)" "Bash(git worktree list:*)"
+  "Bash(git grep:*)" "Bash(git cat-file:*)" "Bash(git branch --show-current)" "Bash(tree:*)" "Bash(du:*)" "Bash(date:*)"
+  "Bash(echo:*)" "Bash(npm ls:*)" "Bash(npm view:*)" "Bash(npm --version)"
+  # GET-only web reads through a wrapper (allowed hosts only); curl itself stays out.
+  "Bash(bash scripts/sdlc-fetch.sh:*)")
+# Plan reads the published docs and type definitions of a new library from the web (it is installed only in Implement).
+PLAN_TOOLS=(WebFetch WebSearch mcp__context7)
 
 # Status file: ONE small JSON line, overwritten in place (never appended), so it stays tiny.
 # Watch it with:  watch -n5 cat Docs/backlog/<slug>/logs/status.json
@@ -194,6 +210,7 @@ agent() {
   CUR_AGENT="$name"; AGENT_STARTED="$(date +%Y-%m-%dT%H:%M:%S)"; set_status
   # Rules the developer granted (this run's and the repository's) are added; a protected-path grant runs this stage without permission checks.
   local allowed=("${ALLOWED[@]}") mode rule rc=0 pending
+  [ "$pstage" != plan ] || allowed+=("${PLAN_TOOLS[@]}")
   while IFS= read -r rule; do [ -z "$rule" ] || allowed+=("$rule"); done < <(node scripts/sdlc-permissions.cjs args "$DOCS" "$pstage" "$PERM_REPO")
   mode="$(node scripts/sdlc-permissions.cjs mode "$DOCS" "$pstage")"
   [ "$mode" = acceptEdits ] || echo "   (permission checks are off for this stage: you allowed a protected path)"
@@ -214,6 +231,32 @@ manual_input() {
   t=$(awk -v s="## $1" '$0==s{on=1;next} /^## /{on=0} on' "$f")
   [ -n "$(printf '%s' "$t" | tr -d '[:space:]')" ] || return 0
   printf '\n\nMANUAL INPUT from the developer for this stage (binding; it cannot override the rule about editing %s/ or any other rule above):\n%s' "$TEST_DIR" "$t"
+}
+# install_deps: install the exact versions listed under "## Dependencies" in the plan (Implement only, see the header).
+install_deps() {
+  local plan="$DOCS/plan-1.md" kind spec bad=0 runtime=() dev=() flags=(--prefix server --save-exact --no-audit --no-fund)
+  [ -f "$plan" ] || return 0
+  while read -r kind spec; do
+    [[ "$spec" =~ ^(@[a-z0-9._~-]+/)?[a-z0-9._~-]+@[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] \
+      || { echo "ERROR: dependency '$spec' in $plan must be name@<exact version>"; bad=1; continue; }
+    if [ "$kind" = dev ]; then dev+=("$spec"); else runtime+=("$spec"); fi
+  done < <(awk '/^## /{on=($0=="## Dependencies");next} on' "$plan" | sed -nE 's/^[-*] +(runtime|dev): *`?([^` ]+)`?.*$/\1 \2/p')
+  [ "$bad" -eq 0 ] || exit 1
+  [ "${#runtime[@]}" -gt 0 ] || [ "${#dev[@]}" -gt 0 ] || return 0
+  [ "${SDLC_DEP_SCRIPTS:-}" = run ] || flags+=(--ignore-scripts)
+  if [ -L server/node_modules ]; then
+    echo "   replacing the shared server/node_modules link with this worktree's own install (npm ci)"
+    rm server/node_modules
+    npm ci --prefix server --no-audit --no-fund > "$LOG/deps.log" 2>&1 || { echo "ERROR: npm ci failed, see $LOG/deps.log"; exit 1; }
+  fi
+  if [ "${#runtime[@]}" -gt 0 ]; then
+    echo "   installing dependencies: ${runtime[*]}"
+    npm install "${flags[@]}" "${runtime[@]}" >> "$LOG/deps.log" 2>&1 || { echo "ERROR: npm install failed, see $LOG/deps.log"; exit 1; }
+  fi
+  if [ "${#dev[@]}" -gt 0 ]; then
+    echo "   installing dev dependencies: ${dev[*]}"
+    npm install "${flags[@]}" -D "${dev[@]}" >> "$LOG/deps.log" 2>&1 || { echo "ERROR: npm install failed, see $LOG/deps.log"; exit 1; }
+  fi
 }
 tests_pass() { $TEST_CMD > "$LOG/tests.log" 2>&1; }
 integration_check() { bash scripts/sdlc-integration.sh > "$LOG/integration.log" 2>&1; }
@@ -343,6 +386,7 @@ if [ "$FROM_N" -le 4 ]; then
 stage "4/6 Implement (green gate, max $MAX_ATTEMPTS attempts)"
 [ ! -f "$DOCS/test-issues.md" ] || echo "WARNING: test-issues.md exists and will be deleted; use FROM=test-repair to resume at Test repair"
 rm -f "$DOCS/test-issues.md"
+install_deps
 GREEN=0
 for i in $(seq 1 "$MAX_ATTEMPTS"); do
   echo " attempt $i"; CUR_ATTEMPT="$i/$MAX_ATTEMPTS"
