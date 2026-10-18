@@ -862,6 +862,34 @@ async function copyText($: EngineInterface, text: string, surface: unknown) {
   $.ui.toast(r.isCopied ? 'Copied' : `Could not copy (${r.reason})`)
 }
 
+// Every paused pipeline, at the top of the pane (board or pipeline view) and above the prompt, so a pause is noticed
+// wherever the developer is. Open goes to that pipeline. Nothing when no pipeline is paused.
+function attentionBanner($: EngineInterface, els: { Box: any; Text: any; Button: any }, runs: Run[], where: 'pane' | 'band') {
+  const { Box, Text, Button } = els
+  const paused = runs.filter(r => r.state === 'paused')
+  if (!paused.length) return null
+
+  return (
+    <Box flexDirection="column" borderStyle={where === 'pane' ? 'round' : undefined} borderColor={P.wait} paddingX={where === 'pane' ? 1 : 0} backgroundColor={P.ground}>
+      {paused.map(r => (
+        <Box key={`attention-${where}-${r.slug}`} gap={1} flexWrap="wrap" backgroundColor={P.ground}>
+          <Text bold color={P.wait} backgroundColor={P.ground}>⚠ Action needed:</Text>
+          <Text color={P.text} backgroundColor={P.ground}>{r.slug} · {r.stage || 'start'} · {stateLine(r, 0)}</Text>
+          <Button
+            key={`attention-${where}-open-${r.slug}`}
+            label="Open"
+            variant="primary"
+            onPress={async () => {
+              await update($, view, () => r.slug)
+              if (where === 'band') await $.ui.open({ id: PANE, title: 'SDLC control' })
+            }}
+          />
+        </Box>
+      ))}
+    </Box>
+  )
+}
+
 // The loader line (while a button press is working) and the last notice with Copy and Dismiss; both stay until they are gone.
 async function feedback($: EngineInterface, els: { Box: any; Text: any; Button: any }) {
   const { Box, Text, Button } = els
@@ -1195,6 +1223,7 @@ export const register: Register = on => {
           <Button key="config-open" label={labelOf(await read($, working), spinGlyph(await read($, frame)), 'config-open', 'CONFIG', 'Opening...')} onPress={() => openConfig($)} />
           <Text dimColor>{live.length || q.length ? summary(s.runs, q.length) : `${s.pending.length} pending`}</Text>
         </Box>
+        {attentionBanner($, { Box, Text, Button }, s.runs, 'band')}
         {await feedback($, { Box, Text, Button })}
       </Box>
     )
@@ -1545,14 +1574,19 @@ export const register: Register = on => {
     const boardW = isOpen ? Math.floor(wide * (1 - DETAIL_SHARE)) : wide
     const board = await boardView($, { Box, Text, Button }, s, { width: boardW, current, narrow: isOpen })
 
+    const banner = attentionBanner($, { Box, Text, Button }, s.runs, 'pane')
+
     return (
-      <Box flexDirection="row" minHeight={tall} backgroundColor={P.ground}>
-        {board}
-        {isOpen && (
-          <Box flexDirection="column" width={wide - boardW} borderStyle="single" borderColor={P.line} backgroundColor={P.ground}>
-            {detail}
-          </Box>
-        )}
+      <Box flexDirection="column" minHeight={tall} backgroundColor={P.ground}>
+        {banner}
+        <Box flexDirection="row" flexGrow={1} backgroundColor={P.ground}>
+          {board}
+          {isOpen && (
+            <Box flexDirection="column" width={wide - boardW} borderStyle="single" borderColor={P.line} backgroundColor={P.ground}>
+              {detail}
+            </Box>
+          )}
+        </Box>
       </Box>
     )
   })
