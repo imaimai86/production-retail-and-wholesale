@@ -37,6 +37,18 @@ To view the Swagger UI locally:
 4.  **Access the UI:**
     Open your browser and navigate to `http://localhost:3001/docs`.
 
+## Logging
+
+The server logs with pino. Requires Node 22 or later.
+
+- **JSON output (Kubernetes/GKE):** one JSON object per line on stdout with `severity` (pino `trace`/`debug` → `DEBUG`, `info` → `INFO`, `warn` → `WARNING`, `error` → `ERROR`, `fatal` → `CRITICAL`), `message`, an ISO `timestamp`, `serviceContext` and `httpRequest` for requests. The GKE logging agent reads it as `jsonPayload` with `severity`. Query problems with `severity>=WARNING`.
+- **Pretty output locally:** human-readable lines. `LOG_FORMAT=json|pretty` forces a format; otherwise JSON is used when `KUBERNETES_SERVICE_HOST` is set or `NODE_ENV=production`, else pretty.
+- **`LOG_LEVEL`:** `trace`, `debug`, `info` (default) or `warn`. The level never goes below `warn`: `error`, `fatal`, `silent` and unknown values fall back to `warn`.
+- **`X-Request-Id`:** every response carries it. A valid incoming value is reused, otherwise a UUID is generated. Error entries carry the same id.
+- **Trace correlation:** set `GOOGLE_CLOUD_PROJECT` in the Deployment so `X-Cloud-Trace-Context` is linked to the entry.
+- **Tests:** logs are discarded under Jest unless `LOG_IN_TESTS=1`.
+- Request bodies, headers, cookies and query strings are never logged.
+
 ## Graft setup (required for the SDLC workflow)
 
 The Plan stage of `scripts/sdlc.sh` and the `/plan` command use [graft](https://www.npmjs.com/package/@nanonets/graft), a prebuilt code graph, to find the files a change touches. Each developer needs it installed and built once. If graft is missing, the Claude hooks do nothing silently and the Plan stage loses its code graph.

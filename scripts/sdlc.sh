@@ -217,7 +217,7 @@ agent() {
   ( apply_provider_env; exec claude -p "$prompt" "${STAGE_FLAGS[@]}" --permission-mode "$mode" --allowedTools "${allowed[@]}" \
     --output-format json --max-turns "$MAX_TURNS" ) > "$LOG/$name.json" 2> "$LOG/$name.err" || rc=$?
   # The result text goes to the usual log; what the agent was refused is recorded for the developer to allow or deny.
-  pending="$(node scripts/sdlc-permissions.cjs extract "$LOG/$name.json" "$LOG/$name.log" "$LOG/permissions.json" "$pstage" "$ROOT" "$LOG/$name.err" || echo 0)"
+  pending="$(SDLC_ALLOWED="$(printf '%s\n' "${allowed[@]}")" node scripts/sdlc-permissions.cjs extract "$LOG/$name.json" "$LOG/$name.log" "$LOG/permissions.json" "$pstage" "$ROOT" "$LOG/$name.err" || echo 0)"
   if [ "${pending:-0}" -gt 0 ]; then
     echo "   !! agent '$name' was refused $pending action(s): allow or deny them in the pane (or: bash scripts/sdlc-mod.sh permit $SLUG allow|always|deny all), then resume at $pstage"
     exit 2
