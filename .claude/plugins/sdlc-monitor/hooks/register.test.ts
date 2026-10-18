@@ -32,6 +32,8 @@ type RunSpec = {
   changes?: { changed: number; uncommitted: number } | null
   // the base branch in the run record
   base?: string
+  // status.json note: why a running pipeline waits (usage limit)
+  note?: string
 }
 
 const QUESTIONS = [
@@ -110,7 +112,7 @@ function world(on: any, runs: RunSpec[] = [], model?: (argv: string[]) => ModelR
           value: JSON.stringify({
             slug: r.slug, state: r.state, stage: r.stage ?? '', agent: r.agent ?? '', model: 'opus', effort: 'medium',
             models: { implement: { model: 'sonnet', effort: 'medium' }, 'test-repair': { model: 'sonnet', effort: 'low' }, 'test-audit': { model: 'opus', effort: 'high' } }, attempt: r.attempt ?? '',
-            agent_started: '2026-10-06T10:00:00', run_started: '2026-10-06T09:50:00', updated: '2026-10-06T10:03:00', pid: pidOf(r),
+            agent_started: '2026-10-06T10:00:00', run_started: '2026-10-06T09:50:00', updated: '2026-10-06T10:03:00', pid: pidOf(r), note: r.note ?? '',
           }),
         }
       }
@@ -972,6 +974,25 @@ const ASKS = [
   { stage: 'implement', tool: 'Bash', detail: 'git push origin main', rule: 'Bash(git push:*)', protected: false },
   { stage: 'implement', tool: 'Edit', detail: '.claude/plugins/p/f.tsx', rule: 'Edit(./.claude/plugins/p/f.tsx)', protected: true },
 ]
+
+test('a pipeline waiting for the usage limit says so, with the reset time, in its state line', async ($, on) => {
+  world(on, [{ slug: 'alpha', state: 'running', stage: 'Implement', agent: 'impl-1', attempt: '1/4', note: 'usage limit, resets 1:10am (Asia/Dubai)' }])
+  const ui = await open($)
+  expect(await text(ui, /Implement · waiting: usage limit, resets 1:10am \(Asia\/Dubai\)/)).toBeDefined()
+  await ui.unmount()
+})
+
+test('a paused run is described by what it waits for: refused actions, or nothing', async ($, on) => {
+  world(on, [
+    { slug: 'asks', state: 'paused', stage: 'Implement', permissions: ASKS },
+    { slug: 'idle', state: 'paused', stage: 'Implement' },
+  ])
+  const ui = await open($)
+  expect(await text(ui, /needs a decision: 2 refused actions/)).toBeDefined()
+  expect(await text(ui, /paused at Implement/)).toBeDefined()
+  expect(await text(ui, /needs answers: 0 questions/)).toBeUndefined()
+  await ui.unmount()
+})
 
 test('a paused run lists what the agent was refused; Allow always is offered only for a path that a rule can open', async ($, on) => {
   world(on, [{ slug: 'alpha', state: 'paused', stage: 'Implement', permissions: ASKS }])

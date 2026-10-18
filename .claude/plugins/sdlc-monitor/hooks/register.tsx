@@ -392,6 +392,7 @@ async function loadRun($: EngineInterface, slug: string, worktree: string, reg: 
     agentStarted: String(status?.agent_started ?? ''),
     runStarted: String(status?.run_started ?? reg?.started ?? ''),
     updated: String(status?.updated ?? ''),
+    note: String(status?.note ?? ''),
     pid,
     files,
     tests: testCounts(await readText($, `${docs}/logs/tests.log`)),
@@ -786,7 +787,10 @@ const summary = (runs: Run[], queued: number) => {
 }
 
 const stateLine = (run: Run, now: number) => {
+  if (run.state === 'running' && run.note) return `${run.stage || 'Starting'} · waiting: ${run.note}`
   if (run.state === 'running') return `${run.stage || 'Starting'} · ${run.agent || '…'}${run.model ? ` (${run.model} · ${run.effort})` : ''} · ${clock(now - Date.parse(run.agentStarted))}${run.attempt ? ` · attempt ${run.attempt}` : ''}`
+  if (run.state === 'paused' && run.permissions.length) return `needs a decision: ${run.permissions.length} refused action${run.permissions.length === 1 ? '' : 's'}`
+  if (run.state === 'paused' && !run.questions.length) return `paused at ${run.stage || 'start'}`
   if (run.state === 'paused') return `needs answers: ${run.questions.length} question${run.questions.length === 1 ? '' : 's'}`
   if (run.state === 'done') return 'done'
   if (run.state === 'interrupted') return `interrupted at ${run.stage || 'start'}`
@@ -1074,7 +1078,7 @@ async function tick($: EngineInterface) {
   for (const r of s.runs) {
     now[r.slug] = r.state
     if (!isFirst && previous[r.slug] && previous[r.slug] !== r.state) {
-      if (r.state === 'paused') await notify($, `${r.slug} is paused: ${r.questions.length} question(s) need answers`)
+      if (r.state === 'paused') await notify($, `${r.slug} is paused: ${stateLine(r, 0)}`)
       else if (r.state === 'failed' || r.state === 'stopped') await notify($, `${r.slug} failed at ${r.stage || 'start'}`)
       else if (r.state === 'done') await notify($, `${r.slug} is done`)
     }

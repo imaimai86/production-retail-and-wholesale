@@ -32,6 +32,8 @@ export type Run = {
   agentStarted: string
   runStarted: string
   updated: string
+  // why a running pipeline is waiting (for example "usage limit, resets 1:10am (Asia/Dubai)"); empty while it works
+  note: string
   pid: number
   files: string[]
   tests: { passed: number; failed: number; total: number } | null
