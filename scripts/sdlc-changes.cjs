@@ -13,6 +13,10 @@ const MAX_BYTES = 1024 * 1024;
 
 const git = args => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
 const gitHash = file => execFileSync('git', ['hash-object', '--', file], { encoding: 'utf8' }).trim();
+// The blob hash of a file in a commit, null when the commit does not have it (same hash as gitHash for the same content).
+const blobAt = (rev, file) => {
+  try { return execFileSync('git', ['rev-parse', '--verify', '-q', `${rev}:${file}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch (e) { return null; }
+};
 
 // Every path git reports as modified, deleted, untracked or staged, with a content hash (null when the file is gone).
 function currentState() {
@@ -122,11 +126,16 @@ function mark(target, stage) {
   const head = git(['rev-parse', 'HEAD']).trim();
   if (stage && state.marker) {
     const before = state.marker.files;
-    const credited = new Set(Object.values(state.stages).flat());
+    const has = f => Object.prototype.hasOwnProperty.call(before, f);
     const files = new Set();
-    for (const f of Object.keys(now)) if (!Object.prototype.hasOwnProperty.call(before, f) || before[f] !== now[f]) files.add(f);
+    for (const f of Object.keys(now)) if (!has(f) || before[f] !== now[f]) files.add(f);
     if (state.marker.head !== head) {
-      for (const f of git(['diff', '--name-only', '-z', state.marker.head, head]).split('\0')) if (f && !credited.has(f)) files.add(f);
+      // A file committed during the stage counts when its committed content differs from what it was at the last mark
+      // (its working copy then, or the last mark's commit when it was clean). A commit that only collects earlier work,
+      // unchanged since the last mark, is not credited; a test an earlier stage wrote and this one changed is.
+      for (const f of git(['diff', '--name-only', '-z', state.marker.head, head]).split('\0')) {
+        if (f && (!has(f) || before[f] !== blobAt(head, f))) files.add(f);
+      }
     }
     const listed = [...files].filter(f => !skipReason(f, false)).sort();
     if (listed.length) state.stages[stage] = [...new Set([...(state.stages[stage] || []), ...listed])].sort();
