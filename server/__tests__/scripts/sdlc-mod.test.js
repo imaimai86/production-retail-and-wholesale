@@ -64,9 +64,13 @@ function mkRepo() {
   fs.cpSync(path.join(template, 'repo'), repo, { recursive: true });
 }
 
-const env = extra => ({
-  ...process.env, ...GIT_ENV, SDLC_WT_BASE: wts, SDLC_PLUGIN_DIRS: '', ...extra,
-});
+// The developer's own SDLC_BASE (set to try a branch in the pane) names a ref the test repos do not have: only a test sets it.
+const env = extra => {
+  const e = { ...process.env, ...GIT_ENV, SDLC_WT_BASE: wts, SDLC_PLUGIN_DIRS: '' };
+  delete e.SDLC_BASE;
+
+  return { ...e, ...extra };
+};
 
 function mod(args, extra = {}) {
   return spawnSync('bash', [path.join(repo, 'scripts/sdlc-mod.sh'), ...args], { cwd: repo, encoding: 'utf8', env: env(extra) });
