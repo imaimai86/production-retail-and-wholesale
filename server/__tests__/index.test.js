@@ -399,14 +399,19 @@ describe('PATCH /sales/:id/status and DELETE /sales/:id', () => {
 
 describe('global error handler', () => {
   const token = '1';
-  let errorSpy;
+  const loggerModule = require('../logger');
+  const logLines = [];
+  const logSink = { write: (s) => { logLines.push(s); } };
+  let savedLogger;
 
   beforeEach(() => {
-    errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    logLines.length = 0;
+    savedLogger = loggerModule.logger;
+    loggerModule.logger = loggerModule.createLogger(logSink);
   });
 
   afterEach(() => {
-    errorSpy.mockRestore();
+    loggerModule.logger = savedLogger;
   });
 
   const getProducts = async err => {
@@ -425,7 +430,9 @@ describe('global error handler', () => {
     expect(res.text).not.toContain('secret db detail');
     expect(res.text).not.toMatch(/<html|<pre|\.js/i);
     // E-R2 logged server-side
-    expect(errorSpy).toHaveBeenCalledWith(err);
+    const logged = logLines.join('').split('\n').filter(Boolean).map((l) => JSON.parse(l))
+      .filter((e) => e.severity === 'ERROR' && e.message.includes('secret db detail') && e.message.includes(err.stack));
+    expect(logged.length).toBeGreaterThanOrEqual(1);
 
     // E-R3 driver error code and SQL detail never reach the client
     res = await getProducts(Object.assign(new Error('insert into products failed'), { code: '23505', detail: 'Key (id)=(1) exists' }));
