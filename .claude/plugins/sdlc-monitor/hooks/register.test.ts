@@ -516,6 +516,48 @@ test('the button above the prompt shows the live summary', async ($, on) => {
   await ui.unmount()
 })
 
+test('a paused pipeline puts an Action needed banner on top of the board, and Open goes to it', async ($, on) => {
+  world(on, [
+    { slug: 'alpha', state: 'running', stage: 'Plan', agent: 'plan' },
+    { slug: 'beta', state: 'paused', stage: 'Implement', permissions: ASKS },
+  ])
+  const ui = await open($)
+
+  // on the board, nothing opened
+  expect(await text(ui, /^⚠ Action needed:/)).toBeDefined()
+  expect(await text(ui, /^beta · Implement · needs a decision: 2 refused actions/)).toBeDefined()
+  expect(await ui.find({ key: 'attention-pane-open-alpha' })).toBeUndefined()
+
+  await ui.press({ key: 'attention-pane-open-beta' })
+  expect(await text(ui, /agent was refused 2 action/)).toBeDefined()
+  // still there while another pipeline is open
+  await ui.press({ key: 'back' })
+  await ui.press({ key: 'open-alpha' })
+  expect(await ui.find({ key: 'attention-pane-open-beta' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('no banner when no pipeline is paused', async ($, on) => {
+  world(on, [{ slug: 'alpha', state: 'running', stage: 'Plan', agent: 'plan' }, { slug: 'gone', state: 'failed', stage: 'Implement' }])
+  const ui = await open($)
+  expect(await text(ui, /Action needed/)).toBeUndefined()
+  await ui.unmount()
+})
+
+test('the band above the prompt shows the banner too, and Open opens the pane at that pipeline', async ($, on) => {
+  world(on, [{ slug: 'beta', state: 'paused', stage: 'Spec', questions: QUESTIONS }])
+  await $.command.run({ command: 'sdlc-monitor', args: '' })
+  const band = await $.ui.mount({ plugin: 'sdlc-monitor', surface: 'terminal', component: 'AbovePrompt', requestId: 'band', props: {} })
+  expect(await text(band, /^⚠ Action needed:/)).toBeDefined()
+  expect(await text(band, /^beta · Spec · needs answers: 2 questions/)).toBeDefined()
+  await band.press({ key: 'attention-band-open-beta' })
+  await band.unmount()
+
+  const ui = await $.ui.mount({ plugin: 'sdlc-monitor', surface: 'terminal', component: 'Pane', requestId: 'sdlc', props: {} })
+  expect(await text(ui, /^Q1: Error shape/)).toBeDefined()
+  await ui.unmount()
+})
+
 test('a running pipeline shows its changed files in the overview row', async ($, on) => {
   world(on, [{ slug: 'cc-run', state: 'running', stage: 'Implement', agent: 'impl-1', attempt: '1/4', changes: { changed: 6, uncommitted: 4 } }])
   const ui = await open($)
