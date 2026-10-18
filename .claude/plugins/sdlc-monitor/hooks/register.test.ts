@@ -34,6 +34,9 @@ type RunSpec = {
   base?: string
   // status.json note: why a running pipeline waits (usage limit)
   note?: string
+  // text of test-issues.md (the Implement agent's claim) and of logs/run.out
+  claims?: string
+  runOut?: string
 }
 
 const QUESTIONS = [
@@ -120,7 +123,8 @@ function world(on: any, runs: RunSpec[] = [], model?: (argv: string[]) => ModelR
       if (e.path.endsWith(`${r.slug}/logs/permissions.json`) && r.permissions) return { value: JSON.stringify({ pending: r.permissions, allow: [], bypass: [], denied: [] }) }
       if (e.path.endsWith(`${r.slug}/logs/plan.log`) && r.planLog) return { value: r.planLog }
       if (e.path.endsWith(`${r.slug}/logs/tests.log`) && r.testsLog) return { value: r.testsLog }
-      if (e.path.endsWith(`${r.slug}/logs/run.out`)) return { value: '== Implement\n   -> agent: impl-2\n' }
+      if (e.path.endsWith(`${r.slug}/logs/run.out`)) return { value: r.runOut ?? '== Implement\n   -> agent: impl-2\n' }
+      if (e.path.endsWith(`${r.slug}/test-issues.md`) && r.claims) return { value: r.claims }
       if (e.path.endsWith(`${r.slug}/questions.md`) && r.questions) return { value: r.questions }
     }
 
@@ -974,6 +978,46 @@ const ASKS = [
   { stage: 'implement', tool: 'Bash', detail: 'git push origin main', rule: 'Bash(git push:*)', protected: false },
   { stage: 'implement', tool: 'Edit', detail: '.claude/plugins/p/f.tsx', rule: 'Edit(./.claude/plugins/p/f.tsx)', protected: true },
 ]
+
+const CLAIM = 'server/__tests__/index.test.js :: global error handler › E-R1..4 :: spies on console.error, but plan-1.md step 4 replaces it with the logger\n'
+const REJECTED_RUN = '== 4b Test repair (only because the Implement agent claimed test defects)\nREJECT: claim gives no spec/decision/isolation justification: __tests__/index.test.js::global error handler E-R1..4\nTEST REPAIR REJECTED: claims fail pre-check (see above)\n'
+
+test('the Test repair box offers Show claim once Implement claims a test defect, and shows the claim and why it was rejected', async ($, on) => {
+  world(on, [{ slug: 'alpha', state: 'failed', stage: 'Test repair', claims: CLAIM, runOut: REJECTED_RUN }])
+  const ui = await open($)
+  await ui.press({ key: 'open-alpha' })
+
+  expect(await text(ui, /^Test repair claim/)).toBeUndefined()
+  expect((await ui.find({ key: 'show-claim' }))?.props.label).toBe('Show claim')
+  await ui.press({ key: 'show-claim' })
+  expect(await text(ui, /^Test repair claim/)).toBeDefined()
+  expect(await text(ui, /server\/__tests__\/index\.test\.js › global error handler › E-R1\.\.4/)).toBeDefined()
+  expect(await text(ui, /spies on console\.error, but plan-1\.md step 4 replaces it with the logger/)).toBeDefined()
+  expect(await text(ui, /^Rejected by the pipeline/)).toBeDefined()
+  expect(await text(ui, /REJECT: claim gives no spec\/decision\/isolation justification/)).toBeDefined()
+
+  expect((await ui.find({ key: 'show-claim' }))?.props.label).toBe('Hide claim')
+  await ui.press({ key: 'show-claim' })
+  expect(await text(ui, /^Test repair claim/)).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a claim written during Implement already shows the Test repair box with Show claim; no claim, no button', async ($, on) => {
+  world(on, [
+    { slug: 'claimed', state: 'running', stage: 'Implement', agent: 'impl-2', attempt: '2/4', claims: CLAIM },
+    { slug: 'plain', state: 'running', stage: 'Implement', agent: 'impl-1', attempt: '1/4' },
+  ])
+  const ui = await open($)
+  await ui.press({ key: 'open-claimed' })
+  expect(await ui.find({ key: 'show-claim' })).toBeDefined()
+  await ui.press({ key: 'show-claim' })
+  expect(await text(ui, /plan-1\.md step 4 replaces it/)).toBeDefined()
+  expect(await text(ui, /^Rejected by the pipeline/)).toBeUndefined()
+  await ui.press({ key: 'back' })
+  await ui.press({ key: 'open-plain' })
+  expect(await ui.find({ key: 'show-claim' })).toBeUndefined()
+  await ui.unmount()
+})
 
 test('a pipeline waiting for the usage limit says so, with the reset time, in its state line', async ($, on) => {
   world(on, [{ slug: 'alpha', state: 'running', stage: 'Implement', agent: 'impl-1', attempt: '1/4', note: 'usage limit, resets 1:10am (Asia/Dubai)' }])
