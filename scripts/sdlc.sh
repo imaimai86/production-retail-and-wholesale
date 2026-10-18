@@ -71,6 +71,8 @@ ALLOWED=(Read Write Edit Glob Grep mcp__graft
   "Bash(stat:*)" "Bash(file:*)" "Bash(diff:*)" "Bash(sort:*)" "Bash(uniq:*)" "Bash(cut:*)" "Bash(tr:*)" "Bash(jq:*)"
   "Bash(which:*)" "Bash(command -v:*)" "Bash(readlink:*)" "Bash(realpath:*)" "Bash(dirname:*)" "Bash(basename:*)"
   "Bash(git show:*)" "Bash(git ls-files:*)" "Bash(git rev-parse:*)" "Bash(git blame:*)" "Bash(git worktree list:*)"
+  "Bash(git grep:*)" "Bash(git cat-file:*)" "Bash(git branch --show-current)" "Bash(tree:*)" "Bash(du:*)" "Bash(date:*)"
+  "Bash(echo:*)" "Bash(npm ls:*)" "Bash(npm view:*)" "Bash(npm --version)"
   # GET-only web reads through a wrapper (allowed hosts only); curl itself stays out.
   "Bash(bash scripts/sdlc-fetch.sh:*)")
 # Plan reads the published docs and type definitions of a new library from the web (it is installed only in Implement).
