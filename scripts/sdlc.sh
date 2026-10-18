@@ -30,6 +30,9 @@
 #        plan lists under "## Dependencies" ("- runtime: name@1.2.3" / "- dev: name@1.2.3") with npm --save-exact
 #        --ignore-scripts (SDLC_DEP_SCRIPTS=run allows install scripts). In a worktree the shared server/node_modules link is
 #        first replaced by the worktree's own install (npm ci), so the main tree's packages never change.
+#        Usage limit: an agent whose call ends with usage_limit_reached is retried every SDLC_LIMIT_RETRY seconds (default 300)
+#        for up to SDLC_LIMIT_MAX_WAIT seconds (default 21600, 6 h); meanwhile status.json says "running" with a note naming the
+#        reset time. Past that, the stage fails with "usage limit".
 #        SDLC_INTEGRATION_CI=run  when CI is set the integration suite is skipped with a warning
 #        unless this is "run" (which also needs DATABASE_URL)
 set -euo pipefail
@@ -82,10 +85,11 @@ PLAN_TOOLS=(WebFetch WebSearch mcp__context7)
 # Watch it with:  watch -n5 cat Docs/backlog/<slug>/logs/status.json
 STATUS="$LOG/status.json"; RUN_STARTED="$(date +%Y-%m-%dT%H:%M:%S)"
 MODELS_JSON="{}"; CUR_MODEL=""; CUR_EFFORT=""
-CUR_STAGE=""; CUR_AGENT=""; CUR_ATTEMPT=""; AGENT_STARTED=""; RUN_STATE="running"
+CUR_STAGE=""; CUR_AGENT=""; CUR_ATTEMPT=""; AGENT_STARTED=""; RUN_STATE="running"; CUR_NOTE=""
+LIMIT_RETRY="${SDLC_LIMIT_RETRY:-300}"; LIMIT_MAX_WAIT="${SDLC_LIMIT_MAX_WAIT:-21600}"
 set_status() {
-  printf '{"slug":"%s","state":"%s","stage":"%s","agent":"%s","model":"%s","effort":"%s","models":%s,"attempt":"%s","agent_started":"%s","run_started":"%s","updated":"%s","pid":%s}\n' \
-    "$SLUG" "$RUN_STATE" "$CUR_STAGE" "$CUR_AGENT" "$CUR_MODEL" "$CUR_EFFORT" "$MODELS_JSON" "$CUR_ATTEMPT" "$AGENT_STARTED" "$RUN_STARTED" "$(date +%Y-%m-%dT%H:%M:%S)" "$$" \
+  printf '{"slug":"%s","state":"%s","stage":"%s","agent":"%s","model":"%s","effort":"%s","models":%s,"attempt":"%s","agent_started":"%s","run_started":"%s","updated":"%s","pid":%s,"note":"%s"}\n' \
+    "$SLUG" "$RUN_STATE" "$CUR_STAGE" "$CUR_AGENT" "$CUR_MODEL" "$CUR_EFFORT" "$MODELS_JSON" "$CUR_ATTEMPT" "$AGENT_STARTED" "$RUN_STARTED" "$(date +%Y-%m-%dT%H:%M:%S)" "$$" "$CUR_NOTE" \
     > "$STATUS.tmp" && mv "$STATUS.tmp" "$STATUS"
 }
 # Files each stage changed (shown per stage in the pane): the stage that ends is credited with what changed since the last mark.
@@ -214,8 +218,22 @@ agent() {
   while IFS= read -r rule; do [ -z "$rule" ] || allowed+=("$rule"); done < <(node scripts/sdlc-permissions.cjs args "$DOCS" "$pstage" "$PERM_REPO")
   mode="$(node scripts/sdlc-permissions.cjs mode "$DOCS" "$pstage")"
   [ "$mode" = acceptEdits ] || echo "   (permission checks are off for this stage: you allowed a protected path)"
-  ( apply_provider_env; exec claude -p "$prompt" "${STAGE_FLAGS[@]}" --permission-mode "$mode" --allowedTools "${allowed[@]}" \
-    --output-format json --max-turns "$MAX_TURNS" ) > "$LOG/$name.json" 2> "$LOG/$name.err" || rc=$?
+  # A usage limit is not the agent's failure: wait for the reset and run the same agent again (see the header).
+  local waited=0 limit
+  while :; do
+    rc=0
+    ( apply_provider_env; exec claude -p "$prompt" "${STAGE_FLAGS[@]}" --permission-mode "$mode" --allowedTools "${allowed[@]}" \
+      --output-format json --max-turns "$MAX_TURNS" ) > "$LOG/$name.json" 2> "$LOG/$name.err" || rc=$?
+    limit="$(usage_limit "$LOG/$name.json")"
+    [ -n "$limit" ] || break
+    if [ "$waited" -ge "${LIMIT_MAX_WAIT:-21600}" ]; then
+      CUR_NOTE=""; echo "   !! agent '$name' hit the usage limit ($limit) and it did not reset within ${LIMIT_MAX_WAIT:-21600}s"; exit 1
+    fi
+    [ "$waited" -gt 0 ] || echo "   .. usage limit reached ($limit): retrying '$name' every ${LIMIT_RETRY:-300}s"
+    CUR_NOTE="usage limit, $limit"; set_status
+    sleep "${LIMIT_RETRY:-300}"; waited=$((waited + ${LIMIT_RETRY:-300}))
+  done
+  [ -z "${CUR_NOTE:-}" ] || { echo "   .. usage limit over, '$name' ran"; CUR_NOTE=""; set_status; }
   # The result text goes to the usual log; what the agent was refused is recorded for the developer to allow or deny.
   pending="$(SDLC_ALLOWED="$(printf '%s\n' "${allowed[@]}")" node scripts/sdlc-permissions.cjs extract "$LOG/$name.json" "$LOG/$name.log" "$LOG/permissions.json" "$pstage" "$ROOT" "$LOG/$name.err" || echo 0)"
   if [ "${pending:-0}" -gt 0 ]; then
@@ -223,6 +241,11 @@ agent() {
     exit 2
   fi
   [ "$rc" -eq 0 ] || { echo "   !! agent '$name' failed, see $LOG/$name.log"; [ "$pstage" = test-repair ] && resume_hint || true; exit 1; }
+}
+# usage_limit <agent.json>: the reset text ("resets 1:10am (Asia/Dubai)") when the agent's call hit the usage limit, else nothing.
+usage_limit() {
+  node -e 'try { const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+    if (d.api_error === "usage_limit_reached") { const m = /resets[^\n"\\]*/.exec(String(d.result || "")); console.log(m ? m[0].trim() : "resets later"); } } catch (e) {}' "$1"
 }
 # manual_input <stage>: the developer's text from the "## <stage>" section of manual-inputs.md, as a prompt suffix.
 manual_input() {

@@ -137,6 +137,24 @@ describe('sdlc-changes mark (files per stage)', () => {
     mark(dir, 'Red tests');
     expect(stages(dir)).toEqual({ 'Red tests': ['server/__tests__/new.test.js'] });
 
+    // a test file an earlier stage wrote, changed and committed by a later stage (Test repair), counts for both
+    dir = repo();
+    mark(dir);
+    write(dir, 'server/__tests__/a.test.js', 'red\n');
+    commit(dir, 'test: add failing tests');
+    mark(dir, 'Red tests');
+    write(dir, 'src.js');
+    mark(dir, 'Implement');
+    write(dir, 'Docs/backlog/s/test-repair-1.md');
+    write(dir, 'server/__tests__/a.test.js', 'repaired\n');
+    sh(dir, 'git', ['add', 'server/__tests__/a.test.js', 'Docs/backlog/s/test-repair-1.md']);
+    sh(dir, 'git', ['commit', '-q', '-m', 'test: repair invalid tests']);
+    mark(dir, 'Test repair');
+    expect(stages(dir)).toEqual({
+      'Red tests': ['server/__tests__/a.test.js'], Implement: ['src.js'],
+      'Test repair': ['Docs/backlog/s/test-repair-1.md', 'server/__tests__/a.test.js'],
+    });
+
     // the commit that collects earlier work is not credited with it
     dir = repo();
     mark(dir);
