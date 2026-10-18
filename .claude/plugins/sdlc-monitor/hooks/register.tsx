@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AgentRow, ConfigForm, ConfigProvider, PendingItem, PermissionAsk, Question, Run, RunState, Snapshot } from '../types'
+import type { AgentRow, Claim, ConfigForm, ConfigProvider, PendingItem, PermissionAsk, Question, Run, RunState, Snapshot } from '../types'
 
 const PANE = 'sdlc'
 const CONFIG_PANE = 'config'
@@ -38,6 +38,8 @@ const selected = atom({ plugin: 'sdlc-monitor', key: 'selected' } as const, {} a
 const queue = atom({ plugin: 'sdlc-monitor', key: 'queue' } as const, [] as string[])
 const confirmStop = atom({ plugin: 'sdlc-monitor', key: 'confirmStop' } as const, '')
 const confirmDiscard = atom({ plugin: 'sdlc-monitor', key: 'confirmDiscard' } as const, '')
+// Pipelines whose Test repair claim is shown (the Show claim button in the Test repair box).
+const showClaim = atom({ plugin: 'sdlc-monitor', key: 'showClaim' } as const, {} as Record<string, boolean>)
 const launching = atom({ plugin: 'sdlc-monitor', key: 'launching' } as const, {} as Record<string, number>)
 const draft = atom({ plugin: 'sdlc-monitor', key: 'draft' } as const, {} as Record<string, string>)
 const boardOffset = atom({ plugin: 'sdlc-monitor', key: 'boardOffset' } as const, 0)
@@ -311,6 +313,23 @@ function parseStageFiles(text: string | null): Record<string, string[]> {
 }
 
 // The undecided asks in logs/permissions.json (an unreadable or malformed file reads as none).
+// test-issues.md: what the Implement agent claimed is wrong with a test, one "<file> :: <test name> :: <why>" line each.
+function parseClaims(text: string | null): Claim[] {
+  return (text ?? '').split('\n').map(l => l.trim()).filter(Boolean).map(line => {
+    const [file = '', test = '', ...why] = line.split(' :: ')
+
+    return why.length ? { file, test, why: why.join(' :: ') } : { file: '', test: '', why: line }
+  })
+}
+
+// Why the pipeline refused the claim: the REJECT lines of the latest Test repair section of run.out.
+function claimRejects(runOut: string): string[] {
+  const at = runOut.lastIndexOf('== 4b Test repair')
+  if (at < 0) return []
+
+  return runOut.slice(at).split('\n').filter(l => /^(REJECT|TEST REPAIR REJECTED)/.test(l)).map(l => l.trim())
+}
+
 function parsePermissions(text: string | null): PermissionAsk[] {
   const j = parse(text)
   const list = j && Array.isArray(j.pending) ? j.pending : []
@@ -392,12 +411,15 @@ async function loadRun($: EngineInterface, slug: string, worktree: string, reg: 
     agentStarted: String(status?.agent_started ?? ''),
     runStarted: String(status?.run_started ?? reg?.started ?? ''),
     updated: String(status?.updated ?? ''),
+    note: String(status?.note ?? ''),
     pid,
     files,
     tests: testCounts(await readText($, `${docs}/logs/tests.log`)),
     tail: runOut.split('\n').filter(l => l.trim()).slice(-8),
     stageFiles: parseStageFiles(await readText($, `${docs}/logs/stage-files.json`)),
     permissions: parsePermissions(await readText($, `${docs}/logs/permissions.json`)),
+    claims: parseClaims(await readText($, `${docs}/test-issues.md`)),
+    claimRejects: claimRejects(runOut),
     reason: state === 'failed' || state === 'stopped' ? await failureReason($, docs, stageName, runOut) : [],
     questions: questionsText ? parseQuestions(questionsText) : [],
     managed: reg !== null,
@@ -774,7 +796,7 @@ function stageStates(run: Run): { name: string; state: StageState }[] {
     if (run.state === 'paused') return { name, state: 'paused' }
 
     return { name, state: run.state === 'failed' || run.state === 'interrupted' || isGone ? 'failed' : 'active' }
-  }).filter(st => st.name !== 'Test repair' || st.state === 'active' || st.state === 'failed' || wasRepaired)
+  }).filter(st => st.name !== 'Test repair' || st.state === 'active' || st.state === 'failed' || wasRepaired || run.claims.length > 0)
 }
 
 const summary = (runs: Run[], queued: number) => {
@@ -786,7 +808,10 @@ const summary = (runs: Run[], queued: number) => {
 }
 
 const stateLine = (run: Run, now: number) => {
+  if (run.state === 'running' && run.note) return `${run.stage || 'Starting'} · waiting: ${run.note}`
   if (run.state === 'running') return `${run.stage || 'Starting'} · ${run.agent || '…'}${run.model ? ` (${run.model} · ${run.effort})` : ''} · ${clock(now - Date.parse(run.agentStarted))}${run.attempt ? ` · attempt ${run.attempt}` : ''}`
+  if (run.state === 'paused' && run.permissions.length) return `needs a decision: ${run.permissions.length} refused action${run.permissions.length === 1 ? '' : 's'}`
+  if (run.state === 'paused' && !run.questions.length) return `paused at ${run.stage || 'start'}`
   if (run.state === 'paused') return `needs answers: ${run.questions.length} question${run.questions.length === 1 ? '' : 's'}`
   if (run.state === 'done') return 'done'
   if (run.state === 'interrupted') return `interrupted at ${run.stage || 'start'}`
@@ -1074,7 +1099,7 @@ async function tick($: EngineInterface) {
   for (const r of s.runs) {
     now[r.slug] = r.state
     if (!isFirst && previous[r.slug] && previous[r.slug] !== r.state) {
-      if (r.state === 'paused') await notify($, `${r.slug} is paused: ${r.questions.length} question(s) need answers`)
+      if (r.state === 'paused') await notify($, `${r.slug} is paused: ${stateLine(r, 0)}`)
       else if (r.state === 'failed' || r.state === 'stopped') await notify($, `${r.slug} failed at ${r.stage || 'start'}`)
       else if (r.state === 'done') await notify($, `${r.slug} is done`)
     }
@@ -1237,6 +1262,7 @@ export const register: Register = on => {
     const stopping = (await read($, confirmStop)) === run.slug
     const discarding = (await read($, confirmDiscard)) === run.slug
     const stages = stageStates(run)
+    const claimShown = !!(await read($, showClaim))[run.slug]
     const done = stages.filter(x => x.state === 'done').length
     const since = run.agentStarted ? s.now - Date.parse(run.agentStarted) : 0
     const [tryNo, tryMax] = run.attempt.split('/').map(Number)
@@ -1333,9 +1359,35 @@ export const register: Register = on => {
                 {st.state === 'active' ? spinGlyph(frameNo) : STAGE_GLYPH[st.state]} {st.name}
               </Text>
               {stageModel(run, st.name) && <Text color={P.muted} backgroundColor={P.ground}>{stageModel(run, st.name)}</Text>}
+              {st.name === 'Test repair' && (run.claims.length > 0 || run.claimRejects.length > 0) && (
+                <Button
+                  key="show-claim"
+                  label={claimShown ? 'Hide claim' : 'Show claim'}
+                  onPress={() => update($, showClaim, m => ({ ...m, [run.slug]: !m[run.slug] }))}
+                />
+              )}
             </Box>
           ))}
         </Box>
+
+        {claimShown && (
+          <Box flexDirection="column" borderStyle="single" borderColor={P.line} paddingX={1} backgroundColor={P.ground}>
+            <Text bold color={P.text} backgroundColor={P.ground}>
+              Test repair claim <Text color={P.muted} backgroundColor={P.ground}>(Docs/backlog/{run.slug}/test-issues.md, written by the Implement agent)</Text>
+            </Text>
+            {run.claims.length === 0 && <Text color={P.muted} backgroundColor={P.ground}>test-issues.md is gone (Implement deletes it when it runs again).</Text>}
+            {run.claims.map((c, i) => (
+              <Box key={`claim-${i}`} flexDirection="column" backgroundColor={P.ground}>
+                {c.file && <Text color={P.text} backgroundColor={P.ground}>{c.file} › {c.test}</Text>}
+                <Text color={P.muted} backgroundColor={P.ground}>{'  '}{c.why}</Text>
+              </Box>
+            ))}
+            {run.claimRejects.length > 0 && <Text bold color={P.fail} backgroundColor={P.ground}>Rejected by the pipeline</Text>}
+            {run.claimRejects.map((l, i) => (
+              <Text key={`reject-${i}`} color={P.fail} backgroundColor={P.ground}>{'  '}{l}</Text>
+            ))}
+          </Box>
+        )}
 
         {Object.keys(run.stageFiles).length > 0 && (
           <Box flexDirection="column" borderStyle="single" borderColor={P.line} paddingX={1} backgroundColor={P.ground}>
