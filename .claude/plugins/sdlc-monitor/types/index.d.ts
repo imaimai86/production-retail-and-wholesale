@@ -42,7 +42,7 @@ export type Run = {
   tests: { passed: number; failed: number; total: number } | null
   tail: string[]
   questions: Question[]
-  // false for a pipeline started by hand with scripts/sdlc.sh: it has no wrapper record, so no Stop or Resume
+  // false for a pipeline started by hand (ai-sdlc-helper pipeline): it has no wrapper record, so no Stop or Resume
   managed: boolean
   // why the wrapper refused to start it (already merged, cap reached, no brief)
   message: string

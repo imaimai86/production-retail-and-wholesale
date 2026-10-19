@@ -157,7 +157,7 @@ function world(on: any, runs: RunSpec[] = [], model?: (argv: string[]) => ModelR
       return out(e.argv[5] === 'all' ? '0' : String(Math.max(0, n - decided)))
     }
     if (e.argv[0] === 'git') return out(e.argv.includes('--git-common-dir') && repoTop.value ? `${repoTop.value}/.git\n` : '.git\n')
-    if (e.argv[0] === 'node') return out(JSON.stringify(PENDING))
+    if (e.argv[2] === 'backlog') return out(JSON.stringify(PENDING))
     if (e.argv[0] === 'kill') return out('', e.argv[2] === '100' ? 0 : 1)
     if (e.argv[1] === 'scripts/sdlc-mod.sh' && e.argv[2] === 'changes' && e.argv[3] === '--all') {
       await countGate.wait
@@ -700,7 +700,7 @@ const REGISTRY: Reg = {
   other: { endpoint: 'http://localhost:4000', api_key_env: 'OTHER_KEY', models: ['one'], effort: false, key_set: false },
 }
 
-// A registry in memory that answers like scripts/sdlc-models.cjs; `fail` overrides one subcommand.
+// A registry in memory that answers like ai-sdlc-helper model; `fail` overrides one subcommand.
 function registry(start: Reg, fail: Record<string, ModelReply> = {}) {
   const reg: Reg = JSON.parse(JSON.stringify(start))
 
@@ -1261,7 +1261,7 @@ test('every repo path hangs on the main working tree, so a session inside a pipe
 
   expect(w.calls.some(c => c[0] === 'bash' && c[1] === '/repo/scripts/sdlc-mod.sh' && c[2] === 'permit')).toBe(true)
   expect(w.envs.some(env => env.SDLC_WRAPPER === '/repo/scripts/sdlc-mod.sh')).toBe(true)
-  expect(w.calls.some(c => c[0] === 'node' && c[1] === '/repo/scripts/backlog-list.cjs')).toBe(true)
+  expect(w.calls.some(c => c[0] === 'bash' && c[1] === '/repo/scripts/sdlc-mod.sh' && c[2] === 'backlog')).toBe(true)
   repoTop.value = ''
   await ui.unmount()
 })

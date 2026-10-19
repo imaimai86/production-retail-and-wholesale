@@ -12,7 +12,7 @@ const CAP = 2
 const WRAPPER = 'scripts/sdlc-mod.sh'
 // How often the file counts of a running pipeline are recomputed when nothing else about it changed (see loadChanges).
 const CHANGES_EVERY_MS = 15000
-// The stage names status.json carries (scripts/sdlc.sh strips the numbering).
+// The stage names status.json carries (the ai-sdlc-helper pipeline strips the numbering).
 const STAGES = ['Spec', 'Plan', 'Red tests', 'Implement', 'Test repair', 'Review', 'Commit']
 // How long the Start button stays a "Starting…" note while the wrapper creates the worktree.
 const LAUNCH_GRACE_MS = 20000
@@ -244,7 +244,7 @@ const wrapperPath = ($: EngineInterface) => repoPath($, WRAPPER)
 let pendingAt = 0
 let pendingCache: PendingItem[] = []
 
-// Where sdlc-mod.sh keeps its run records: one folder shared by every worktree.
+// Where ai-sdlc-helper keeps its run records: one folder shared by every worktree.
 async function registryDir($: EngineInterface): Promise<string> {
   const { common } = await repoInfo($)
 
@@ -254,7 +254,7 @@ async function registryDir($: EngineInterface): Promise<string> {
 async function loadPending($: EngineInterface, now: number): Promise<PendingItem[]> {
   if (now - pendingAt < PENDING_EVERY_MS && pendingAt) return pendingCache
   try {
-    const r = await $.process.run(['node', await repoPath($, 'scripts/backlog-list.cjs'), 'pending', '--json'])
+    const r = await $.process.run(['bash', await wrapperPath($), 'backlog', 'pending', '--json'])
     const rows = JSON.parse(r.stdout) as { slug: string; type: string | null; priority: string | null; title: string }[]
     pendingCache = rows.map(x => ({ slug: x.slug, type: x.type ?? '-', priority: x.priority ?? '-', title: x.title }))
   } catch {
@@ -300,7 +300,7 @@ async function loadChanges($: EngineInterface, runs: Run[], now: number, force: 
   for (const run of runs) run.changes = run.managed ? (changesCache.get(run.slug)?.value ?? null) : null
 }
 
-// The files each stage changed, from logs/stage-files.json (written by scripts/sdlc.sh; an unreadable file reads as none).
+// The files each stage changed, from logs/stage-files.json (written by the pipeline; an unreadable file reads as none).
 function parseStageFiles(text: string | null): Record<string, string[]> {
   const stages = parse(text)?.stages
   if (!stages || typeof stages !== 'object') return {}
@@ -448,7 +448,7 @@ async function collect($: EngineInterface, force = false): Promise<Snapshot> {
     seen.add(reg.slug)
     runs.push(await loadRun($, reg.slug, String(reg.worktree ?? ''), reg))
   }
-  // A pipeline started by hand with scripts/sdlc.sh in this working tree has no record: find it by its status file.
+  // A pipeline started by hand (ai-sdlc-helper pipeline) in this working tree has no record: find it by its status file.
   for (const d of await names($, await repoPath($, 'Docs/backlog'))) {
     if (d.kind === 'dir' && !seen.has(d.name) && (await readText($, await repoPath($, `Docs/backlog/${d.name}/logs/status.json`)))) {
       runs.push(await loadRun($, d.name, '', null))
@@ -773,7 +773,7 @@ async function removeProvider($: EngineInterface, provider: string) {
   })
 }
 
-// Pipeline stage (as the monitor names it) -> the sdlc.sh stages whose agents run in it.
+// Pipeline stage (as the monitor names it) -> the pipeline stages whose agents run in it.
 const STAGE_AGENTS: Record<string, string[]> = {
   Spec: ['spec'], Plan: ['plan'], 'Red tests': ['red-tests'], Implement: ['implement'], 'Test repair': ['test-repair', 'test-audit'], Review: ['review'],
 }
@@ -1366,7 +1366,7 @@ export const register: Register = on => {
           </Text>
         )}
         {!run.managed && (
-          <Text color={P.wait} backgroundColor={P.ground}>Started outside the wrapper, so Stop and Resume are not available here. Resume it in the main working tree with ./scripts/sdlc.sh {run.slug}.</Text>
+          <Text color={P.wait} backgroundColor={P.ground}>Started outside the wrapper, so Stop and Resume are not available here. Resume it in the main working tree with ai-sdlc-helper pipeline {run.slug}.</Text>
         )}
         {run.message && <Text color={P.fail} backgroundColor={P.ground}>{run.message}</Text>}
         {await feedback($, { Box, Text, Button })}

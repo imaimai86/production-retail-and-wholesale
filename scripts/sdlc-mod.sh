@@ -1,441 +1,62 @@
 #!/usr/bin/env bash
-# Interactive-SDLC wrapper: runs scripts/sdlc.sh for one backlog item in its own git worktree,
-# so several pipelines can run at the same time. sdlc.sh itself is not modified.
-#   scripts/sdlc-mod.sh run <slug>     start (or resume) the pipeline for <slug>
-#   scripts/sdlc-mod.sh stop <slug>    interrupt the running pipeline for <slug>
-#   scripts/sdlc-mod.sh discard <slug> [--yes] [--stop]   delete its worktree, branch and run record (without --yes: show what would go,
-#                                                         exit 6; a running pipeline is refused unless --stop stops it first)
-#   scripts/sdlc-mod.sh restart <slug> [--yes]   stop it if running, discard it, and start again from Spec
-#   scripts/sdlc-mod.sh status         one line per known run
-#   scripts/sdlc-mod.sh changes <slug> [--json]   files changed in the pipeline's worktree: "<changed> <uncommitted>" (--json adds the file list)
-#   scripts/sdlc-mod.sh changes --all [<slug>...]   the same counts for every recorded pipeline (or the slugs named) in one call:
-#                                               one JSON line {"runs":{"<slug>":{"changed":n,"uncommitted":n}|{"error":"..."}}}
-#   scripts/sdlc-mod.sh watch <slug> [--once]   live view of one pipeline: its status.json line, run state, uncommitted files and the
-#                                               tail of run.out, read from its worktree (or the current directory for a run started
-#                                               in place). Refreshes every WATCH_INTERVAL seconds (default 3); --once prints one frame.
-#   scripts/sdlc-mod.sh model list|add|add-model|remove-model|remove|test ...   the model registry (scripts/sdlc-models.cjs)
-# Env: SDLC_MAX_PARALLEL   most pipelines running at once (default 2; exit 3 when full)
-#      SDLC_BASE           ref a new branch starts from (default: git.base in sdlc.config.json, else origin/main, else main, else HEAD)
-#      SDLC_WT_BASE        folder holding the worktrees (default: worktree.base in sdlc.config.json, else ../<repo>-sdlc)
-#      SDLC_PLUGIN_DIRS    plugin folders loaded in every agent (default .claude/plugins/sdlc-guard, if present)
-#      SDLC_ALLOW_MERGED   set to run an item again whose red-tests commit is already in the base branch (exit 5 otherwise)
-#      WATCH_INTERVAL      seconds between frames of `watch` (default 3; a non-positive or non-numeric value exits 2)
-#      FROM=spec|plan|red-tests|implement|test-repair|review  passed through to sdlc.sh (resume at that stage)
-# Run state is kept in <git common dir>/sdlc-runs/<slug>.json, outside every worktree, so one place lists all runs.
+# Compatibility wrapper: the SDLC pipeline now comes from the ai-sdlc-helper package. This script keeps the old
+# `scripts/sdlc-mod.sh <subcommand>` interface, which the sdlc-monitor pane (.claude/plugins/sdlc-monitor) still calls,
+# and maps each subcommand to `ai-sdlc-helper`:
+#   run <slug>                         -> start <slug> [--from $FROM]
+#   stop <slug>                        -> stop <slug>
+#   restart <slug> [--yes]             -> restart <slug> [--from $FROM] [--yes]
+#   discard <slug> [--yes] [--stop]    -> discard <slug> [--yes] [--stop]
+#   status [--json]                    -> status [--json]
+#   changes <slug> [--json] | changes --all [<slug>...]   -> changes ... (same arguments)
+#   watch <slug> [--once]              -> watch <slug> --follow $WATCH_INTERVAL (default 3); --once: watch <slug> (one frame)
+#   permit <slug> allow|always|deny [n|all]  -> permit <slug> <choice> <n|all> (default all)
+#   model ...                          -> model ... (same arguments)
+#   backlog [status] [--json]          -> backlog ... (same arguments)
+# The commands run in the checkout holding this script (the main working tree when the pane calls it), as before;
+# watch runs in the current folder, so it also finds a pipeline started by hand there. The environment passes through:
+# SDLC_MAX_PARALLEL, SDLC_BASE, SDLC_WT_BASE, SDLC_PLUGIN_DIRS and SDLC_ALLOW_MERGED are read by ai-sdlc-helper itself.
+# AI_SDLC_HELPER names another command to run instead of ai-sdlc-helper (tests use it).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-COMMON="$(git -C "$ROOT" rev-parse --git-common-dir 2>/dev/null)" || COMMON=".git"
-case "$COMMON" in /*) ;; *) COMMON="$ROOT/$COMMON" ;; esac
-REG="$COMMON/sdlc-runs"
-MAX_PARALLEL="${SDLC_MAX_PARALLEL:-2}"
-# Project settings (sdlc.config.json): backlog folder, branch prefix, base branch, worktree folder and links. When they
-# cannot be read, these defaults apply (each link only if it exists) and sdlc.sh reports what is wrong when the run starts.
-SDLC_BACKLOG_DIR="Docs/backlog"; SDLC_BRANCH_PREFIX="sdlc/"; SDLC_GIT_BASE=""; SDLC_WT_BASE_DEFAULT=""
-SDLC_WT_LINKS=(server/node_modules node_modules graft graphify-out .env)
-eval "$(node "$ROOT/scripts/sdlc-config.cjs" env "$ROOT" 2>/dev/null)" || true
-BACKLOG_DIR="$SDLC_BACKLOG_DIR"; BRANCH_PREFIX="$SDLC_BRANCH_PREFIX"
-WT_BASE="${SDLC_WT_BASE:-${SDLC_WT_BASE_DEFAULT:-$(dirname "$ROOT")/$(basename "$ROOT")-sdlc}}"
-# The wrapper's own controls are read above and in pick_base; the pipeline, its tests and the pipelines they start must
-# not inherit them (FROM is passed on on purpose: sdlc.sh reads it, then stops exporting it).
-SDLC_BASE_SET="${SDLC_BASE:-}"; export -n SDLC_BASE SDLC_WT_BASE SDLC_MAX_PARALLEL SDLC_ALLOW_MERGED WATCH_INTERVAL
-# Repository-wide permission rules live in the main working tree, where sdlc.sh reads them, whichever checkout runs this.
-MAIN_TREE="$(git -C "$ROOT" worktree list --porcelain 2>/dev/null | awk '/^worktree /{print substr($0,10); exit}')" || MAIN_TREE=""
-PERM_REPO="${MAIN_TREE:-$ROOT}/.claude/sdlc-permissions.json"
+TOOL="${AI_SDLC_HELPER:-ai-sdlc-helper}"
 
-now() { date +%Y-%m-%dT%H:%M:%S; }
-usage() { echo "Usage: $0 run <slug> | stop <slug> | discard <slug> [--yes] [--stop] | restart <slug> [--yes] | status | changes <slug> [--json] | changes --all [<slug>...] | watch <slug> [--once] | permit <slug> allow|always|deny [n|all] | model list [--json] | model add <provider> --endpoint <url> --key-env <VAR> --models a,b [--effort] | model add-model|remove-model <provider> <model> | model remove <provider> | model test <provider>/<model>" >&2; exit 2; }
-check_slug() { [[ "${1:-}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "Invalid slug '${1:-}': lowercase letters, digits and dashes only" >&2; exit 2; }; }
-json_get() { node -e 'try{const v=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))[process.argv[2]];process.stdout.write(v===undefined||v===null?"":String(v))}catch(e){}' "$1" "$2"; }
-# kill -0 also succeeds on a zombie (a process that has exited but whose parent has not collected it): that is not alive.
-# Only a positive pid counts: `kill 0` means the caller's own process group (a refused start records pid 0), which would end the caller.
-alive() { [[ "${1:-}" =~ ^[1-9][0-9]*$ ]] && kill -0 "$1" 2>/dev/null && [ "$(ps -o stat= -p "$1" 2>/dev/null | cut -c1)" != Z ]; }
-killtree() { local p="$1" c; for c in $(pgrep -P "$p" 2>/dev/null); do killtree "$c"; done; kill -TERM "$p" 2>/dev/null || true; }
-
-# write_reg <slug> <worktree> <pid> <started> <state> <exit_code> <interrupted> <finished> [message]
-write_reg() {
-  local msg="${9:-}"
-  msg="${msg//\"/\'}"
-  printf '{"slug":"%s","worktree":"%s","pid":%s,"started":"%s","state":"%s","exit_code":"%s","interrupted":%s,"finished":"%s","message":"%s"}\n' \
-    "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$msg" > "$REG/$1.json.tmp" && mv "$REG/$1.json.tmp" "$REG/$1.json"
+usage() {
+  echo "Usage: $0 run <slug> | stop <slug> | restart <slug> [--yes] | discard <slug> [--yes] [--stop] | status [--json] | changes <slug> [--json] | changes --all [<slug>...] | watch <slug> [--once] | permit <slug> allow|always|deny [n|all] | model ... | backlog [status] [--json]" >&2
+  exit 2
 }
 
-# fail_start <slug> <exit code> <message>: a start that is refused is recorded, so the control pane can say why.
-fail_start() {
-  local f="$REG/$1.json"
-  echo "$3"
-  if [ ! -f "$f" ] || [ "$(json_get "$f" state)" != running ] || ! alive "$(json_get "$f" pid)"; then
-    write_reg "$1" "" 0 "$(now)" exited "$2" false "$(now)" "$3"
-  fi
-  exit "$2"
-}
+if ! command -v "$TOOL" >/dev/null 2>&1; then
+  cat >&2 <<'EOF'
+ERROR: ai-sdlc-helper is not on PATH. The SDLC pipeline comes from the ai-sdlc-helper package; install it with
+  npm pack github:imaimai86/ai-sdlc-helper && npm i -g ./ai-sdlc-helper-*.tgz
+or from the tarball attached to a GitHub release (npm i -g <tarball URL>); once it is on npm: npm i -g ai-sdlc-helper.
+Then check the project with: ai-sdlc-helper doctor
+EOF
+  exit 127
+fi
 
-running_count() {
-  local n=0 f pid
-  for f in "$REG"/*.json; do
-    [ -e "$f" ] || continue
-    [ "$(json_get "$f" state)" = running ] || continue
-    pid="$(json_get "$f" pid)"
-    alive "$pid" && n=$((n + 1))
-  done
-  echo "$n"
-}
+from=()
+if [ -n "${FROM:-}" ]; then from=(--from "$FROM"); fi
 
-# The ref a new branch starts from.
-pick_base() {
-  local p base="${SDLC_BASE_SET:-${SDLC_GIT_BASE:-}}"
-  if [ -z "$base" ]; then
-    for p in origin/main main HEAD; do git -C "$ROOT" rev-parse --verify -q "$p" >/dev/null && { base="$p"; break; }; done
-  fi
-  echo "$base"
-}
+sub="${1:-}"
+[ -n "$sub" ] || usage
+shift
 
-# True when the item's red-tests commit is already in the base branch: it was merged.
-is_merged() { [ -n "$(git -C "$ROOT" log "$2" -1 --format=%h --grep="^test($1): add failing tests" 2>/dev/null)" ]; }
-
-# Stops a running pipeline and waits until its process has gone, so it cannot write its record afterwards.
-stop_if_running() {
-  local slug="$1" f="$REG/$1.json" pid i
-  [ -f "$f" ] || return 0
-  # a finished run's pid may since belong to another process
-  [ "$(json_get "$f" state)" = running ] || return 0
-  pid="$(json_get "$f" pid)"
-  alive "$pid" || return 0
-  : > "$REG/$slug.interrupt"
-  killtree "$pid"
-  for i in $(seq 1 100); do alive "$pid" || return 0; sleep 0.2; done
-  echo "could not stop $slug (pid $pid)" >&2; exit 1
-}
-
-cmd_run() {
-  local slug="$1" docs wt branch base started rc f p
-  check_slug "$slug"
-  mkdir -p "$REG"
-  exec >>"$REG/$slug.wrapper.log" 2>&1
-  echo "== $(now) run $slug"
-
-  f="$REG/$slug.json"
-  if [ -f "$f" ] && [ "$(json_get "$f" state)" = running ] && alive "$(json_get "$f" pid)"; then
-    echo "already running (pid $(json_get "$f" pid))"; exit 4
-  fi
-  if [ "$(running_count)" -ge "$MAX_PARALLEL" ]; then
-    fail_start "$slug" 3 "at most $MAX_PARALLEL pipelines may run at once (SDLC_MAX_PARALLEL)"
-  fi
-
-  docs="$BACKLOG_DIR/$slug"
-  wt="$WT_BASE/$slug"
-  branch="${BRANCH_PREFIX}$slug"
-  base="$(pick_base)"
-  if [ ! -e "$wt/.git" ]; then
-    # Fail before creating anything. An item whose red-tests commit is already in the base branch was merged: its
-    # branch is stale, and running it again would redo finished work on old code.
-    if [ -z "${SDLC_ALLOW_MERGED:-}" ] && is_merged "$slug" "$base"; then
-      fail_start "$slug" 5 "$slug is already merged into $base. Delete branch $branch and its backlog entry, or set SDLC_ALLOW_MERGED=1 to run it again."
-    fi
-    # The pipeline itself must be on the branch the worktree starts from: a worktree has only what is committed there.
-    if ! git -C "$ROOT" cat-file -e "$branch:scripts/sdlc.sh" 2>/dev/null && ! git -C "$ROOT" cat-file -e "$base:scripts/sdlc.sh" 2>/dev/null; then
-      fail_start "$slug" 1 "scripts/sdlc.sh is not committed on $base, which the worktree starts from. Commit the pipeline to $base, or start from a branch that has it: SDLC_BASE=<branch> (or git.base in sdlc.config.json)."
-    fi
-    # The brief must be in the main working tree or already committed on the branch.
-    if [ ! -f "$ROOT/$docs/brief.md" ] && ! git -C "$ROOT" cat-file -e "$branch:$docs/brief.md" 2>/dev/null \
-       && ! git -C "$ROOT" cat-file -e "$base:$docs/brief.md" 2>/dev/null; then
-      fail_start "$slug" 1 "Missing $docs/brief.md"
-    fi
-    mkdir -p "$WT_BASE"
-    if git -C "$ROOT" show-ref --verify --quiet "refs/heads/$branch"; then
-      git -C "$ROOT" worktree add "$wt" "$branch"
-    else
-      git -C "$ROOT" worktree add "$wt" -b "$branch" "$base"
-    fi
-  fi
-  # A brief that is not committed on the base branch yet is copied from the main working tree.
-  if [ ! -f "$wt/$docs/brief.md" ]; then
-    [ -f "$ROOT/$docs/brief.md" ] || fail_start "$slug" 1 "Missing $docs/brief.md"
-    mkdir -p "$wt/$docs"; cp "$ROOT/$docs/brief.md" "$wt/$docs/brief.md"
-  fi
-  # Gitignored things a pipeline needs are shared with the main working tree.
-  # A .gitignore pattern that ends in "/" (node_modules/, /graft/) does not match a symlink, so the links are
-  # also listed in the repo's local exclude file (shared by every worktree): no stage may commit them.
-  mkdir -p "$COMMON/info"
-  for p in ${SDLC_WT_LINKS[@]+"${SDLC_WT_LINKS[@]}"}; do
-    if [ -e "$ROOT/$p" ] && [ ! -e "$wt/$p" ] && [ ! -L "$wt/$p" ]; then mkdir -p "$(dirname "$wt/$p")"; ln -s "$ROOT/$p" "$wt/$p"; fi
-    if [ -L "$wt/$p" ] && ! grep -qxF "/$p" "$COMMON/info/exclude" 2>/dev/null; then echo "/$p" >> "$COMMON/info/exclude"; fi
-  done
-  mkdir -p "$wt/$docs/logs"
-  rm -f "$REG/$slug.interrupt"
-
-  started="$(now)"
-  write_reg "$slug" "$wt" "$$" "$started" running "" false ""
-
-  plugins="${SDLC_PLUGIN_DIRS:-}"
-  if [ -z "$plugins" ] && [ -d "$ROOT/.claude/plugins/sdlc-guard" ]; then plugins="$ROOT/.claude/plugins/sdlc-guard"; fi
-  [ -z "$plugins" ] || export CLAUDE_CODE_PLUGIN_DIRS="$plugins"
-  export SDLC_SLUG="$slug"
-
-  rc=0
-  # SDLC_BASE only picks the base of a new worktree: the pipeline (and the tests it runs) must not inherit it.
-  (cd "$wt" && unset SDLC_BASE && exec bash scripts/sdlc.sh "$slug") >>"$wt/$docs/logs/run.out" 2>&1 &
-  CHILD=$!
-  trap 'killtree "$CHILD"' TERM INT
-  wait "$CHILD" || rc=$?
-  # A trapped signal ends `wait` early: wait for the killed tree to finish before reading its status.
-  while alive "$CHILD"; do sleep 0.2; done
-  wait "$CHILD" 2>/dev/null || rc=$?
-
-  if [ -f "$REG/$slug.interrupt" ]; then
-    write_reg "$slug" "$wt" "$$" "$started" exited "$rc" true "$(now)"
-  else
-    write_reg "$slug" "$wt" "$$" "$started" exited "$rc" false "$(now)"
-  fi
-  echo "== $(now) finished $slug exit $rc"
-  exit "$rc"
-}
-
-cmd_stop() {
-  local slug="$1" f pid i
-  check_slug "$slug"
-  f="$REG/$slug.json"
-  [ -f "$f" ] || { echo "No run recorded for $slug" >&2; exit 1; }
-  pid="$(json_get "$f" pid)"
-  { [ "$(json_get "$f" state)" = running ] && alive "$pid"; } || { echo "$slug is not running"; exit 0; }
-  : > "$REG/$slug.interrupt"
-  killtree "$pid"
-  # report the stop only once the pipeline is really gone (the pane shows a loader until then)
-  for i in $(seq 1 100); do alive "$pid" || break; sleep 0.2; done
-  alive "$pid" && { echo "could not stop $slug (pid $pid)" >&2; exit 1; }
-  echo "stopped $slug"
-}
-
-# Deletes everything a pipeline left behind: worktree, local branch, run record. The branch tip is saved first.
-cmd_discard() {
-  local slug="$1" yes="" stop="" a f wt branch base tip="" ahead=0 dirty=0
-  shift
-  for a in "$@"; do
-    case "$a" in --yes) yes=--yes ;; --stop) stop=1 ;; "") ;; *) usage ;; esac
-  done
-  check_slug "$slug"
-  f="$REG/$slug.json"; wt="$WT_BASE/$slug"; branch="${BRANCH_PREFIX}$slug"
-  if [ -z "$stop" ] && [ -f "$f" ] && [ "$(json_get "$f" state)" = running ] && alive "$(json_get "$f" pid)"; then
-    echo "$slug is running: stop it first, or pass --stop" >&2; exit 4
-  fi
-  if git -C "$ROOT" show-ref --verify --quiet "refs/heads/$branch"; then tip="$(git -C "$ROOT" rev-parse "$branch")"; fi
-  if [ ! -e "$wt/.git" ] && [ -z "$tip" ] && [ ! -f "$f" ]; then echo "Nothing to discard for $slug" >&2; exit 1; fi
-  base="$(pick_base)"
-  if [ -n "$tip" ]; then ahead="$(git -C "$ROOT" rev-list --count "$base..$branch")"; fi
-  if [ -e "$wt/.git" ]; then dirty="$(git -C "$wt" status --porcelain --untracked-files=all | wc -l | tr -d ' ')"; fi
-  echo "Discard $slug: worktree $wt, branch $branch ($ahead commit(s) not in $base, $dirty uncommitted file(s)), run record"
-  if [ "$yes" != --yes ]; then echo "Nothing deleted. Run again with --yes to discard it."; exit 6; fi
-  if [ -n "$stop" ]; then stop_if_running "$slug"; fi
-  if [ -e "$wt" ]; then git -C "$ROOT" worktree remove --force "$wt" 2>/dev/null || rm -rf "$wt"; fi
-  git -C "$ROOT" worktree prune
-  if [ -n "$tip" ]; then git -C "$ROOT" branch -D "$branch" >/dev/null; fi
-  rm -f "$REG/$slug.json" "$REG/$slug.interrupt" "$REG/$slug.wrapper.log"
-  if [ -n "$tip" ]; then
-    echo "git branch $branch $tip" > "$REG/$slug.discarded"
-    echo "Discarded $slug. To get the branch back: git branch $branch $tip"
-  else
-    echo "Discarded $slug."
-  fi
-}
-
-# Starts an item again from scratch: stop, discard, run.
-cmd_restart() {
-  local slug="$1" yes="${2:-}" base rc=0
-  check_slug "$slug"
-  base="$(pick_base)"
-  if [ -z "${SDLC_ALLOW_MERGED:-}" ] && is_merged "$slug" "$base"; then
-    echo "$slug is already merged into $base: a restart would be refused (SDLC_ALLOW_MERGED=1 overrides)" >&2; exit 5
-  fi
-  if [ "$yes" != --yes ]; then cmd_discard "$slug" ""; fi
-  stop_if_running "$slug"
-  (cmd_discard "$slug" --yes) || rc=$?
-  [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ] || exit "$rc"
-  cmd_run "$slug"
-}
-
-cmd_status() {
-  local f slug state pid
-  for f in "$REG"/*.json; do
-    [ -e "$f" ] || continue
-    slug="$(json_get "$f" slug)"; state="$(json_get "$f" state)"; pid="$(json_get "$f" pid)"
-    if [ "$state" = running ] && ! alive "$pid"; then state="stopped"; fi
-    [ "$(json_get "$f" interrupted)" = true ] && state="interrupted"
-    printf '%-12s %s\n' "$state" "$slug"
-  done
-}
-
-# One frame of `watch`: the pipeline's own files, wherever its worktree is.
-watch_frame() {
-  local slug="$1" dir="$2" f="$REG/$1.json" logs state pid line
-  logs="$dir/$BACKLOG_DIR/$slug/logs"
-  if [ -f "$logs/status.json" ]; then cat "$logs/status.json"; else echo "(no status.json yet in $logs)"; fi
-  if [ -f "$f" ]; then
-    state="$(json_get "$f" state)"; pid="$(json_get "$f" pid)"
-    if [ "$(json_get "$f" interrupted)" = true ]; then echo "run: interrupted (stopped by the user)"
-    elif [ "$state" = exited ]; then echo "run: finished, exit code $(json_get "$f" exit_code)"
-    elif [ "$state" = running ] && ! alive "$pid"; then echo "run: process has gone (stopped without finishing)"
-    fi
-  fi
-  { git -C "$dir" status --short 2>&1 | head -15; } || true
-  if [ -f "$logs/run.out" ]; then echo "--- run.out (last 5 lines)"; tail -n 5 "$logs/run.out"; fi
-}
-
-cmd_watch() {
-  local slug="$1" once="${2:-}" interval="${WATCH_INTERVAL:-3}" f dir="" wt
-  check_slug "$slug"
-  case "$once" in ""|--once) ;; *) usage ;; esac
-  if ! [[ "$interval" =~ ^[0-9]+(\.[0-9]+)?$ ]] || ! awk -v n="$interval" 'BEGIN { exit !(n > 0) }'; then
-    echo "Invalid WATCH_INTERVAL '$interval': a positive number of seconds" >&2; exit 2
-  fi
-  f="$REG/$slug.json"
-  wt="$(json_get "$f" worktree 2>/dev/null || true)"
-  if [ -n "$wt" ] && [ -d "$wt" ]; then dir="$wt"
-  elif [ -f "$BACKLOG_DIR/$slug/logs/status.json" ]; then dir="."
-  else echo "No pipeline for $slug" >&2; exit 1
-  fi
-  if [ "$once" = --once ]; then watch_frame "$slug" "$dir"; return 0; fi
-  while true; do
-    printf '\033[H\033[2J'
-    watch_frame "$slug" "$dir"
-    sleep "$interval"
-  done
-}
-
-# The counting used by both forms of `changes`: count(tc, ts) reads the committed file list (diff --name-only -z) and the
-# status (status --porcelain -z) and returns the sorted changed files and the number of uncommitted entries.
-COUNT_JS='
-  const fs = require("fs");
-  function count(tc, ts) {
-    const set = new Set(fs.readFileSync(tc, "utf8").split("\0").filter(Boolean));
-    const st = fs.readFileSync(ts, "utf8").split("\0").filter(Boolean);
-    let m = 0;
-    for (let i = 0; i < st.length; i++) {
-      const code = st[i].slice(0, 2);
-      set.add(st[i].slice(3));
-      m++;
-      if (code[0] === "R" || code[0] === "C" || code[1] === "R" || code[1] === "C") i++;
-    }
-    return { files: [...set].sort(), m };
-  }
-'
-
-# The committed and uncommitted file lists of worktree $1 against base $2, written to $3 and $4.
-list_changes() {
-  local mb
-  mb="$(git -C "$1" merge-base HEAD "$2" 2>/dev/null || true)"
-  : > "$3"
-  if [ -n "$mb" ]; then git -C "$1" diff --name-only -z "$mb"..HEAD > "$3" 2>/dev/null || true; fi
-  git -C "$1" status --porcelain -z --untracked-files=all > "$4" 2>/dev/null || true
-}
-
-# changes <slug> [--json]: files the pipeline changed, counted in its own worktree (committed since the merge-base, plus uncommitted).
-cmd_changes() {
-  local slug="" json=0 a f wt base mb tc ts
-  for a in "$@"; do
-    case "$a" in
-      --json) [ "$json" -eq 0 ] || usage; json=1 ;;
-      -*) usage ;;
-      *) [ -z "$slug" ] || usage; slug="$a" ;;
-    esac
-  done
-  [ -n "$slug" ] || usage
-  check_slug "$slug"
-  f="$REG/$slug.json"
-  wt="$(json_get "$f" worktree 2>/dev/null || true)"
-  if [ -z "$wt" ] || [ ! -d "$wt" ]; then wt="$WT_BASE/$slug"; fi
-  if [ ! -d "$wt" ]; then
-    if [ -f "$f" ]; then echo "Worktree for $slug is gone" >&2; else echo "No pipeline for $slug" >&2; fi
-    exit 1
-  fi
-  base="$(json_get "$f" base 2>/dev/null || true)"
-  [ -n "$base" ] || base="$(pick_base)"
-  tc="$(mktemp)"; ts="$(mktemp)"
-  list_changes "$wt" "$base" "$tc" "$ts"
-  node -e "$COUNT_JS"'
-    const [slug, wt, json, tc, ts] = process.argv.slice(1);
-    const { files, m } = count(tc, ts);
-    if (json === "1") process.stdout.write(JSON.stringify({ slug, worktree: wt, changed: files.length, uncommitted: m, files: files.slice(0, 50) }) + "\n");
-    else process.stdout.write(files.length + " " + m + "\n");
-  ' "$slug" "$wt" "$json" "$tc" "$ts" || { rm -f "$tc" "$ts"; exit 1; }
-  rm -f "$tc" "$ts"
-}
-
-# changes --all [<slug>...]: the counts of every recorded pipeline (or of the slugs named) in one call, so a monitor watching
-# several pipelines starts one wrapper, one node to read the records and one node to count, not three of each per pipeline.
-# A pipeline that cannot be counted gets {"error": ...} with the message the single form prints; the others are still counted.
-cmd_changes_all() {
-  local tmp s wt base rec def="" f
-  local -a slugs=()
-  for s in "$@"; do check_slug "$s"; slugs+=("$s"); done
-  if [ ${#slugs[@]} -eq 0 ]; then
-    for f in "$REG"/*.json; do [ -f "$f" ] && slugs+=("$(basename "$f" .json)"); done
-  fi
-  if [ ${#slugs[@]} -eq 0 ]; then echo '{"runs":{}}'; return 0; fi
-  tmp="$(mktemp -d)"
-  # slug <TAB> record exists (1/0) <TAB> worktree <TAB> base, for every slug, from one read of the records
-  node -e '
-    const fs = require("fs");
-    const [reg, ...slugs] = process.argv.slice(1);
-    const s = v => (v === undefined || v === null ? "" : String(v)).replace(/[\t\n]/g, " ");
-    for (const slug of slugs) {
-      const f = `${reg}/${slug}.json`;
-      let r = null;
-      try { r = JSON.parse(fs.readFileSync(f, "utf8")); } catch (e) { r = fs.existsSync(f) ? {} : null; }
-      process.stdout.write([slug, r ? 1 : 0, s(r && r.worktree), s(r && r.base)].join("\t") + "\n");
-    }
-  ' "$REG" "${slugs[@]}" > "$tmp/where"
-  while IFS=$'\t' read -r s rec wt base; do
-    if [ -z "$wt" ] || [ ! -d "$wt" ]; then wt="$WT_BASE/$s"; fi
-    if [ ! -d "$wt" ]; then
-      if [ "$rec" = 1 ]; then echo "Worktree for $s is gone" > "$tmp/$s.err"; else echo "No pipeline for $s" > "$tmp/$s.err"; fi
-      continue
-    fi
-    if [ -z "$base" ]; then [ -n "$def" ] || def="$(pick_base)"; base="$def"; fi
-    list_changes "$wt" "$base" "$tmp/$s.tc" "$tmp/$s.ts"
-  done < "$tmp/where"
-  node -e "$COUNT_JS"'
-    const [tmp, ...slugs] = process.argv.slice(1);
-    const runs = {};
-    for (const slug of slugs) {
-      const err = `${tmp}/${slug}.err`;
-      try {
-        if (fs.existsSync(err)) { runs[slug] = { error: fs.readFileSync(err, "utf8").trim() }; continue; }
-        const { files, m } = count(`${tmp}/${slug}.tc`, `${tmp}/${slug}.ts`);
-        runs[slug] = { changed: files.length, uncommitted: m };
-      } catch (e) {
-        runs[slug] = { error: `could not count ${slug}` };
-      }
-    }
-    process.stdout.write(JSON.stringify({ runs }) + "\n");
-  ' "$tmp" "${slugs[@]}" || { rm -rf "$tmp"; exit 1; }
-  rm -rf "$tmp"
-}
-
-# permit <slug> <allow|always|deny> [n|all]: decide the actions the pipeline's agent was refused (see Docs/backlog/<slug>/logs/permissions.json).
-# Prints how many are still pending; resume the run afterwards (FROM=<stage> bash scripts/sdlc-mod.sh run <slug>).
-cmd_permit() {
-  local slug="$1" choice="$2" which="${3:-all}" f wt
-  check_slug "$slug"
-  f="$REG/$slug.json"
-  wt="$(json_get "$f" worktree 2>/dev/null || true)"
-  if [ -z "$wt" ] || [ ! -d "$wt" ]; then wt="$WT_BASE/$slug"; fi
-  [ -d "$wt" ] || { echo "No pipeline for $slug" >&2; exit 1; }
-  node "$ROOT/scripts/sdlc-permissions.cjs" decide "$wt/$BACKLOG_DIR/$slug/logs/permissions.json" "$which" "$choice" "$PERM_REPO"
-}
-
-case "${1:-}" in
-  permit) { [ $# -eq 3 ] || [ $# -eq 4 ]; } || usage; cmd_permit "$2" "$3" "${4:-all}" ;;
-  run)    [ $# -eq 2 ] || usage; cmd_run "$2" ;;
-  stop)   [ $# -eq 2 ] || usage; cmd_stop "$2" ;;
-  discard) [ $# -ge 2 ] || usage; slug="$2"; shift 2; cmd_discard "$slug" "$@" ;;
-  restart) { [ $# -eq 2 ] || [ $# -eq 3 ]; } || usage; cmd_restart "$2" "${3:-}" ;;
-  status) cmd_status ;;
-  changes) if [ "${2:-}" = --all ]; then shift 2; cmd_changes_all "$@"
-           else { [ $# -eq 2 ] || [ $# -eq 3 ]; } || usage; shift; cmd_changes "$@"; fi ;;
-  watch)  { [ $# -eq 2 ] || [ $# -eq 3 ]; } || usage; cmd_watch "$2" "${3:-}" ;;
-  model)  case "${2:-}" in
-            list|add|add-model|remove-model|remove|test) shift; exec node "$ROOT/scripts/sdlc-models.cjs" "$@" ;;
-            *) usage ;;
-          esac ;;
-  *)      usage ;;
+case "$sub" in
+  run)     [ $# -eq 1 ] || usage; cd "$ROOT"; exec "$TOOL" start "$1" ${from[@]+"${from[@]}"} ;;
+  stop)    [ $# -eq 1 ] || usage; cd "$ROOT"; exec "$TOOL" stop "$1" ;;
+  restart) { [ $# -eq 1 ] || { [ $# -eq 2 ] && [ "$2" = --yes ]; }; } || usage
+           cd "$ROOT"; exec "$TOOL" restart "$@" ${from[@]+"${from[@]}"} ;;
+  discard) [ $# -ge 1 ] || usage; cd "$ROOT"; exec "$TOOL" discard "$@" ;;
+  status)  cd "$ROOT"; exec "$TOOL" status "$@" ;;
+  changes) [ $# -ge 1 ] || usage; cd "$ROOT"; exec "$TOOL" changes "$@" ;;
+  permit)  { [ $# -eq 2 ] || [ $# -eq 3 ]; } || usage; cd "$ROOT"; exec "$TOOL" permit "$1" "$2" "${3:-all}" ;;
+  model)   cd "$ROOT"; exec "$TOOL" model "$@" ;;
+  backlog) cd "$ROOT"; exec "$TOOL" backlog "$@" ;;
+  watch)
+    { [ $# -eq 1 ] || { [ $# -eq 2 ] && [ "$2" = --once ]; }; } || usage
+    if [ "${2:-}" = --once ]; then exec "$TOOL" watch "$1"; fi
+    exec "$TOOL" watch "$1" --follow "${WATCH_INTERVAL:-3}" ;;
+  *) usage ;;
 esac

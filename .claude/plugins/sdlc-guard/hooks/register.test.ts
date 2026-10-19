@@ -13,7 +13,7 @@ function repo($: any, on: any, stage: Stage, have: string[] = [], layout = '') {
     return { deny: 'ENOENT' }
   })
   on('fs.exists', (_: unknown, e: { path: string }) => ({ value: have.some(f => e.path.endsWith(f)) }))
-  // `node scripts/sdlc-config.cjs layout` answers with `layout` (empty: no settings, so this repository's layout applies)
+  // `ai-sdlc-helper layout` answers with `layout` (empty: no settings, so this repository's layout applies)
   on('process.run', () => ({ value: { exitCode: 0, stdout: layout, stderr: '', isStdoutTruncated: false } }))
   on('tool.call', () => ({ result: 'ran', text: 'ran' }))
 }
