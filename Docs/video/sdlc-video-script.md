@@ -367,9 +367,20 @@ highlight "plan-1.md Step 4 and specs-1.md replace `console.error(err)` … with
 > Only then is the repair committed and the tests locked again. If any link breaks, the tests are restored to the
 > locked commit. And the repair agent can also say "no repair needed: the code is wrong", which sends the work back.
 >
-> On the real run, Test repair appears as its own stage between Implement and Review, with two models on it: the
-> repair agent on Sonnet and the auditor on Opus. When it finished, the log said "test repair accepted; tests locked
-> again", with the new commit hash, and the suite read 238 of 238.
+> On the real run, the chain caught something on the first try. The Implement agent's first claim didn't cite the spec
+> or a decision, so the pre-check rejected it before any agent ran: "claim gives no spec/decision/isolation
+> justification", "TEST REPAIR REJECTED", and the tests were restored to the locked commit. The run stopped at Test
+> repair with a red cross, and told me exactly how to resume once the claim was fixed.
+
+**SCREEN:** `[CAP]` `c25-test-repair-rejected.mp4` (6 s): "add-json-logging failed at Test repair", the Test repair box
+with a red ✗, and **Why it failed** listing "REJECT: claim gives no spec/decision/isolation justification", "TEST REPAIR
+REJECTED: claims fail pre-check", "tests restored to 6efb554…" and "Resume at Test repair once fixed:
+FROM=test-repair ./scripts/sdlc.sh add-json-logging". Freeze on `s36-why-it-failed.png`.
+
+> The claim was rewritten to quote the plan and the spec, the one we saw a minute ago, and the run resumed at Test
+> repair. This time Test repair ran as its own stage between Implement and Review, with two models on it: the repair
+> agent on Sonnet and the auditor on Opus. When it finished, the log said "test repair accepted; tests locked again",
+> with the new commit hash, and the suite read 238 of 238.
 
 **SCREEN:** `[CAP]` `c18-test-repair.mp4` (10 s): the Test repair box, "repair sonnet · medium / audit opus · medium",
 "4/7 stages", and the output "4b Test repair (only because the Implement agent claimed test defects)". Then
@@ -425,6 +436,8 @@ open a PR."
 > `restart` deletes a branch, the branch tip is saved, and the command to bring it back is printed. And the house rules
 > for the orchestrating Claude session say: never merge a pull request without asking the human first, with an explicit
 > Merge or Do not merge choice. A green CI run is not a yes.
+
+**SCREEN:** `[CAP]` `s38-confirm-discard-zoom.png`: "the branch tip is saved so it can be recovered".
 
 **SCREEN:** `[R:SafeguardStack]` collapses into one sentence.
 
@@ -557,6 +570,14 @@ separately.
 > stage. Type an instruction for that stage, for example "keep the existing error format", press **Resume at
 > Implement**, and that text is handed to the agent as binding input. From the terminal it's `FROM=implement` before the
 > command. And **Discard** throws the attempt away and lets you start fresh, with the old branch recoverable.
+
+**SCREEN:** `[CAP]` `s35-test-repair-rejected.png`: a failed run offers **Resume from Implement** at the top. Then
+`c26-discard-keep-it.mp4` (7 s): **Discard** turns into **Confirm discard** / **Keep it** with the warning "This
+deletes the worktree and branch sdlc/add-json-logging (unpushed work is lost; the branch tip is saved so it can be
+recovered). A running pipeline is stopped first.", then **Keep it**. Freeze on `s38-confirm-discard-zoom.png`. And when
+you do mean it: `c27-confirm-discard.mp4` (10 s), **Confirm discard**, "Discarding add-json-logging (stopping it and
+deleting its worktree)…", "Discarded add-json-logging."; then `c28-board-after-discard.mp4` (8 s), the card leaves the
+Done column.
 
 **Step 6: configure models.**
 
@@ -864,6 +885,20 @@ frame, which matters in a video about safeguards. Clips are H.264, 30 fps, no au
 | `c22-done-and-ship.mp4` | 0:00–0:06.6 | The finished run and the Ship output | Main 5 step 7 |
 | `c23-show-claim.mp4` | 0:09.5–0:12.5 | **Show claim** opening the claim | Main 3 card 3, Short 4 |
 | `c24-board-done.mp4` | 0:16–0:21 | The board scrolling to the Done column | Main 5 step 3, Short 6 |
+| **Recording 12** `Resume_from_implement.mov` (20 s, 3612 × 2058; cropped from x 545, audio dropped; the pane does not change) | | | |
+| `s35-test-repair-rejected.png` | 0:03 | Failed at Test repair, red ✗, **Resume from Implement** | Main 4 safeguard 4, 5 step 5 |
+| `s36-why-it-failed.png` | 0:03 | Zoom on **Why it failed**: the pre-check rejection and the resume command | Main 4 safeguard 4 |
+| `c25-test-repair-rejected.mp4` | 0:00–0:06 | The rejected repair, held | Main 4 safeguard 4 |
+| **Recording 13** `Discard-ConfirmDiscard-KeepIt` (12 s, 2888 × 1470, audio dropped) | | | |
+| `s37-confirm-discard.png` | 0:04 | **Confirm discard** / **Keep it** and the warning | Main 5 step 5 |
+| `s38-confirm-discard-zoom.png` | 0:04 | Zoom on the warning: "the branch tip is saved so it can be recovered" | Main 4 safeguard 9, 5 step 5 |
+| `c26-discard-keep-it.mp4` | 0:00.8–0:08.2 | Discard, the confirmation, **Keep it** | Main 5 step 5 |
+| **Recording 14** `Discard` (34 s, 2888 × 1470, audio dropped; the last 12 s browse the backlog and are not used) | | | |
+| `s39-discarding.png` | 0:06 | "Discarding add-json-logging (stopping it and deleting its worktree)…" | Main 5 step 5 |
+| `s40-discarded.png` | 0:10 | "Discarded add-json-logging." | Main 5 step 5 |
+| `s41-board-after-discard.png` | 0:19.5 | The board, Done column empty | Main 5 step 5 |
+| `c27-confirm-discard.mp4` | 0:01.5–0:11 | **Confirm discard** to "Discarded" | Main 5 step 5 |
+| `c28-board-after-discard.mp4` | 0:13–0:21 | The card leaves the Done column | Main 5 step 5 |
 
 Left out on purpose: the end of recording 3, where the pane briefly says "Paused, but questions.md has no questions I
 can read" after **Allow all**, and the long stretches of scrolling with no clicks in recordings 2.1 and 2.2.
@@ -876,7 +911,8 @@ sdlc/add-json-logging 365573f…", a real example of the discard safeguard (Main
 2. `Docs/backlog/fix-user-validation-v2/decisions.md`: Q1 to Q6.
 3. `.claude/plugins/sdlc-guard/hooks/register.ts`: `refuse()` and `FAILED`.
 4. A real run: `bash scripts/sdlc-mod.sh run <slug>` and `watch <slug>` in a split terminal.
-5. The `sdlc-monitor` pane, the parts not recorded yet: **Submit answers and resume**, Stop, Resume at a stage, the manual input box, Discard, and the CONFIG pane
+5. The `sdlc-monitor` pane, the parts not recorded yet: **Submit answers and resume**, **Stop** (both presses), the per-stage manual input box with
+   **Resume at Implement** pressed and the run restarting, and the CONFIG pane
    with **Test**.
 6. `git log --oneline` of a finished `sdlc/<slug>` branch.
 7. `Docs/backlog/index.md` with the completed pipeline features.

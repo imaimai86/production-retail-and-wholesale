@@ -77,6 +77,11 @@ const capLabel = {
   'c19-review-tests-green.mp4': 'Review, 238/238 · 7 s', 'c20-review-allow-all.mp4': 'Review: Allow all · 12 s',
   'c21-board-review.mp4': 'Card in Review · 4 s', 'c22-done-and-ship.mp4': 'Done and Ship output · 7 s',
   'c23-show-claim.mp4': 'Show claim · 3 s', 'c24-board-done.mp4': 'Card in Done · 5 s',
+  's35-test-repair-rejected.png': 'Failed at Test repair', 's36-why-it-failed.png': 'Why it failed: pre-check rejected the claim',
+  's37-confirm-discard.png': 'Confirm discard / Keep it', 's38-confirm-discard-zoom.png': 'Discard warning: branch tip saved',
+  'c25-test-repair-rejected.mp4': 'Test repair rejected · 6 s', 'c26-discard-keep-it.mp4': 'Discard, confirm, Keep it · 7 s',
+  's39-discarding.png': 'Discarding…', 's40-discarded.png': 'Discarded', 's41-board-after-discard.png': 'Board after discard',
+  'c27-confirm-discard.mp4': 'Confirm discard → Discarded · 10 s', 'c28-board-after-discard.mp4': 'Card leaves Done · 8 s',
 };
 const captures = capFiles.length ? `
 <section class="captures" id="captures" aria-labelledby="caps-h">
@@ -178,7 +183,7 @@ main ul::after { content: ""; display: block; clear: both; }
 </style>
 <div class="wrap">
   <header class="top">
-    <span class="eyebrow">Script review · draft 7</span>
+    <span class="eyebrow">Script review · draft 8</span>
     <h1>The Software Factory</h1>
     <p>Main YouTube video and eleven Shorts on the SDLC pipeline, the sdlc-monitor plugin and the /triage intake. Voice-over is set in serif, on-screen directions in tinted boxes. Green chips are Remotion scenes; amber chips are screen captures.</p>
     <div class="meta"><span>Main video ≈ 24 min · 16:9</span><span>11 Shorts · 45–60 s · 9:16</span><span>Source: Docs/video/sdlc-video-script.md</span></div>
