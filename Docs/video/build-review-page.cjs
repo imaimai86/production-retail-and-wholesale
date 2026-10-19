@@ -88,6 +88,9 @@ const capLabel = {
   's51-triage-decisions.png': 'Decisions table (low res)', 's52-triage-published.png': 'Published to triage/ (low res)', 's53-triage-pr.png': 'Pull request #103 (low res)',
   'c29-triage-explores.mp4': 'Triage explores · 12 s at 4×', 'c30-triage-questions.mp4': 'Triage questions · 26 s',
   'c31-triage-own-answer.mp4': 'Own answer, Q4 · 18 s', 'c32-triage-publish-pr.mp4': 'Submit to PR · 36 s at 2× (low res)',
+  's54-config-providers.png': 'CONFIG: providers, key set', 's55-config-add-form.png': 'Add provider form', 's56-config-name-rejected.png': 'Provider name refused',
+  's57-config-added-key-not-set.png': 'Added, key NOT set', 's58-config-edit.png': 'Edit provider', 's59-config-confirm-remove.png': 'Confirm remove / Keep it',
+  's60-config-removed.png': 'Provider removed', 'c33-config-add-provider.mp4': 'Add a provider · 20 s at 3×', 'c34-config-edit-remove.mp4': 'Edit and remove · 18 s at 1.5×',
 };
 const captures = capFiles.length ? `
 <section class="captures" id="captures" aria-labelledby="caps-h">
@@ -189,7 +192,7 @@ main ul::after { content: ""; display: block; clear: both; }
 </style>
 <div class="wrap">
   <header class="top">
-    <span class="eyebrow">Script review · draft 9</span>
+    <span class="eyebrow">Script review · draft 10</span>
     <h1>The Software Factory</h1>
     <p>Main YouTube video and eleven Shorts on the SDLC pipeline, the sdlc-monitor plugin and the /triage intake. Voice-over is set in serif, on-screen directions in tinted boxes. Green chips are Remotion scenes; amber chips are screen captures.</p>
     <div class="meta"><span>Main video ≈ 24 min · 16:9</span><span>11 Shorts · 45–60 s · 9:16</span><span>Source: Docs/video/sdlc-video-script.md</span></div>

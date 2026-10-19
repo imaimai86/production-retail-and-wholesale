@@ -495,7 +495,7 @@ to the building shows where the factory will move out on its own: "standalone li
 > Let's run it. You need Node.js, git, Claude Code, and Docker or a local PostgreSQL for the integration tests. You
 > also need graft, a code-graph tool the Plan station uses to find which files a change touches.
 
-**SCREEN:** `[CAP]` Terminal:
+**SCREEN:** `[R:CommandCard]` (an animated text card, not a screen capture):
 ```bash
 git clone https://github.com/imaimai86/production-retail-and-wholesale
 cd production-retail-and-wholesale
@@ -519,7 +519,7 @@ sent by the client`. Then `s52-triage-published.png`: the brief committed and pu
 
 **Step 2: start a run.**
 
-**SCREEN:** `[CAP]`
+**SCREEN:** `[R:CommandCard]`:
 ```bash
 bash scripts/sdlc-mod.sh run fix-user-validation
 bash scripts/sdlc-mod.sh watch fix-user-validation
@@ -575,8 +575,7 @@ the Done column, "done · 29 files changed".
 card turns amber, "needs answers: 7 questions", the toast "add-json-logging is paused: 7 question(s) need answers", and
 "0/7 questions answered" above Q1; `c07-type-own-answer.mp4` (6 s), "My custom an…" typed into Q1's box and cleared;
 `c08-accept-suggested.mp4` (8 s, four cuts), **Use suggested** on Q1 to Q4, each turning into "→ accept suggested".
-Freeze on `s10-accept-suggested.png`. The recordings stop before **Submit answers and resume**; record that click
-separately.
+Freeze on `s10-accept-suggested.png`.
 
 > When the Spec agent has questions, the run pauses and the card turns amber. On this run it had seven: should an
 > error reaching the handler be logged once or twice, how to log a thrown value that isn't an Error, whether to trust
@@ -587,10 +586,13 @@ separately.
 
 **Step 5: steer, stop, resume.**
 
-> Something going the wrong way? **Stop**, press twice to confirm. A stopped or failed pipeline shows a text box per
-> stage. Type an instruction for that stage, for example "keep the existing error format", press **Resume at
-> Implement**, and that text is handed to the agent as binding input. From the terminal it's `FROM=implement` before the
-> command. And **Discard** throws the attempt away and lets you start fresh, with the old branch recoverable.
+> When a run fails, the pane tells you why and offers to resume it, for example **Resume from Implement**, so it picks up
+> from the last good stage instead of starting over. From the terminal it's `FROM=implement` before the command. And
+> **Discard** throws the attempt away and lets you start fresh, after a second confirmation, with the old branch
+> recoverable.
+>
+> What's not there yet: stopping a stage halfway and giving it a note before it restarts. That's on the backlog, and
+> it's one of the first things the standalone library will do properly.
 
 **SCREEN:** `[CAP]` `s35-test-repair-rejected.png`: a failed run offers **Resume from Implement** at the top. Then
 `c26-discard-keep-it.mp4` (7 s): **Discard** turns into **Confirm discard** / **Keep it** with the warning "This
@@ -602,17 +604,25 @@ Done column.
 
 **Step 6: configure models.**
 
-**SCREEN:** `[CAP]` The **CONFIG** pane: a provider row, **Test** on a model, a toast "ok".
+**SCREEN:** `[CAP]` `c33-config-add-provider.mp4` (20 s, 3× speed): the **CONFIG** pane with one provider, `openrouter`,
+"OPENROUTER_API_KEY key set" (`s54-config-providers.png`); **Add provider** opens the form (`s55`): provider name,
+endpoint, "API key variable NAME (not the key)", models, the effort flag; "Test Provider" is refused with "provider
+name: must match ^[a-z0-9][a-z0-9-]*$" (`s56-config-name-rejected.png`); then "added test-provider (1 models)" with
+"NEW_ENV key NOT set" (`s57-config-added-key-not-set.png`). Then `c34-config-edit-remove.mp4` (18 s, 1.5×): **Edit**
+(`s58`), **Remove**, **Confirm remove** / **Keep it** (`s59`), "removed test-provider" (`s60`).
 
-> The **CONFIG** button opens the model registry: add a provider, its endpoint, the name of the variable that holds its
-> key, and its models. Press **Test** to send one request and see if it answers. Then pick models per stage, for
-> example `MODEL_IMPLEMENT=opus EFFORT_IMPLEMENT=high`.
+> The **CONFIG** button opens the model registry. Each provider shows its endpoint, the name of the variable that holds
+> its key, and whether that variable is set in your environment. Add one: a name, an endpoint, the key variable's
+> name, never the key itself, and its models. Watch the name check: "Test Provider" is refused, because a provider name
+> has to be lowercase letters, digits and dashes. Saved, it says "key NOT set" until you export that variable. Edit and
+> remove work the same way, with a confirmation before anything is deleted. Then pick models per stage, for example
+> `MODEL_IMPLEMENT=opus EFFORT_IMPLEMENT=high`.
 
 **Step 7: review the result.**
 
 **SCREEN:** `[CAP]` `c22-done-and-ship.mp4` (7 s): "add-json-logging done", "7/7 stages", every box ticked including
 Test repair, Review and Commit, then the Ship output ending "Review with: git log --oneline 3d9d92a…HEAD ; then open a
-PR." Freeze on `s31-run-done.png`. Then `git log --oneline` on the `sdlc/<slug>` branch (still to record).
+PR." Freeze on `s31-run-done.png`. Then `[R:CodeCard]`: `git log --oneline` of a finished `sdlc/<slug>` branch.
 
 > When it's done you have a branch with the locked tests commit, the feature commit, and the backlog item ticked.
 > Read the spec, the plan and the review in the docs folder, look at the diff, and open a pull request. The factory
@@ -655,7 +665,7 @@ plugin: the interface (slash commands, control pane, guard hooks, working rules)
 "choose the base branch", "every DB or API change must bring integration tests".
 
 > In this repo, the backlog has more: an opt-in gate where the pipeline waits for your input before each stage, stopping
-> a stage and restarting it with new instructions in one action, a full-screen redesign of the monitor, choosing the
+> a stage and restarting it with your own note in one action (the standalone library will have both), a full-screen redesign of the monitor, choosing the
 > model per stage from the pane, a test framework registry, a base-branch dropdown, and a gate that demands
 > integration tests for every database or API change.
 
@@ -742,7 +752,7 @@ repo: link in the description."
 - **Beat 1:** `[CAP]` `v01-select-and-run-vertical.mp4`. "One column per stage. Tick a backlog item, press Run selected, and watch the card jump into Spec with its agent, model and clock. Two run side by side."
 - **Beat 2:** `[CAP]` `c04-pipeline-view.mp4`, cropped to the stage chips and agent. "Every stage, which model is on it, the running agent, files changed, live output."
 - **Beat 3:** `[CAP]` `c08-accept-suggested.mp4`, then `c13-plan-allow-always.mp4`. "Questions from the spec agent? Answer here. An agent tried a command it wasn't allowed? Allow once, always, or deny."
-- **Payoff:** `[CAP]` `c24-board-done.mp4`. "And at the end, the card lands in Done. Stop, steer with a note, resume at any stage."
+- **Payoff:** `[CAP]` `c24-board-done.mp4`. "And at the end, the card lands in Done. Every stage visible, every refused command yours to decide."
 - **CTA.**
 
 ### Short 7: "Two features at once, zero conflicts" (45 s)
@@ -755,8 +765,8 @@ repo: link in the description."
 ### Short 8: "Bring your own model, keep your keys" (50 s)
 - **Hook:** "Want Opus for planning and a cheaper model for coding? One variable."
 - **Beat 1:** "Every station has its own model and effort. Defaults: Opus for Spec, Plan, Audit and Review; Sonnet for the hands-on work."
-- **Beat 2:** "Point a station at any Anthropic-compatible gateway, such as LiteLLM or OpenRouter."
-- **Beat 3:** "The registry stores the variable name, never the key. The key only exists inside the agent's own process, and your Anthropic key is blanked so it never reaches a third party."
+- **Beat 2:** `[CAP]` `c33-config-add-provider.mp4`. "Point a station at any Anthropic-compatible gateway, such as LiteLLM or OpenRouter, from the CONFIG pane."
+- **Beat 3:** `[CAP]` `s57-config-added-key-not-set.png`. "The registry stores the variable name, never the key. The key only exists inside the agent's own process, and your Anthropic key is blanked so it never reaches a third party."
 - **CTA.**
 
 ### Short 9: "It won't commit your .env" (45 s)
@@ -824,6 +834,8 @@ and `remotion-render` to export. Build each scene as a composition with props so
 | `Checklist` | Main 5 | 6 s | Prerequisites |
 | `Roadmap` | Main 6, Short 10 | 15 s | Two lanes: repo backlog and ai-sdlc-helper |
 | `CallToAction` | Main 7 | 15 s | Repo URL, MIT badge, help-wanted grid |
+| `CommandCard` | Main 5 steps 0 and 2 | 6 s each | Commands typed out line by line in a terminal-styled card |
+| `CodeCard` | Main 2a, 2c, 3, 4, 5 step 7 | 6–10 s each | A file excerpt or git output from the repo, with the key lines highlighted |
 
 Style: dark background, one accent colour per role (red for failing, green for passing, amber for paused, grey for
 the bash orchestrator), monospace for file names and commands, no stock footage. Real screen captures (`[CAP]`) are
@@ -937,6 +949,16 @@ frame, which matters in a video about safeguards. Clips are H.264, 30 fps, no au
 | `c30-triage-questions.mp4` | 1, five cuts | Confirmed and questions 1 to 3 | Main 2e, Short 11 |
 | `c31-triage-own-answer.mp4` | 2, three cuts | Typing an own answer, question 4 | Main 2e |
 | `c32-triage-publish-pr.mp4` | 3, whole, 2× | Submit, decisions, published, the pull request | Main 2e |
+| **Recording 18** `CONFIG pane` (1:33, 3372 × 1550; cropped from x 508 so the transcript beside it stays out; audio dropped) | | | |
+| `s54-config-providers.png` | 0:04 | One provider, `openrouter`, "OPENROUTER_API_KEY key set" | Main 5 step 6, Short 8 |
+| `s55-config-add-form.png` | 0:08 | The empty Add provider form | Main 5 step 6 |
+| `s56-config-name-rejected.png` | 0:51 | "provider name: must match ^[a-z0-9][a-z0-9-]*$" | Main 5 step 6 |
+| `s57-config-added-key-not-set.png` | 1:09.5 | "added test-provider (1 models)", "NEW_ENV key NOT set" | Main 5 step 6, Short 8, safeguard 7 |
+| `s58-config-edit.png` | 1:15 | The Edit form | Main 5 step 6 |
+| `s59-config-confirm-remove.png` | 1:28 | **Confirm remove** / **Keep it** | Main 5 step 6 |
+| `s60-config-removed.png` | 1:32 | "removed test-provider" | Main 5 step 6 |
+| `c33-config-add-provider.mp4` | 0:01.5–1:02, 3× | Add provider, name refused, saved | Main 5 step 6, Short 8 |
+| `c34-config-edit-remove.mp4` | 1:06–1:33, 1.5× | Edit, remove, confirm | Main 5 step 6 |
 
 Recording 17 (`triage-1.5.mov`) is 640 × 296: its stills and `c32` are upscaled 3× and soft. Re-record that part at the
 size of the other two if it will be on screen for long.
@@ -947,19 +969,17 @@ can read" after **Allow all**, and the long stretches of scrolling with no click
 The ticket view of `add-json-logging` also shows "Discarded. To get the old branch back: git branch
 sdlc/add-json-logging 365573f…", a real example of the discard safeguard (Main 4, safeguard 9).
 
-### Screen captures still to record
-1. `scripts/sdlc.sh`: the `agent()` function and the red gate and test-lock lines.
-2. `Docs/backlog/fix-user-validation-v2/decisions.md`: Q1 to Q6.
-3. `.claude/plugins/sdlc-guard/hooks/register.ts`: `refuse()` and `FAILED`.
-4. A real run: `bash scripts/sdlc-mod.sh run <slug>` and `watch <slug>` in a split terminal.
-5. The `sdlc-monitor` pane, the parts not recorded yet: **Submit answers and resume**, **Stop** (both presses), the per-stage manual input box with
-   **Resume at Implement** pressed and the run restarting, and the CONFIG pane with **Test**.
-6. `git log --oneline` of a finished `sdlc/<slug>` branch.
-7. `Docs/backlog/index.md` with the completed pipeline features.
-8. `git show --stat a23b93f` for the earlier three-item triage run. (The live `/triage` run is recorded; part 3
-   could be re-recorded at full size.)
+### Code and git cards (`[R:CodeCard]`, made from the repo, no recording needed)
+1. `scripts/sdlc.sh`: the `agent()` function and the red gate and test-lock lines (Main 2a, 2c).
+2. `Docs/backlog/fix-user-validation-v2/decisions.md`: Q1 to Q6 (Main 3 card 1, Short 3).
+3. `.claude/plugins/sdlc-guard/hooks/register.ts`: `refuse()` and `FAILED` (Main 4 safeguard 3).
+4. `git log --oneline` of a finished `sdlc/<slug>` branch (Main 5 step 7).
+5. `Docs/backlog/index.md` with the completed pipeline features (Main 3 card 8).
+6. `git show --stat a23b93f`, the earlier three-item triage run (Main 2e).
+7. The setup and run commands (Main 5, steps 0 and 2), as typed-out command cards instead of terminal captures.
 
-Use a throwaway backlog item for the live recording so the demo branch can be discarded afterwards.
+Not recorded, on purpose: **Stop** and steering a stage with a note (promised for the standalone library, see Main 5
+step 5 and Main 6). Optional: triage part 3 again at full size.
 
 ### Fact-check table
 Every claim the narration makes, and where it is true in the repo. Re-check before recording; the code moves.
