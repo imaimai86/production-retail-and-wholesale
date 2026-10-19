@@ -11,6 +11,8 @@ const Users = require('./models/users');
 const Categories = require('./models/categories');
 const Auth = require('./middleware/auth');
 const errorHandler = require('./middleware/errorHandler');
+const requestLogger = require('./middleware/requestLogger');
+const { logger, attachProcessHandlers } = require('./logger');
 const { isPresent, isNonEmptyString, isPositiveInt, isValidStatus } = require('./validation');
 
 function handleStockError(err, res, next) {
@@ -22,6 +24,7 @@ function handleStockError(err, res, next) {
 const app = express();
 const port = process.env.PORT || 3000;
 
+app.use(requestLogger);
 app.use(express.json({ strict: false }));
 
 app.get('/', (req, res) => {
@@ -834,8 +837,9 @@ app.get('/sales/:id/invoice', async (req, res, next) => {
 app.use(errorHandler);
 
 if (require.main === module) {
+  attachProcessHandlers(logger);
   app.listen(port, () => {
-    console.log(`Server listening on port ${port}`);
+    logger.info(`Server listening on port ${port}`);
   });
 }
 

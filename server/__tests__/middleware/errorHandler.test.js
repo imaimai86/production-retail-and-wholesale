@@ -1,5 +1,10 @@
 const http = require('http');
 const errorHandler = require('../../middleware/errorHandler');
+const loggerModule = require('../../logger');
+
+const lines = [];
+const sink = { write: (s) => { lines.push(s); } };
+const entries = () => lines.join('').split('\n').filter(Boolean).map((l) => JSON.parse(l));
 
 function makeRes(overrides = {}) {
   const res = { headersSent: false, status: jest.fn(), json: jest.fn(), ...overrides };
@@ -7,10 +12,10 @@ function makeRes(overrides = {}) {
   return res;
 }
 
-function run(err, resOverrides) {
+function run(err, resOverrides, req = {}) {
   const res = makeRes(resOverrides);
   const next = jest.fn();
-  errorHandler(err, {}, res, next);
+  errorHandler(err, req, res, next);
   return { res, next };
 }
 
@@ -23,14 +28,16 @@ const expected = (label, code, text) => [label, [[code]], [[{ error: text }]]];
 const GENERIC = 'Internal server error';
 
 describe('errorHandler middleware', () => {
-  let errorSpy;
+  let savedLogger;
 
   beforeEach(() => {
-    errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    lines.length = 0;
+    savedLogger = loggerModule.logger;
+    loggerModule.logger = loggerModule.createLogger(sink);
   });
 
   afterEach(() => {
-    errorSpy.mockRestore();
+    loggerModule.logger = savedLogger;
   });
 
   test('EH-01..07 it takes four parameters; a valid 4xx status (then statusCode) is used with its http.STATUS_CODES text', () => {
@@ -122,30 +129,71 @@ describe('errorHandler middleware', () => {
   });
 
   test('EH-16..20 every error is logged once; with headers already sent it delegates to next(err) and writes nothing', () => {
-    let err = new Error('secret db detail');
-    run(err);
-    expect(errorSpy).toHaveBeenCalledTimes(1);
-    expect(errorSpy).toHaveBeenCalledWith(err);
+    const req = { requestId: 'rid-1', method: 'GET', originalUrl: '/x?y=1' };
+    let err = Object.assign(new Error('secret db detail'), { code: 'E_DB' });
+    run(err, undefined, req);
+    let got = entries();
+    expect(got).toHaveLength(1);
+    expect(got[0].severity).toBe('ERROR');
+    expect(got[0].message).toContain('secret db detail');
+    expect(got[0].message).toContain('    at ');
+    expect(got[0].error.code).toBe('E_DB');
+    expect(got[0]['logging.googleapis.com/labels']).toEqual({ requestId: 'rid-1' });
+    expect(got[0].httpRequest.requestMethod).toBe('GET');
+    expect(got[0].httpRequest.requestUrl).toBe('/x');
+    expect(JSON.stringify(got[0])).not.toContain('y=1');
 
-    // EH-17 4xx errors too
-    err = Object.assign(new Error('nope'), { status: 404 });
-    run(err);
-    expect(errorSpy).toHaveBeenCalledWith(err);
+    // EH-17 4xx errors are WARNING
+    lines.length = 0;
+    run(Object.assign(new Error('nope'), { status: 404 }), undefined, req);
+    got = entries();
+    expect(got).toHaveLength(1);
+    expect(got[0].severity).toBe('WARNING');
 
     // EH-18 EH-19 headers already sent
+    lines.length = 0;
     err = new Error('late failure');
     let { res, next } = run(err, { headersSent: true });
-    expect(errorSpy).toHaveBeenCalledWith(err);
+    expect(entries()).toHaveLength(1);
     expect(next).toHaveBeenCalledTimes(1);
     expect(next).toHaveBeenCalledWith(err);
     expect(res.status).not.toHaveBeenCalled();
     expect(res.json).not.toHaveBeenCalled();
 
-    // EH-20 also for a 4xx-status error
+    // EH-20 also for a 4xx-status error; a thrown string is logged without throwing
+    lines.length = 0;
     err = Object.assign(new Error('x'), { status: 404 });
     ({ res, next } = run(err, { headersSent: true }));
+    expect(entries()).toHaveLength(1);
     expect(next).toHaveBeenCalledWith(err);
     expect(res.status).not.toHaveBeenCalled();
     expect(res.json).not.toHaveBeenCalled();
+
+    lines.length = 0;
+    let out;
+    expect(() => { out = run('boom'); }).not.toThrow();
+    expect(entries()).toHaveLength(1);
+    expect(out.res.status).toHaveBeenCalledWith(500);
+    expect(out.res.json).toHaveBeenCalledWith({ error: GENERIC });
+  });
+
+  test('EH-21 logs constraint, table and column but never detail or where', () => {
+    const err = Object.assign(new Error('duplicate key'), {
+      code: '23505',
+      constraint: 'users_email_key',
+      table: 'users',
+      column: 'email',
+      detail: 'Key (email)=(a@b.c) already exists.',
+      where: 'SQL function "f"',
+    });
+    run(err);
+    const got = entries();
+    expect(got).toHaveLength(1);
+    expect(got[0].error).toEqual(expect.objectContaining({
+      code: '23505', constraint: 'users_email_key', table: 'users', column: 'email',
+    }));
+    const out = lines.join('');
+    expect(out).not.toContain('a@b.c');
+    expect(out).not.toContain('SQL function');
   });
 });
