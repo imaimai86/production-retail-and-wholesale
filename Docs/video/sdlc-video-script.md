@@ -163,6 +163,13 @@ Then the rows turn green one by one.
 0 uncommitted". Freeze on `s20-red-gate-16-failing.png`, and contrast it with `s18-red-tests-running.png`, where the
 same line still says "8 uncommitted".
 
+> Then the Implement agent goes to work. Attempt one, attempt two. By attempt three, 237 of 238 tests pass: from 16
+> failing down to one. And it never touched a test to get there.
+
+**SCREEN:** `[CAP]` `c17-implement-attempts.mp4` (11 s): Spec, Plan and Red tests ticked, Implement running, "3/6
+stages", the agent `impl-2` on "attempt 2/4", then `impl-3` on "attempt 3/4" and "Tests 237/238 passing · 1 failing".
+Freeze on `s23-one-failing.png`.
+
 #### 2d. Ingredient four: separation of duties
 
 **SCREEN:** `[R:MakerChecker]` Two columns, "Maker" and "Checker": Spec agent / developer answers; Red tests agent /
@@ -261,6 +268,15 @@ the backlog shelf, `Docs/backlog/index.md`.
 > stuck. Here, the Implement agent can file a claim in `test-issues.md`: test file, test name, and why, citing the spec.
 > That opens Test repair, a station that only exists for this. We'll walk through its checks in the safeguards section.
 > It's the most peculiar part of the whole factory.
+>
+> On our run, it happened. With one test left failing, the Implement agent filed this claim: a test still expects
+> `console.error` to be called, but the spec and the plan replace `console.error` with a structured logger. The status
+> and body checks still pass; only that one assertion contradicts the plan. That's not "the test is hard". That's "the
+> test is out of date, and here's the line of the plan that proves it".
+
+**SCREEN:** `[CAP]` `c23-show-claim.mp4` (3 s): **Show claim** on the finished run opens "Test repair claim
+(Docs/backlog/add-json-logging/test-issues.md, written by the Implement agent)". Freeze on `s33-repair-claim.png` and
+highlight "plan-1.md Step 4 and specs-1.md replace `console.error(err)` … with a structured logger entry".
 
 **Card 4: Tests must run real code.**
 
@@ -350,6 +366,14 @@ the backlog shelf, `Docs/backlog/index.md`.
 >
 > Only then is the repair committed and the tests locked again. If any link breaks, the tests are restored to the
 > locked commit. And the repair agent can also say "no repair needed: the code is wrong", which sends the work back.
+>
+> On the real run, Test repair appears as its own stage between Implement and Review, with two models on it: the
+> repair agent on Sonnet and the auditor on Opus. When it finished, the log said "test repair accepted; tests locked
+> again", with the new commit hash, and the suite read 238 of 238.
+
+**SCREEN:** `[CAP]` `c18-test-repair.mp4` (10 s): the Test repair box, "repair sonnet · medium / audit opus · medium",
+"4/7 stages", and the output "4b Test repair (only because the Implement agent claimed test defects)". Then
+`s27-tests-238-passing.png`: "Tests 238/238 passing" and "test repair accepted; tests locked again at 3d9d92a".
 
 **5. Real integration tests.**
 > Threat: unit tests that mock the database pass while the real SQL is broken. Mechanism: after the unit tests, the
@@ -367,6 +391,10 @@ the backlog shelf, `Docs/backlog/index.md`.
 > Here's a real one. The Spec agent wanted to read the error handler with `cat` and `grep` in the shell, which isn't
 > on its list. Later the Plan agent wanted to look inside `node_modules` for a logging library. Both runs stopped and
 > asked. I allowed each, once for this run or always, and the stage started again.
+>
+> My favourite: the Review agent wrote its own little probe, a broken JSON body with a password in it and a script
+> called `leak.js` run against the server, by the look of it to check that a password can't leak into the logs. And
+> the pipeline still stopped and asked before running it.
 
 **SCREEN:** `[CAP]` `s11-spec-refused-actions.png`: "The spec agent was refused 2 action(s). Allow or deny each; the stage
 restarts when none is left.", each command with **Allow this run (Bash(cd:\*))**, **Allow always**, **Deny**, and
@@ -385,6 +413,12 @@ restarts when none is left.", each command with **Allow this run (Bash(cd:\*))**
 > Secrets like `.env` and `*.pem`, editor and agent config, generated files and anything over 1 MiB are skipped and
 > listed in `ship-skipped.md`. New keys added to `.env` are copied to `.env.example` with the value `change-me`, never
 > the real value.
+>
+> On our run, Ship committed 15 files and skipped two: both under `.claude/`, marked "local or agent configuration".
+
+**SCREEN:** `[CAP]` `s32-ship-skipped.png`: "6/6 Commit", "Skipped: .claude/plugins/sdlc-monitor/hooks/register.test.ts:
+local or agent configuration", "Committed 15 file(s), skipped 2", "Review with: git log --oneline 3d9d92a…HEAD ; then
+open a PR."
 
 **9. Nothing is lost by accident, and nothing merges by accident.**
 > Threat: a "discard" that throws away a day of work, or a bot that merges to main. Mechanism: before `discard` or
@@ -497,7 +531,9 @@ claude --plugin-dir .claude/plugins/sdlc-monitor
 **SCREEN:** `[CAP]` `c12-plan-running.mp4` (8 s): later in the same run, Spec has a tick, the Plan chip is lit,
 "1/6 stages", the agent "plan opus · medium running 00:10"; back on the board the card now sits in the Plan column.
 Freeze on `s15-board-plan-column.png`. Then `c15-board-red-tests.mp4` (5 s): one column further, the card in Red tests,
-"tests (sonnet · medium)".
+"tests (sonnet · medium)". Then `c20-review-allow-all.mp4` (12 s): in Review, "Tests 238/238 passing", the Review agent
+refused 3 commands, **Allow all**, and Review starting again; and `c24-board-done.mp4` (5 s): the board, the card in
+the Done column, "done · 29 files changed".
 
 **Step 4: answer the questions.**
 
@@ -532,8 +568,9 @@ separately.
 
 **Step 7: review the result.**
 
-**SCREEN:** `[CAP]` `git log --oneline` on `sdlc/fix-user-validation-v2`:
-`test(...): add failing tests and spec/plan docs`, `feat(...)`, and the backlog tick.
+**SCREEN:** `[CAP]` `c22-done-and-ship.mp4` (7 s): "add-json-logging done", "7/7 stages", every box ticked including
+Test repair, Review and Commit, then the Ship output ending "Review with: git log --oneline 3d9d92a…HEAD ; then open a
+PR." Freeze on `s31-run-done.png`. Then `git log --oneline` on the `sdlc/<slug>` branch (still to record).
 
 > When it's done you have a branch with the locked tests commit, the feature commit, and the backlog item ticked.
 > Read the spec, the plan and the review in the docs folder, look at the diff, and open a pull request. The factory
@@ -644,10 +681,10 @@ repo: link in the description."
 
 ### Short 4: "When the AI says 'the test is wrong'" (60 s)
 - **Hook:** "Sometimes the test really is wrong. So how do you let an AI fix it without letting it cheat?"
-- **Beat 1:** `[R:Courtroom]` "The coding agent can't touch tests. It can only file a claim: which test, and which line of the spec proves it wrong. Three claims maximum."
+- **Beat 1:** `[R:Courtroom]`, then `c23-show-claim.mp4`. "The coding agent can't touch tests. It can only file a claim: which test, and which line of the spec proves it wrong. Three claims maximum."
 - **Beat 2:** "A separate repair agent edits only those files. Then code checks: no fewer asserts, no weaker matchers, no skipped tests, no deleted tests."
 - **Beat 3:** "The repaired test must still fail on the original empty code. Then an independent auditor, on a different model, must say exactly 'VERDICT: VALID'."
-- **Payoff:** "If in any doubt: invalid. Tests go back to the lock."
+- **Payoff:** `[CAP]` `c18-test-repair.mp4`. "If in any doubt: invalid. Tests go back to the lock. On my run: accepted, and 238 of 238."
 - **CTA.**
 
 ### Short 5: "Why bash is the boss of my AI agents" (50 s)
@@ -663,7 +700,7 @@ repo: link in the description."
 - **Beat 1:** `[CAP]` `v01-select-and-run-vertical.mp4`. "One column per stage. Tick a backlog item, press Run selected, and watch the card jump into Spec with its agent, model and clock. Two run side by side."
 - **Beat 2:** `[CAP]` `c04-pipeline-view.mp4`, cropped to the stage chips and agent. "Every stage, which model is on it, the running agent, files changed, live output."
 - **Beat 3:** `[CAP]` `c08-accept-suggested.mp4`, then `c13-plan-allow-always.mp4`. "Questions from the spec agent? Answer here. An agent tried a command it wasn't allowed? Allow once, always, or deny."
-- **Payoff:** "Stop, steer with a note, resume at any stage."
+- **Payoff:** `[CAP]` `c24-board-done.mp4`. "And at the end, the card lands in Done. Stop, steer with a note, resume at any stage."
 - **CTA.**
 
 ### Short 7: "Two features at once, zero conflicts" (45 s)
@@ -683,7 +720,7 @@ repo: link in the description."
 ### Short 9: "It won't commit your .env" (45 s)
 - **Hook:** "The scariest thing an AI pipeline can do is git add dot."
 - **Beat 1:** "Ours snapshots your work in progress before it starts, and only commits what it changed itself."
-- **Beat 2:** "Secrets, editor config, generated files and anything over a megabyte are skipped, and listed so you can see why."
+- **Beat 2:** `[CAP]` `s32-ship-skipped.png`. "Secrets, editor config, generated files and anything over a megabyte are skipped, and listed so you can see why. On my run: 15 committed, 2 skipped."
 - **Beat 3:** "New keys in .env reach .env.example as 'change-me'. Never the real value."
 - **CTA.**
 
@@ -801,6 +838,32 @@ frame, which matters in a video about safeguards. Clips are H.264, 30 fps, no au
 | `c14-red-tests-running.mp4` | 0:00–0:04 | The Red tests stage running | Main 2c |
 | `c15-board-red-tests.mp4` | 0:18.5–0:23.6 | Card in the Red tests column | Main 5 step 3 |
 | `c16-red-gate-failing.mp4` | 0:23.8–0:31.5 | The 16 failing tests appear and the run scrolls to the red gate output | Main 2c, Short 2 |
+| **Recording 8** `Implement-2.mov` (20 s, 1920 × 1092; cropped to the pane, below a stale "paused: 0 question(s)" banner) | | | |
+| `s21-implement-running.png` | 0:00.5 | Implement running, 3/6 stages, card "impl-2 … 04:44" | Main 2c |
+| `s22-attempt-2-of-4.png` | 0:04 | Agent impl-2, "attempt 2/4", Implement (8) files | Main 2c |
+| `s23-one-failing.png` | 0:13 | Agent impl-3, "attempt 3/4", "Tests 237/238 passing · 1 failing" | Main 2c |
+| `c17-implement-attempts.mp4` | 0:00–0:17.5, four cuts | Attempt 2 to attempt 3, down to one failing test | Main 2c |
+| **Recording 9** `test-repair.mov` (10 s, 3612 × 2058; cropped from x 545) | | | |
+| `s24-test-repair-stage.png` | 0:00.5 | Test repair box, "repair sonnet · medium / audit opus · medium", 4/7 stages | Main 4 safeguard 4 |
+| `s25-test-repair-output.png` | 0:09.8 | "4b Test repair (only because the Implement agent claimed test defects)" | Main 4 safeguard 4 |
+| `c18-test-repair.mp4` | whole | The Test repair stage running | Main 4 safeguard 4, Short 4 |
+| **Recording 10** `Review-permission.mov` (26 s, 3612 × 2058; cropped from x 860, then x 1125 when the side panel widens) | | | |
+| `s26-review-running.png` | 0:01 | Review running, 5/7, Test repair ticked with **Show claim** | Main 5 step 3 |
+| `s27-tests-238-passing.png` | 0:05 | "Tests 238/238 passing", review agent refused 3 actions, "test repair accepted; tests locked again at 3d9d92a" | Main 4 safeguards 4 and 6 |
+| `s28-review-refused.png` | 0:09.5 | The three refused commands, **Allow all** | Main 4 safeguard 6 |
+| `s29-review-restarted.png` | 0:19.5 | "Allowed", Review running again | Main 4 safeguard 6 |
+| `s30-board-review-column.png` | 0:23 | The board, card in the Review column, Done column next to it | Main 5 step 3 |
+| `c19-review-tests-green.mp4` | 0:00–0:06.5 | Review running, scroll to 238/238 | Main 2c, 5 step 3 |
+| `c20-review-allow-all.mp4` | 0:08.5–0:20.5 | **Allow all** on the Review agent's commands, Review restarts | Main 4 safeguard 6, 5 step 3 |
+| `c21-board-review.mp4` | 0:21.9–0:25.5 | Card in the Review column | Main 5 step 3 |
+| **Recording 11** `Show-repair-claim-Done.mov` (29 s, 2888 × 1470, audio dropped) | | | |
+| `s31-run-done.png` | 0:00.3 | "done", 7/7 stages, every box ticked | Main 5 step 7, end card |
+| `s32-ship-skipped.png` | 0:05 | Commit files, "238/238 passing", Ship output with the two skipped `.claude/` files | Main 4 safeguard 8, Short 9 |
+| `s33-repair-claim.png` | 0:11 | The Implement agent's Test repair claim, expanded | Main 3 card 3, Short 4 |
+| `s34-board-done.png` | 0:20 | The board, card in the Done column | Main 5 step 3, Short 6 |
+| `c22-done-and-ship.mp4` | 0:00–0:06.6 | The finished run and the Ship output | Main 5 step 7 |
+| `c23-show-claim.mp4` | 0:09.5–0:12.5 | **Show claim** opening the claim | Main 3 card 3, Short 4 |
+| `c24-board-done.mp4` | 0:16–0:21 | The board scrolling to the Done column | Main 5 step 3, Short 6 |
 
 Left out on purpose: the end of recording 3, where the pane briefly says "Paused, but questions.md has no questions I
 can read" after **Allow all**, and the long stretches of scrolling with no clicks in recordings 2.1 and 2.2.
@@ -813,8 +876,7 @@ sdlc/add-json-logging 365573f…", a real example of the discard safeguard (Main
 2. `Docs/backlog/fix-user-validation-v2/decisions.md`: Q1 to Q6.
 3. `.claude/plugins/sdlc-guard/hooks/register.ts`: `refuse()` and `FAILED`.
 4. A real run: `bash scripts/sdlc-mod.sh run <slug>` and `watch <slug>` in a split terminal.
-5. The `sdlc-monitor` pane, the parts not recorded yet: **Submit answers and resume**, the run in
-   Implement (with an attempt number), Stop, Resume at a stage, the manual input box, Discard, and the CONFIG pane
+5. The `sdlc-monitor` pane, the parts not recorded yet: **Submit answers and resume**, Stop, Resume at a stage, the manual input box, Discard, and the CONFIG pane
    with **Test**.
 6. `git log --oneline` of a finished `sdlc/<slug>` branch.
 7. `Docs/backlog/index.md` with the completed pipeline features.

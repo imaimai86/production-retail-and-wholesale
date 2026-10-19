@@ -67,6 +67,16 @@ const capLabel = {
   's18-red-tests-running.png': 'Red tests running, 8 uncommitted', 's19-board-red-tests-column.png': 'Card in the Red tests column',
   's20-red-gate-16-failing.png': 'Red gate: 16 failing, 0 uncommitted', 'c14-red-tests-running.mp4': 'Red tests running · 4 s',
   'c15-board-red-tests.mp4': 'Card in Red tests · 5 s', 'c16-red-gate-failing.mp4': 'Red gate: 16 failing · 8 s',
+  's21-implement-running.png': 'Implement running', 's22-attempt-2-of-4.png': 'Attempt 2/4', 's23-one-failing.png': 'Attempt 3/4: 1 failing',
+  's24-test-repair-stage.png': 'Test repair stage: repair sonnet, audit opus', 's25-test-repair-output.png': 'Test repair output',
+  's26-review-running.png': 'Review running, Show claim', 's27-tests-238-passing.png': '238/238, tests locked again',
+  's28-review-refused.png': 'Review agent refused 3 commands', 's29-review-restarted.png': 'Review restarted',
+  's30-board-review-column.png': 'Card in Review', 's31-run-done.png': 'Done: 7/7 stages', 's32-ship-skipped.png': 'Ship: 15 committed, 2 skipped',
+  's33-repair-claim.png': 'The Test repair claim', 's34-board-done.png': 'Card in Done',
+  'c17-implement-attempts.mp4': 'Implement attempts 2 → 3 · 11 s', 'c18-test-repair.mp4': 'Test repair · 10 s',
+  'c19-review-tests-green.mp4': 'Review, 238/238 · 7 s', 'c20-review-allow-all.mp4': 'Review: Allow all · 12 s',
+  'c21-board-review.mp4': 'Card in Review · 4 s', 'c22-done-and-ship.mp4': 'Done and Ship output · 7 s',
+  'c23-show-claim.mp4': 'Show claim · 3 s', 'c24-board-done.mp4': 'Card in Done · 5 s',
 };
 const captures = capFiles.length ? `
 <section class="captures" id="captures" aria-labelledby="caps-h">
@@ -168,7 +178,7 @@ main ul::after { content: ""; display: block; clear: both; }
 </style>
 <div class="wrap">
   <header class="top">
-    <span class="eyebrow">Script review · draft 6</span>
+    <span class="eyebrow">Script review · draft 7</span>
     <h1>The Software Factory</h1>
     <p>Main YouTube video and eleven Shorts on the SDLC pipeline, the sdlc-monitor plugin and the /triage intake. Voice-over is set in serif, on-screen directions in tinted boxes. Green chips are Remotion scenes; amber chips are screen captures.</p>
     <div class="meta"><span>Main video ≈ 24 min · 16:9</span><span>11 Shorts · 45–60 s · 9:16</span><span>Source: Docs/video/sdlc-video-script.md</span></div>
