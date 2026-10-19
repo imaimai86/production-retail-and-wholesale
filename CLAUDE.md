@@ -49,6 +49,7 @@ ADMIN_TOKEN=secret
   3. Only then confirm with the AskUserQuestion tool, never with a free-text "accept?" line (headless agents cannot ask: you ask for them). One AskUserQuestion question per agent question, up to 4 per call (batch the rest into further calls), with the question's title as the header and these options: **Accept suggested** (put the suggested answer in the description), **Use my alternative** (only when your answer differs; put it in the description), and the automatic Other for the user's own text. This is in addition to steps 1 and 2, never a replacement: the full text must already be printed in the same reply.
   4. Write each choice on its `**Answer:**` line (`accept` for the suggestion, otherwise the chosen or typed text) and rerun.
 
+- New dependencies: the Plan stage confirms a package's API from its published docs and types (WebFetch, WebSearch, `bash scripts/sdlc-fetch.sh <url>` for GET-only reads from package-doc hosts, or context7 when installed) and lists exact versions under `## Dependencies` in `plan-1.md`; the pipeline installs them at the start of Implement (in a worktree, into its own `server/node_modules`). No stage before Implement installs anything, and a brief must not require the developer to install first.
 - Ship commits only the files changed during the cycle (compared with `Docs/backlog/<slug>/logs/baseline.json`) and lists the skipped ones in `Docs/backlog/<slug>/logs/ship-skipped.md`.
 
 ## Git branch and push rule

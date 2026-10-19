@@ -17,6 +17,9 @@ export type Run = {
   stageFiles: Record<string, string[]>
   // actions refused and not decided yet; a paused run with these waits for Allow or Deny, then resumes at the stage
   permissions: PermissionAsk[]
+  // test-issues.md: the tests the Implement agent claims are wrong, and why the pipeline rejected the claim (REJECT lines of run.out)
+  claims: Claim[]
+  claimRejects: string[]
   // the last lines of the failed stage's log, else of run.out; empty unless the run failed or stopped
   reason: string[]
   slug: string
@@ -32,6 +35,8 @@ export type Run = {
   agentStarted: string
   runStarted: string
   updated: string
+  // why a running pipeline is waiting (for example "usage limit, resets 1:10am (Asia/Dubai)"); empty while it works
+  note: string
   pid: number
   files: string[]
   tests: { passed: number; failed: number; total: number } | null
@@ -109,3 +114,6 @@ declare module 'claude-code' {
     }
   }
 }
+
+// One line of test-issues.md: "<file> :: <test name> :: <why>" (a line in another shape keeps its text in `why`).
+export type Claim = { file: string; test: string; why: string }

@@ -399,14 +399,19 @@ describe('PATCH /sales/:id/status and DELETE /sales/:id', () => {
 
 describe('global error handler', () => {
   const token = '1';
-  let errorSpy;
+  const loggerModule = require('../logger');
+  const logLines = [];
+  const logSink = { write: (s) => { logLines.push(s); } };
+  let savedLogger;
 
   beforeEach(() => {
-    errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    logLines.length = 0;
+    savedLogger = loggerModule.logger;
+    loggerModule.logger = loggerModule.createLogger(logSink);
   });
 
   afterEach(() => {
-    errorSpy.mockRestore();
+    loggerModule.logger = savedLogger;
   });
 
   const getProducts = async err => {
@@ -425,7 +430,9 @@ describe('global error handler', () => {
     expect(res.text).not.toContain('secret db detail');
     expect(res.text).not.toMatch(/<html|<pre|\.js/i);
     // E-R2 logged server-side
-    expect(errorSpy).toHaveBeenCalledWith(err);
+    const logged = logLines.join('').split('\n').filter(Boolean).map((l) => JSON.parse(l))
+      .filter((e) => e.severity === 'ERROR' && e.message.includes('secret db detail') && e.message.includes(err.stack));
+    expect(logged.length).toBeGreaterThanOrEqual(1);
 
     // E-R3 driver error code and SQL detail never reach the client
     res = await getProducts(Object.assign(new Error('insert into products failed'), { code: '23505', detail: 'Key (id)=(1) exists' }));
@@ -471,5 +478,102 @@ describe('global error handler', () => {
     const router = app._router || app.router;
     const last = router.stack[router.stack.length - 1];
     expect(last.handle.length).toBe(4);
+  });
+});
+
+describe('logging', () => {
+  const loggerModule = require('../logger');
+  const token = '1';
+  const lines = [];
+  const sink = { write: (s) => { lines.push(s); } };
+  const entries = () => lines.join('').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const settle = () => new Promise(setImmediate);
+  let savedLogger;
+
+  beforeEach(() => {
+    lines.length = 0;
+    savedLogger = loggerModule.logger;
+    loggerModule.logger = loggerModule.createLogger(sink);
+  });
+
+  afterEach(() => {
+    loggerModule.logger = savedLogger;
+    jest.restoreAllMocks();
+  });
+
+  test('IX-L1 a thrown model error is logged with its message, stack and path but not returned', async () => {
+    const originalGetAll = Products.getAll;
+    Products.getAll = jest.fn().mockRejectedValueOnce(new Error('secret db detail'));
+    let res;
+    try {
+      res = await request(app).get('/products').set('x-auth-token', token);
+    } finally {
+      Products.getAll = originalGetAll;
+    }
+    await settle();
+    expect(res.statusCode).toBe(500);
+    expect(res.body).toEqual({ error: 'Internal server error' });
+    const out = lines.join('');
+    expect(out).toContain('secret db detail');
+    expect(out).toContain('    at ');
+    expect(out).toContain('/products');
+    const body = JSON.stringify(res.body);
+    expect(body).not.toContain('secret db detail');
+    expect(body).not.toContain('    at ');
+    expect(body).not.toContain('/products');
+  });
+
+  test('IX-L2 a 409 insufficient-stock response produces exactly one WARNING entry', async () => {
+    Inventory.transfer.mockRejectedValueOnce(coded('INSUFFICIENT_STOCK', 'Insufficient stock'));
+    const res = await request(app).post('/inventory/transfer').set('x-auth-token', token)
+      .send({ product_id: 1, from: 'A', to: 'B', quantity: 5 });
+    await settle();
+    expect(res.statusCode).toBe(409);
+    const got = entries();
+    expect(got).toHaveLength(1);
+    expect(got[0].severity).toBe('WARNING');
+  });
+
+  test('IX-L3 malformed JSON gives 400 and two WARNING entries sharing the request id', async () => {
+    const res = await request(app).post('/products')
+      .set('x-auth-token', token)
+      .set('Content-Type', 'application/json')
+      .send('{bad');
+    await settle();
+    expect(res.statusCode).toBe(400);
+    const got = entries();
+    expect(got).toHaveLength(2);
+    expect(got.every((e) => e.severity === 'WARNING')).toBe(true);
+    const fromRequestLogger = got.filter((e) => e.httpRequest && e.httpRequest.status === 400);
+    const fromErrorHandler = got.filter((e) => e.error);
+    expect(fromRequestLogger).toHaveLength(1);
+    expect(fromErrorHandler).toHaveLength(1);
+    const label = 'logging.googleapis.com/labels';
+    expect(fromRequestLogger[0][label].requestId).toBe(res.headers['x-request-id']);
+    expect(fromErrorHandler[0][label].requestId).toBe(res.headers['x-request-id']);
+  });
+
+  test('IX-L4 every response has X-Request-Id and the bodies are unchanged', async () => {
+    const root = await request(app).get('/');
+    expect(root.body).toEqual({ status: 'ok' });
+    const unauth = await request(app).get('/products');
+    expect(unauth.statusCode).toBe(401);
+    expect(unauth.body).toEqual({ error: 'Unauthorized' });
+    const ok = await request(app).get('/products').set('x-auth-token', token);
+    expect(ok.statusCode).toBe(200);
+    expect(ok.body).toEqual([]);
+    Inventory.transfer.mockRejectedValueOnce(coded('INSUFFICIENT_STOCK', 'Insufficient stock'));
+    const conflict = await request(app).post('/inventory/transfer').set('x-auth-token', token)
+      .send({ product_id: 1, from: 'A', to: 'B', quantity: 5 });
+    expect(conflict.body).toEqual({ error: 'Insufficient stock' });
+    const bad = await request(app).post('/products').set('x-auth-token', token)
+      .set('Content-Type', 'application/json').send('{bad');
+    expect(bad.body).toEqual({ error: 'Bad Request' });
+    for (const r of [root, unauth, ok, conflict, bad]) {
+      expect(typeof r.headers['x-request-id']).toBe('string');
+      expect(r.headers['x-request-id']).not.toBe('');
+    }
+    const supplied = await request(app).get('/').set('X-Request-Id', 'client-id-1');
+    expect(supplied.headers['x-request-id']).toBe('client-id-1');
   });
 });

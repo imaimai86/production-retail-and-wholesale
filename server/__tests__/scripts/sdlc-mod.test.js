@@ -16,7 +16,7 @@ const GIT_ENV = {
 // A stub pipeline: records where and how it ran, then sleeps if the slug asks for it.
 const STUB = `#!/usr/bin/env bash
 slug="$1"
-echo "cwd=$(pwd -P) slug=$slug sdlc_slug=\${SDLC_SLUG:-} plugins=\${CLAUDE_CODE_PLUGIN_DIRS:-} from=\${FROM:-}" >> "$(pwd -P)/ran.txt"
+echo "cwd=$(pwd -P) slug=$slug sdlc_slug=\${SDLC_SLUG:-} plugins=\${CLAUDE_CODE_PLUGIN_DIRS:-} from=\${FROM:-} base=\${SDLC_BASE-unset}" >> "$(pwd -P)/ran.txt"
 case "$slug" in
   slow*) sleep 300 & echo $! > "$(pwd -P)/sleep.pid"; wait $! ;;
   fail*) exit 1 ;;
@@ -64,10 +64,13 @@ function mkRepo() {
   fs.cpSync(path.join(template, 'repo'), repo, { recursive: true });
 }
 
-const { cleanEnv } = require('../../test-utils/sdlcSettings');
-const env = extra => ({
-  ...cleanEnv(), ...GIT_ENV, SDLC_WT_BASE: wts, SDLC_PLUGIN_DIRS: '', ...extra,
-});
+// The developer's own SDLC_BASE (set to try a branch in the pane) names a ref the test repos do not have: only a test sets it.
+const env = extra => {
+  const e = { ...process.env, ...GIT_ENV, SDLC_WT_BASE: wts, SDLC_PLUGIN_DIRS: '' };
+  delete e.SDLC_BASE;
+
+  return { ...e, ...extra };
+};
 
 function mod(args, extra = {}) {
   return spawnSync('bash', [path.join(repo, 'scripts/sdlc-mod.sh'), ...args], { cwd: repo, encoding: 'utf8', env: env(extra) });
@@ -134,6 +137,15 @@ describe('sdlc-mod.sh run', () => {
 
     expect(mod(['run', 'alpha']).status).toBe(0);
     expect(fs.readFileSync(path.join(wt, 'ran.txt'), 'utf8').trim().split('\n')).toHaveLength(2);
+  });
+
+  test('SDLC_BASE picks the base of the new worktree but is not passed on to the pipeline (or the tests it runs)', () => {
+    git(repo, 'branch', 'try-me');
+    const r = mod(['run', 'alpha'], { SDLC_BASE: 'try-me' });
+    expect(r.status).toBe(0);
+    const wt = path.join(fs.realpathSync(wts), 'alpha');
+    expect(fs.readFileSync(path.join(wt, 'ran.txt'), 'utf8')).toContain('base=unset');
+    expect(git(wt, 'rev-parse', 'HEAD')).toBe(git(repo, 'rev-parse', 'try-me'));
   });
 
   test('passes the plugin folders and FROM through, copies an uncommitted brief, and records a failing exit code', () => {
@@ -311,6 +323,36 @@ describe('sdlc-mod.sh discard and restart', () => {
     expect(fs.existsSync(path.join(wts, 'slow-one'))).toBe(false);
     expect(git(repo, 'branch', '--list', 'sdlc/slow-one')).toBe('');
     expect(fs.existsSync(path.join(repo, '.git/sdlc-runs/slow-one.json'))).toBe(false);
+  });
+
+  // Runs the wrapper in its own process group: a `kill 0` in it then hits only that group, never jest.
+  function modIsolated(args) {
+    return new Promise(resolve => {
+      const child = spawn('bash', [path.join(repo, 'scripts/sdlc-mod.sh'), ...args], { cwd: repo, env: env(), stdio: 'ignore', detached: true });
+      live.push(child);
+      child.on('close', (code, signal) => resolve({ code, signal }));
+    });
+  }
+
+  test('stop and discard --stop never signal anything for a run that is not running (pid 0 of a refused start, or a stale pid)', async () => {
+    git(repo, ...MERGED('alpha'));
+    expect(mod(['run', 'alpha']).status).toBe(5);
+    expect(registry('alpha').pid).toBe(0);
+
+    expect(await modIsolated(['stop', 'alpha'])).toEqual({ code: 0, signal: null });
+    expect(await modIsolated(['discard', 'alpha', '--yes', '--stop'])).toEqual({ code: 0, signal: null });
+    expect(fs.existsSync(path.join(repo, '.git/sdlc-runs/alpha.json'))).toBe(false);
+    expect(fs.existsSync(path.join(repo, '.git/sdlc-runs/alpha.interrupt'))).toBe(false);
+
+    // A finished run whose recorded pid now belongs to another process: that process is left alone.
+    expect(mod(['run', 'fail-one']).status).toBe(1);
+    const other = spawn('sleep', ['300'], { stdio: 'ignore' });
+    live.push(other);
+    const f = path.join(repo, '.git/sdlc-runs/fail-one.json');
+    fs.writeFileSync(f, JSON.stringify({ ...registry('fail-one'), pid: other.pid }));
+    expect(await modIsolated(['stop', 'fail-one'])).toEqual({ code: 0, signal: null });
+    expect(await modIsolated(['discard', 'fail-one', '--yes', '--stop'])).toEqual({ code: 0, signal: null });
+    expect(alive(other.pid)).toBe(true);
   });
 
   test('restart needs --yes (exit 6); with it the run starts again from scratch, unless the item is already merged (exit 5)', () => {

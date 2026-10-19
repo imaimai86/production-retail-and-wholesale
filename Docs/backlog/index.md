@@ -10,7 +10,7 @@ Markers: [ ] pending, [x] completed, [!] blocked, [~] parked (skipped by `script
 - [ ] `add-auth-token-table` - Feature: auth_tokens table (several tokens per user) and an admin user, so every request has a user id; POST /sales rejects requests without one (fixes the 500 from the raw token in sales.user_id)
 - [ ] `add-db-health-check` - Feature: GET /health that checks the database connection
 - [x] `add-db-integration-tests` - Feature: integration tests against real Postgres, plus GitLab CI
-- [ ] `add-json-logging` - Feature: Logs all errors and warnings: readable console locally, Google Cloud Logging JSON in Kubernetes
+- [x] `add-json-logging` - Feature: Logs all errors and warnings: readable console locally, Google Cloud Logging JSON in Kubernetes
 - [ ] `fix-user-validation` - Bug: POST /users returns 500 when name is missing; validate and fix the docs
 - [x] `fix-user-validation-v2` - Bug: POST /users returns 500 when name is missing; validate and fix the docs (v2: deliberately vaguer brief, for the clarifying-questions demo)
 - [ ] `warn-missing-env-config` - Feature: warn at startup when the repo-root .env is missing or ADMIN_TOKEN is not set

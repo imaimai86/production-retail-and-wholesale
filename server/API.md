@@ -4,6 +4,8 @@ The following REST endpoints support production, inventory and sales workflows.
 Authentication is performed using the `x-auth-token` header which contains a user
 id. All endpoints require this header.
 
+Every response carries an `X-Request-Id` header: the incoming value when it is valid, otherwise a generated UUID.
+
 ## Products
 - `GET /products` – list products (supports `page` and `limit` query params)
 - `POST /products` – create a product

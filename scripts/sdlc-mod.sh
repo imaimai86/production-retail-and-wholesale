@@ -48,7 +48,8 @@ usage() { echo "Usage: $0 run <slug> | stop <slug> | discard <slug> [--yes] [--s
 check_slug() { [[ "${1:-}" =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "Invalid slug '${1:-}': lowercase letters, digits and dashes only" >&2; exit 2; }; }
 json_get() { node -e 'try{const v=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))[process.argv[2]];process.stdout.write(v===undefined||v===null?"":String(v))}catch(e){}' "$1" "$2"; }
 # kill -0 also succeeds on a zombie (a process that has exited but whose parent has not collected it): that is not alive.
-alive() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null && [ "$(ps -o stat= -p "$1" 2>/dev/null | cut -c1)" != Z ]; }
+# Only a positive pid counts: `kill 0` means the caller's own process group (a refused start records pid 0), which would end the caller.
+alive() { [[ "${1:-}" =~ ^[1-9][0-9]*$ ]] && kill -0 "$1" 2>/dev/null && [ "$(ps -o stat= -p "$1" 2>/dev/null | cut -c1)" != Z ]; }
 killtree() { local p="$1" c; for c in $(pgrep -P "$p" 2>/dev/null); do killtree "$c"; done; kill -TERM "$p" 2>/dev/null || true; }
 
 # write_reg <slug> <worktree> <pid> <started> <state> <exit_code> <interrupted> <finished> [message]
@@ -96,6 +97,8 @@ is_merged() { [ -n "$(git -C "$ROOT" log "$2" -1 --format=%h --grep="^test($1): 
 stop_if_running() {
   local slug="$1" f="$REG/$1.json" pid i
   [ -f "$f" ] || return 0
+  # a finished run's pid may since belong to another process
+  [ "$(json_get "$f" state)" = running ] || return 0
   pid="$(json_get "$f" pid)"
   alive "$pid" || return 0
   : > "$REG/$slug.interrupt"
@@ -170,7 +173,8 @@ cmd_run() {
   export SDLC_SLUG="$slug"
 
   rc=0
-  (cd "$wt" && exec bash scripts/sdlc.sh "$slug") >>"$wt/$docs/logs/run.out" 2>&1 &
+  # SDLC_BASE only picks the base of a new worktree: the pipeline (and the tests it runs) must not inherit it.
+  (cd "$wt" && unset SDLC_BASE && exec bash scripts/sdlc.sh "$slug") >>"$wt/$docs/logs/run.out" 2>&1 &
   CHILD=$!
   trap 'killtree "$CHILD"' TERM INT
   wait "$CHILD" || rc=$?
@@ -193,7 +197,7 @@ cmd_stop() {
   f="$REG/$slug.json"
   [ -f "$f" ] || { echo "No run recorded for $slug" >&2; exit 1; }
   pid="$(json_get "$f" pid)"
-  alive "$pid" || { echo "$slug is not running"; exit 0; }
+  { [ "$(json_get "$f" state)" = running ] && alive "$pid"; } || { echo "$slug is not running"; exit 0; }
   : > "$REG/$slug.interrupt"
   killtree "$pid"
   # report the stop only once the pipeline is really gone (the pane shows a loader until then)

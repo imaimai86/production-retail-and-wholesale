@@ -14,10 +14,7 @@
 #        git-ignored .env are copied (placeholder values) into .env.example. Nothing to commit is a warning, not a failure.
 #        Test repair re-runs UNCLAIMED failing tests once; a pass is a flaky test: WARNING, listed in $LOG/flaky-tests.md, not rejected.
 #        Prompts: scripts/prompts/prompt-<stage>.md (spec, plan, red-tests, implement, test-repair, test-audit, review), read at run
-#        time. Placeholders: {{DOCS}} {{LOG}} {{TEST_DIR}} {{TEST_CMD}} {{RED_SHA}} {{SLUG}}, {{TEST_FILES}} (where the tests are,
-#        in words), {{TEST_FRAMEWORK}} (runner and language), and {{CODE_SEARCH}}: how to search
-#        code, for the code indexer in use (scripts/prompts/parts/code-search.<name>.md or its own guide), else Grep and Glob
-#        (scripts/prompts/parts/code-search.md).
+#        time. Placeholders: {{DOCS}} {{LOG}} {{TEST_DIR}} {{TEST_CMD}} {{RED_SHA}} {{SLUG}}.
 #        Model and effort per stage: MODEL_<STAGE> and EFFORT_<STAGE>, STAGE = SPEC PLAN RED_TESTS IMPLEMENT TEST_REPAIR
 #        TEST_AUDIT REVIEW (for example MODEL_IMPLEMENT=opus EFFORT_IMPLEMENT=high). SDLC_MODEL / SDLC_EFFORT set every stage
 #        that has no stage-specific value. Models: any `claude --model` value (alias or full id); effort: low|medium|high|xhigh|max.
@@ -28,10 +25,16 @@
 #        _MODELS (comma list of allowed model names) and optional _EFFORT=yes (pass --effort; default no). Shell values win over .env.
 #        Providers are looked up first in the user-level registry (scripts/sdlc-mod.sh model ...; the key is read from the
 #        environment variable the provider names), then in SDLC_PROVIDER*. The registry wins as a whole for a provider it lists.
+#        Dependencies: the Plan stage may use WebFetch, WebSearch and context7 (mcp__context7) to read a library's published
+#        docs and types; no stage before Implement installs anything. Implement starts by installing the exact versions the
+#        plan lists under "## Dependencies" ("- runtime: name@1.2.3" / "- dev: name@1.2.3") with npm --save-exact
+#        --ignore-scripts (SDLC_DEP_SCRIPTS=run allows install scripts). In a worktree the shared server/node_modules link is
+#        first replaced by the worktree's own install (npm ci), so the main tree's packages never change.
+#        Usage limit: an agent whose call ends with usage_limit_reached is retried every SDLC_LIMIT_RETRY seconds (default 300)
+#        for up to SDLC_LIMIT_MAX_WAIT seconds (default 21600, 6 h); meanwhile status.json says "running" with a note naming the
+#        reset time. Past that, the stage fails with "usage limit".
 #        SDLC_INTEGRATION_CI=run  when CI is set the integration suite is skipped with a warning
-#        unless this is "run" (or integration.ci is "run" in the settings)
-# Settings: sdlc.config.json, completed by detection (node scripts/sdlc-config.cjs show): test command and files, backlog
-#        folder, branch prefix, integration command, worktree links, agent commands and code search.
+#        unless this is "run" (which also needs DATABASE_URL)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -43,24 +46,11 @@ case "$FROM" in
   spec) FROM_N=1;; plan) FROM_N=2;; red-tests) FROM_N=3;; implement) FROM_N=4;; test-repair) FROM_N=5;; review) FROM_N=6;;
   *) echo "ERROR: unknown FROM=$FROM (use spec, plan, red-tests, implement, review or test-repair)"; exit 1;;
 esac
-# FROM says where THIS run starts; nothing it starts (tests, agents, pipelines the tests start) may inherit it.
-export -n FROM
 ROOT="$(pwd)"
 CHECK="node scripts/sdlc-testcheck.cjs"
-# Project settings: sdlc.config.json, completed by detection (see `node scripts/sdlc-config.cjs show`). The code search
-# note is left to code_search_setup; other warnings and any error are shown here.
-SETTINGS_ERR="$(mktemp)"
-SETTINGS="$(node scripts/sdlc-config.cjs env 2>"$SETTINGS_ERR")" || { cat "$SETTINGS_ERR"; rm -f "$SETTINGS_ERR"; echo "ERROR: fix the project settings above (node scripts/sdlc-config.cjs show)"; exit 1; }
-grep -v 'code search uses Grep and Glob' "$SETTINGS_ERR" || true; rm -f "$SETTINGS_ERR"
-eval "$SETTINGS"
-TEST_CMD="$SDLC_TEST_CMD"; TEST_DIR="$SDLC_TEST_DIR"; TEST_DIRS=("${SDLC_TEST_DIRS[@]}"); SOURCE_DIRS=("${SDLC_SOURCE_DIRS[@]}")
-BACKLOG_DIR="$SDLC_BACKLOG_DIR"; BACKLOG="$SDLC_BACKLOG"
-# sdlc-testcheck.cjs reads the test folders (colon-separated) and the folder its test keys are relative to.
-unset SDLC_TEST_DIRS; SDLC_TEST_DIRS="$(IFS=:; printf '%s' "${TEST_DIRS[*]}")"; export SDLC_TEST_DIRS SDLC_KEY_DIR
-# The test files as git pathspecs: a folder (server/__tests__) or ":(glob)" patterns for tests beside the source. Every git
-# command that guards, adds or restores the tests uses them; sdlc-testcheck.cjs gets them one per line.
-TEST_SPECS=("${SDLC_TEST_PATHSPECS[@]}")
-unset SDLC_TEST_PATHSPECS; SDLC_TEST_PATHSPECS="$(printf '%s\n' "${TEST_SPECS[@]}")"; export SDLC_TEST_PATHSPECS
+TEST_CMD="npm test"
+TEST_DIR="server/__tests__"
+BACKLOG="Docs/backlog/index.md"
 
 SLUG="${1:-}"
 if [ -z "$SLUG" ] && [ -f "$BACKLOG" ]; then
@@ -68,39 +58,38 @@ if [ -z "$SLUG" ] && [ -f "$BACKLOG" ]; then
 fi
 [ -n "$SLUG" ] || { echo "Usage: $0 <slug> (or add a pending item to $BACKLOG)"; exit 1; }
 
-DOCS="$BACKLOG_DIR/$SLUG"
+DOCS="Docs/backlog/$SLUG"
 [ -f "$DOCS/brief.md" ] || { echo "Missing $DOCS/brief.md"; exit 1; }
-BRANCH="${SDLC_BRANCH_PREFIX}$SLUG"
+BRANCH="sdlc/$SLUG"
 LOG="$DOCS/logs"; mkdir -p "$LOG"
 FAIL_LOG="$LOG/tests.log"
 # Repository-wide allow rules live in the main working tree, so every worktree run sees them.
 PERM_REPO="$(git worktree list --porcelain | awk '/^worktree /{print substr($0,10); exit}')/.claude/sdlc-permissions.json"
 
-# Code search: a code indexer (graft, graphify, or one declared in sdlc.config.json) when it is installed and the project
-# has its index, else Grep and Glob; one is recommended, none is required (see agent.codeSearch, and
-# `node scripts/sdlc-config.cjs code-search --list`). It sets the prompts' {{CODE_SEARCH}} text and the indexer's tools
-# and commands the agents may use.
-code_search_setup() {
-  local sh c rules=()
-  CODE_SEARCH=none; CODE_SEARCH_MCP=(); CODE_SEARCH_BASH=(); CODE_SEARCH_GUIDE=""
-  sh="$(node scripts/sdlc-config.cjs code-search --sh 2>"$LOG/code-search.txt")" && eval "$sh" || CODE_SEARCH=none
-  if [ -s "$LOG/code-search.txt" ]; then cat "$LOG/code-search.txt"; fi
-  for c in ${CODE_SEARCH_BASH[@]+"${CODE_SEARCH_BASH[@]}"}; do rules+=("Bash($c:*)"); done
-  # SDLC_AGENT_RULES (from the settings): the suites' test commands, lint and agent.allowCommands.
-  ALLOWED=(Read Write Edit Glob Grep ${CODE_SEARCH_MCP[@]+"${CODE_SEARCH_MCP[@]}"}
-    ${SDLC_AGENT_RULES[@]+"${SDLC_AGENT_RULES[@]}"} ${rules[@]+"${rules[@]}"}
-    "Bash(ls:*)" "Bash(git status:*)" "Bash(git diff:*)" "Bash(git log:*)")
-}
-code_search_setup
+ALLOWED=(Read Write Edit Glob Grep mcp__graft
+  "Bash(npm test:*)" "Bash(npm run lint:*)" "Bash(npm run generate-spec:*)" "Bash(graft:*)"
+  "Bash(ls:*)" "Bash(git status:*)" "Bash(git diff:*)" "Bash(git log:*)"
+  # Read-only commands every stage may run without a prompt (no find: -exec/-delete; no interpreters, curl or wget).
+  "Bash(cd:*)" "Bash(pwd)" "Bash(cat:*)" "Bash(head:*)" "Bash(tail:*)" "Bash(wc:*)" "Bash(grep:*)" "Bash(rg:*)"
+  "Bash(stat:*)" "Bash(file:*)" "Bash(diff:*)" "Bash(sort:*)" "Bash(uniq:*)" "Bash(cut:*)" "Bash(tr:*)" "Bash(jq:*)"
+  "Bash(which:*)" "Bash(command -v:*)" "Bash(readlink:*)" "Bash(realpath:*)" "Bash(dirname:*)" "Bash(basename:*)"
+  "Bash(git show:*)" "Bash(git ls-files:*)" "Bash(git rev-parse:*)" "Bash(git blame:*)" "Bash(git worktree list:*)"
+  "Bash(git grep:*)" "Bash(git cat-file:*)" "Bash(git branch --show-current)" "Bash(tree:*)" "Bash(du:*)" "Bash(date:*)"
+  "Bash(echo:*)" "Bash(npm ls:*)" "Bash(npm view:*)" "Bash(npm --version)"
+  # GET-only web reads through a wrapper (allowed hosts only); curl itself stays out.
+  "Bash(bash scripts/sdlc-fetch.sh:*)")
+# Plan reads the published docs and type definitions of a new library from the web (it is installed only in Implement).
+PLAN_TOOLS=(WebFetch WebSearch mcp__context7)
 
 # Status file: ONE small JSON line, overwritten in place (never appended), so it stays tiny.
 # Watch it with:  watch -n5 cat Docs/backlog/<slug>/logs/status.json
 STATUS="$LOG/status.json"; RUN_STARTED="$(date +%Y-%m-%dT%H:%M:%S)"
 MODELS_JSON="{}"; CUR_MODEL=""; CUR_EFFORT=""
-CUR_STAGE=""; CUR_AGENT=""; CUR_ATTEMPT=""; AGENT_STARTED=""; RUN_STATE="running"
+CUR_STAGE=""; CUR_AGENT=""; CUR_ATTEMPT=""; AGENT_STARTED=""; RUN_STATE="running"; CUR_NOTE=""
+LIMIT_RETRY="${SDLC_LIMIT_RETRY:-300}"; LIMIT_MAX_WAIT="${SDLC_LIMIT_MAX_WAIT:-21600}"
 set_status() {
-  printf '{"slug":"%s","state":"%s","stage":"%s","agent":"%s","model":"%s","effort":"%s","models":%s,"attempt":"%s","agent_started":"%s","run_started":"%s","updated":"%s","pid":%s}\n' \
-    "$SLUG" "$RUN_STATE" "$CUR_STAGE" "$CUR_AGENT" "$CUR_MODEL" "$CUR_EFFORT" "$MODELS_JSON" "$CUR_ATTEMPT" "$AGENT_STARTED" "$RUN_STARTED" "$(date +%Y-%m-%dT%H:%M:%S)" "$$" \
+  printf '{"slug":"%s","state":"%s","stage":"%s","agent":"%s","model":"%s","effort":"%s","models":%s,"attempt":"%s","agent_started":"%s","run_started":"%s","updated":"%s","pid":%s,"note":"%s"}\n' \
+    "$SLUG" "$RUN_STATE" "$CUR_STAGE" "$CUR_AGENT" "$CUR_MODEL" "$CUR_EFFORT" "$MODELS_JSON" "$CUR_ATTEMPT" "$AGENT_STARTED" "$RUN_STARTED" "$(date +%Y-%m-%dT%H:%M:%S)" "$$" "$CUR_NOTE" \
     > "$STATUS.tmp" && mv "$STATUS.tmp" "$STATUS"
 }
 # Files each stage changed (shown per stage in the pane): the stage that ends is credited with what changed since the last mark.
@@ -210,20 +199,8 @@ render_prompt() {
   local f="scripts/prompts/prompt-$1.md" t
   [ -f "$f" ] || { echo "ERROR: missing prompt file $f" >&2; exit 1; }
   t=$(cat "$f")
-  # Every stage ends with the tool rules (a refused shell command stops the run): scripts/prompts/parts/tools.md.
-  if [ -f scripts/prompts/parts/tools.md ]; then t="$t"$'\n\n'"$(cat scripts/prompts/parts/tools.md)"; fi
   t=${t//\{\{DOCS\}\}/$DOCS}; t=${t//\{\{LOG\}\}/$LOG}; t=${t//\{\{TEST_DIR\}\}/$TEST_DIR}
   t=${t//\{\{TEST_CMD\}\}/$TEST_CMD}; t=${t//\{\{RED_SHA\}\}/${RED_SHA:-}}; t=${t//\{\{SLUG\}\}/$SLUG}
-  t=${t//\{\{TEST_FRAMEWORK\}\}/"${SDLC_TEST_FRAMEWORK:-tests in the style the project already uses}"}
-  t=${t//\{\{TEST_FILES\}\}/"${SDLC_TEST_FILES:-$TEST_DIR/}"}
-  if [[ "$t" == *"{{CODE_SEARCH}}"* ]]; then
-    local text="${CODE_SEARCH_GUIDE:-}" part="scripts/prompts/parts/code-search.md"
-    if [ -z "$text" ]; then
-      [ -f "$part" ] || { echo "ERROR: missing prompt part $part" >&2; exit 1; }
-      text="$(cat "$part")"
-    fi
-    t=${t//\{\{CODE_SEARCH\}\}/"$text"}   # quoted: bash 5.2 would read & in the text as the match
-  fi
   printf '%s' "$t"
 }
 # agent <log-name> <stage>: headless, scoped tools, bounded turns, transcript saved. The prompt comes from prompt-<stage>.md
@@ -237,18 +214,38 @@ agent() {
   CUR_AGENT="$name"; AGENT_STARTED="$(date +%Y-%m-%dT%H:%M:%S)"; set_status
   # Rules the developer granted (this run's and the repository's) are added; a protected-path grant runs this stage without permission checks.
   local allowed=("${ALLOWED[@]}") mode rule rc=0 pending
+  [ "$pstage" != plan ] || allowed+=("${PLAN_TOOLS[@]}")
   while IFS= read -r rule; do [ -z "$rule" ] || allowed+=("$rule"); done < <(node scripts/sdlc-permissions.cjs args "$DOCS" "$pstage" "$PERM_REPO")
   mode="$(node scripts/sdlc-permissions.cjs mode "$DOCS" "$pstage")"
   [ "$mode" = acceptEdits ] || echo "   (permission checks are off for this stage: you allowed a protected path)"
-  ( apply_provider_env; exec claude -p "$prompt" "${STAGE_FLAGS[@]}" --permission-mode "$mode" --allowedTools "${allowed[@]}" \
-    --output-format json --max-turns "$MAX_TURNS" ) > "$LOG/$name.json" 2> "$LOG/$name.err" || rc=$?
+  # A usage limit is not the agent's failure: wait for the reset and run the same agent again (see the header).
+  local waited=0 limit
+  while :; do
+    rc=0
+    ( apply_provider_env; exec claude -p "$prompt" "${STAGE_FLAGS[@]}" --permission-mode "$mode" --allowedTools "${allowed[@]}" \
+      --output-format json --max-turns "$MAX_TURNS" ) > "$LOG/$name.json" 2> "$LOG/$name.err" || rc=$?
+    limit="$(usage_limit "$LOG/$name.json")"
+    [ -n "$limit" ] || break
+    if [ "$waited" -ge "${LIMIT_MAX_WAIT:-21600}" ]; then
+      CUR_NOTE=""; echo "   !! agent '$name' hit the usage limit ($limit) and it did not reset within ${LIMIT_MAX_WAIT:-21600}s"; exit 1
+    fi
+    [ "$waited" -gt 0 ] || echo "   .. usage limit reached ($limit): retrying '$name' every ${LIMIT_RETRY:-300}s"
+    CUR_NOTE="usage limit, $limit"; set_status
+    sleep "${LIMIT_RETRY:-300}"; waited=$((waited + ${LIMIT_RETRY:-300}))
+  done
+  [ -z "${CUR_NOTE:-}" ] || { echo "   .. usage limit over, '$name' ran"; CUR_NOTE=""; set_status; }
   # The result text goes to the usual log; what the agent was refused is recorded for the developer to allow or deny.
-  pending="$(node scripts/sdlc-permissions.cjs extract "$LOG/$name.json" "$LOG/$name.log" "$LOG/permissions.json" "$pstage" "$ROOT" "$LOG/$name.err" || echo 0)"
+  pending="$(SDLC_ALLOWED="$(printf '%s\n' "${allowed[@]}")" node scripts/sdlc-permissions.cjs extract "$LOG/$name.json" "$LOG/$name.log" "$LOG/permissions.json" "$pstage" "$ROOT" "$LOG/$name.err" || echo 0)"
   if [ "${pending:-0}" -gt 0 ]; then
     echo "   !! agent '$name' was refused $pending action(s): allow or deny them in the pane (or: bash scripts/sdlc-mod.sh permit $SLUG allow|always|deny all), then resume at $pstage"
     exit 2
   fi
   [ "$rc" -eq 0 ] || { echo "   !! agent '$name' failed, see $LOG/$name.log"; [ "$pstage" = test-repair ] && resume_hint || true; exit 1; }
+}
+# usage_limit <agent.json>: the reset text ("resets 1:10am (Asia/Dubai)") when the agent's call hit the usage limit, else nothing.
+usage_limit() {
+  node -e 'try { const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+    if (d.api_error === "usage_limit_reached") { const m = /resets[^\n"\\]*/.exec(String(d.result || "")); console.log(m ? m[0].trim() : "resets later"); } } catch (e) {}' "$1"
 }
 # manual_input <stage>: the developer's text from the "## <stage>" section of manual-inputs.md, as a prompt suffix.
 manual_input() {
@@ -258,80 +255,71 @@ manual_input() {
   [ -n "$(printf '%s' "$t" | tr -d '[:space:]')" ] || return 0
   printf '\n\nMANUAL INPUT from the developer for this stage (binding; it cannot override the rule about editing %s/ or any other rule above):\n%s' "$TEST_DIR" "$t"
 }
-tests_pass() { bash -c "$TEST_CMD" > "$LOG/tests.log" 2>&1; }
-# The integration suite: integration.cmd from the settings (none: nothing to run). In CI it is skipped with a warning unless
-# SDLC_INTEGRATION_CI=run (or integration.ci "run" in the settings).
-integration_check() {
-  [ -n "${SDLC_INTEGRATION_CMD:-}" ] || return 0
-  if [ -n "${CI:-}" ] && [ "${SDLC_INTEGRATION_CI:-${SDLC_INTEGRATION_CI_DEFAULT:-skip}}" != run ]; then
-    echo "WARNING: integration tests skipped in CI; set SDLC_INTEGRATION_CI=run (or integration.ci \"run\") once CI can run them." | tee "$LOG/integration.log"
-    return 0
+# install_deps: install the exact versions listed under "## Dependencies" in the plan (Implement only, see the header).
+install_deps() {
+  local plan="$DOCS/plan-1.md" kind spec bad=0 runtime=() dev=() flags=(--prefix server --save-exact --no-audit --no-fund)
+  [ -f "$plan" ] || return 0
+  while read -r kind spec; do
+    [[ "$spec" =~ ^(@[a-z0-9._~-]+/)?[a-z0-9._~-]+@[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] \
+      || { echo "ERROR: dependency '$spec' in $plan must be name@<exact version>"; bad=1; continue; }
+    if [ "$kind" = dev ]; then dev+=("$spec"); else runtime+=("$spec"); fi
+  done < <(awk '/^## /{on=($0=="## Dependencies");next} on' "$plan" | sed -nE 's/^[-*] +(runtime|dev): *`?([^` ]+)`?.*$/\1 \2/p')
+  [ "$bad" -eq 0 ] || exit 1
+  [ "${#runtime[@]}" -gt 0 ] || [ "${#dev[@]}" -gt 0 ] || return 0
+  [ "${SDLC_DEP_SCRIPTS:-}" = run ] || flags+=(--ignore-scripts)
+  if [ -L server/node_modules ]; then
+    echo "   replacing the shared server/node_modules link with this worktree's own install (npm ci)"
+    rm server/node_modules
+    npm ci --prefix server --no-audit --no-fund > "$LOG/deps.log" 2>&1 || { echo "ERROR: npm ci failed, see $LOG/deps.log"; exit 1; }
   fi
-  bash -c "$SDLC_INTEGRATION_CMD" > "$LOG/integration.log" 2>&1
+  if [ "${#runtime[@]}" -gt 0 ]; then
+    echo "   installing dependencies: ${runtime[*]}"
+    npm install "${flags[@]}" "${runtime[@]}" >> "$LOG/deps.log" 2>&1 || { echo "ERROR: npm install failed, see $LOG/deps.log"; exit 1; }
+  fi
+  if [ "${#dev[@]}" -gt 0 ]; then
+    echo "   installing dev dependencies: ${dev[*]}"
+    npm install "${flags[@]}" -D "${dev[@]}" >> "$LOG/deps.log" 2>&1 || { echo "ERROR: npm install failed, see $LOG/deps.log"; exit 1; }
+  fi
 }
+tests_pass() { $TEST_CMD > "$LOG/tests.log" 2>&1; }
+integration_check() { bash scripts/sdlc-integration.sh > "$LOG/integration.log" 2>&1; }
 # Unit tests, then the integration suite; FAIL_LOG names the log of the check that failed.
 success_check() {
   if ! tests_pass; then FAIL_LOG="$LOG/tests.log"; return 1; fi
   if ! integration_check; then FAIL_LOG="$LOG/integration.log"; return 1; fi
 }
 stage() { echo; echo "== $1"; mark_stage "$CUR_STAGE"; CUR_STAGE="$(echo "$1" | sed -E 's/^[0-9a-z]+(\/[0-9]+)? //; s/ \(.*//')"; CUR_AGENT=""; CUR_ATTEMPT=""; set_status; }
-# results_at <sha> <out> [files...]: the test results (scripts/sdlc-runners.cjs, every suite) on <sha>'s source, with the
-# given test files copied from the working tree. The settings' worktree links (node_modules and the like) are shared.
-results_at() {
+# jest_json_at <sha> <out> [files...]: run the suite on <sha>'s source, optionally overlaying test files from the working tree.
+jest_json_at() {
   local sha="$1" out="$2"; shift 2
-  local wt p; wt="$(mktemp -d)/wt"
+  local wt; wt="$(mktemp -d)/wt"
   git worktree add -q --detach "$wt" "$sha"
-  for p in ${SDLC_WT_LINKS[@]+"${SDLC_WT_LINKS[@]}"}; do
-    if [ -e "$ROOT/$p" ] && [ ! -e "$wt/$p" ]; then mkdir -p "$(dirname "$wt/$p")"; ln -s "$ROOT/$p" "$wt/$p"; fi
-  done
+  ln -s "$ROOT/server/node_modules" "$wt/server/node_modules"
   for f in "$@"; do mkdir -p "$wt/$(dirname "$f")"; cp "$f" "$wt/$f"; done
-  node scripts/sdlc-runners.cjs run "$ROOT" --cwd "$wt" --out "$out" >/dev/null 2>&1 || true
+  (cd "$wt/server" && npx jest --json --outputFile="$out" >/dev/null 2>&1) || true
   git worktree remove --force "$wt"
 }
 # resume_hint: tell the developer how to resume at Test repair, only when resumecheck's checks 1-4 and Q2 pass now.
 resume_hint() {
-  if $CHECK resumecheck "${ORIG_RED_SHA:-}" "$DOCS/test-issues.md" "$SLUG" "${LOCK_SHA:-}" >/dev/null 2>&1; then
+  if $CHECK resumecheck "${ORIG_RED_SHA:-}" "$DOCS/test-issues.md" "$SLUG" >/dev/null 2>&1; then
     echo "Resume at Test repair once fixed: FROM=test-repair ./scripts/sdlc.sh $SLUG"
   fi
 }
-# results_now <out>: the test results of the working tree.
-results_now() { node scripts/sdlc-runners.cjs run . --out "$ROOT/$1" >/dev/null 2>&1 || true; }
+jest_json_now() { (cd server && npx jest --json --outputFile="$ROOT/$1" >/dev/null 2>&1) || true; }
 # retry_unclaimed: one-time re-run of the UNCLAIMED failing tests in now.json; merges flaky passes back into it.
 retry_unclaimed() {
-  local keys n=0 parts args name
+  local keys n=0 file pat
   keys=$($CHECK unclaimed "$LOG/now.json" "$DOCS/test-issues.md") || return 1
   [ -n "$keys" ] || return 0
   rm -f "$LOG"/retry-*.json
-  # one run per file: its failing tests by full name (none: the whole file, which failed to load)
-  printf '%s\n' "$keys" | $CHECK retry-args | while IFS=$'\t' read -r -a parts; do
-    n=$((n+1)); args=(--file "${parts[0]}")
-    for name in "${parts[@]:1}"; do args+=(--test "$name"); done
-    node scripts/sdlc-runners.cjs run . --out "$ROOT/$LOG/retry-$n.json" "${args[@]}" >/dev/null 2>&1 || true
+  printf '%s\n' "$keys" | $CHECK retry-plan | while IFS=$'\t' read -r file pat; do
+    n=$((n+1))
+    if [ -n "$pat" ]; then (cd server && npx jest "$file" -t "$pat" --json --outputFile="$ROOT/$LOG/retry-$n.json" >/dev/null 2>&1) || true
+    else (cd server && npx jest "$file" --json --outputFile="$ROOT/$LOG/retry-$n.json" >/dev/null 2>&1) || true; fi
   done
   $CHECK merge-retry "$LOG/now.json" "$DOCS/test-issues.md" "$LOG/flaky-tests.md" "$LOG"/retry-*.json
 }
-# src_hash: the state of the source (the suites' folders, without their tests and the backlog), to see whether it changed.
-src_hash() {
-  local spec=("${SOURCE_DIRS[@]}") d
-  for d in "${TEST_SPECS[@]}"; do
-    case "$d" in ":(glob)"*) spec+=(":(exclude,glob)${d#:(glob)}");; *) spec+=(":(exclude)$d");; esac
-  done
-  spec+=(":(exclude)$BACKLOG_DIR")
-  { git diff -- "${spec[@]}"; git status --porcelain -- "${spec[@]}"; } | shasum | cut -d' ' -f1
-}
-# add_tests: stage every changed, new or deleted test file (git add refuses a pathspec that matches nothing).
-add_tests() {
-  local f
-  while IFS= read -r f; do [ -z "$f" ] || git add -A -- "$f"; done < <(git ls-files -m -o -d --exclude-standard -- "${TEST_SPECS[@]}" | sort -u)
-}
-# restore_tests <sha>: every test file as it was at <sha> (one that did not exist then is removed, new ones are deleted).
-restore_tests() {
-  local f
-  while IFS= read -r f; do
-    if git cat-file -e "$1:$f" 2>/dev/null; then git checkout -q "$1" -- "$f"; else rm -f "$f"; fi
-  done < <(git diff --name-only "$1" -- "${TEST_SPECS[@]}")
-  git clean -fdq -- "${TEST_SPECS[@]}"
-}
+src_hash() { { git diff -- server ":!$TEST_DIR"; git status --porcelain -- server ":!$TEST_DIR"; } | shasum | cut -d' ' -f1; }
 
 git rev-parse --verify "$BRANCH" >/dev/null 2>&1 && git checkout -q "$BRANCH" || git checkout -q -b "$BRANCH"
 echo "SDLC: $SLUG on branch $BRANCH"
@@ -394,22 +382,17 @@ stage "3/6 Red tests (red gate)"
 [ -f "$DOCS/plan-1.md" ] || { echo "FROM=$FROM but $DOCS/plan-1.md is missing: run Plan first"; exit 1; }
 agent tests red-tests
 if tests_pass; then echo "RED GATE FAILED: new tests pass before implementation. See $LOG/tests.log"; exit 1; fi
-git add -A -- "$DOCS"; add_tests
+git add "$DOCS" "$TEST_DIR"
 git commit -q -m "test($SLUG): add failing tests and spec/plan docs"
 RED_SHA=$(git rev-parse HEAD)
-LOCK_SHA="$RED_SHA"
 else
-  # The tests are locked at the commit the run continues from (the branch head). Agents cannot commit, so whatever is
-  # committed by now (a merge of the base branch into a paused run, say) is the developer's; only changes made from here
-  # on count as changes to the tests. Running the tests on the unimplemented source still uses the red-tests commit.
-  LOCK_SHA="$(git rev-parse HEAD)"
   # Review resumes from the latest locked tests (the red-tests commit, or the test-repair commit after it).
   REPAIR_PAT="^test($SLUG): add failing tests"
   [ "$FROM_N" -eq 6 ] && REPAIR_PAT="^test($SLUG): repair invalid tests"
   if [ "$FROM_N" -eq 5 ]; then
     stage "4b Test repair (only because the Implement agent claimed test defects)"
     RED_SHA=$(git log --format=%H -1 --grep="^test($SLUG): add failing tests")
-    $CHECK resumecheck "$RED_SHA" "$DOCS/test-issues.md" "$SLUG" "$LOCK_SHA" || exit 1
+    $CHECK resumecheck "$RED_SHA" "$DOCS/test-issues.md" "$SLUG" || exit 1
   else
     RED_SHA=$(git log --format=%H -1 --grep="^test($SLUG): add failing tests" --grep="$REPAIR_PAT")
     [ -n "$RED_SHA" ] || { echo "FROM=$FROM but no red-tests commit found for $SLUG"; exit 1; }
@@ -419,19 +402,20 @@ fi
 ORIG_RED_SHA="$RED_SHA"
 
 if [ "$FROM_N" -le 5 ]; then
-results_at "$RED_SHA" "$ROOT/$LOG/red.json"
+jest_json_at "$RED_SHA" "$ROOT/$LOG/red.json"
 
 if [ "$FROM_N" -le 4 ]; then
 # 4. GREEN LOOP -----------------------------------------------------------
 stage "4/6 Implement (green gate, max $MAX_ATTEMPTS attempts)"
 [ ! -f "$DOCS/test-issues.md" ] || echo "WARNING: test-issues.md exists and will be deleted; use FROM=test-repair to resume at Test repair"
 rm -f "$DOCS/test-issues.md"
+install_deps
 GREEN=0
 for i in $(seq 1 "$MAX_ATTEMPTS"); do
   echo " attempt $i"; CUR_ATTEMPT="$i/$MAX_ATTEMPTS"
   agent "impl-$i" implement
-  if [ -n "$(git diff --name-only "$LOCK_SHA" -- "${TEST_SPECS[@]}")" ]; then
-    echo "GUARD FAILED: tests were modified during implementation"; git diff --name-only "$LOCK_SHA" -- "${TEST_SPECS[@]}"; exit 1
+  if [ -n "$(git diff --name-only "$RED_SHA" -- "$TEST_DIR")" ]; then
+    echo "GUARD FAILED: tests were modified during implementation"; git diff --name-only "$RED_SHA" -- "$TEST_DIR"; exit 1
   fi
   if success_check; then echo " tests and integration green"; GREEN=1; break; fi
 done
@@ -446,12 +430,12 @@ if [ "$GREEN" -ne 1 ]; then
   stage "4b Test repair (only because the Implement agent claimed test defects)"
   reject() {
     echo "TEST REPAIR REJECTED: $1"
-    restore_tests "$LOCK_SHA"
-    echo "   tests restored to $LOCK_SHA. See $LOG/ and $DOCS/test-issues.md"
+    git checkout -q "$ORIG_RED_SHA" -- "$TEST_DIR"; git clean -fdq -- "$TEST_DIR"
+    echo "   tests restored to $ORIG_RED_SHA. See $LOG/ and $DOCS/test-issues.md"
     [ "${2:-}" != hint ] || resume_hint
     exit 1
   }
-  results_now "$LOG/now.json"
+  jest_json_now "$LOG/now.json"
   retry_unclaimed
   if [ "$FROM_N" -eq 5 ]; then
     # FROM=test-repair: fail early, before any agent runs and before anything is restored.
@@ -463,13 +447,13 @@ if [ "$GREEN" -ne 1 ]; then
   agent test-repair test-repair
   if grep -q '^NO REPAIR NEEDED' "$DOCS/test-repair-1.md" 2>/dev/null; then reject "repair agent says the tests are right; the source is wrong"; fi
   [ "$(src_hash)" = "$SRC_BEFORE" ] || reject "source files were modified during test repair"
-  $CHECK diffcheck "$LOCK_SHA" "$DOCS/test-issues.md" || reject "diff check failed (see above)"
-  git diff "$LOCK_SHA" -- "${TEST_SPECS[@]}" > "$LOG/test-repair.diff"
-  results_now "$LOG/after.json"
+  $CHECK diffcheck "$ORIG_RED_SHA" "$DOCS/test-issues.md" || reject "diff check failed (see above)"
+  git diff "$ORIG_RED_SHA" -- "$TEST_DIR" > "$LOG/test-repair.diff"
+  jest_json_now "$LOG/after.json"
   $CHECK namecheck "$LOG/red.json" "$LOG/after.json" || reject "tests were removed or renamed"
-  CHANGED=$( { git diff --name-only "$LOCK_SHA" -- "${TEST_SPECS[@]}"; git ls-files --others --exclude-standard -- "${TEST_SPECS[@]}"; } | sort -u)
+  CHANGED=$( { git diff --name-only "$ORIG_RED_SHA" -- "$TEST_DIR"; git ls-files --others --exclude-standard -- "$TEST_DIR"; } | sort -u)
   # shellcheck disable=SC2086
-  results_at "$ORIG_RED_SHA" "$ROOT/$LOG/repaired-on-red.json" $CHANGED
+  jest_json_at "$ORIG_RED_SHA" "$ROOT/$LOG/repaired-on-red.json" $CHANGED
   $CHECK redcheck "$LOG/red.json" "$LOG/repaired-on-red.json" || reject "a repaired test no longer fails on the unimplemented source"
   stage_flags test-audit
   AUDIT_PROMPT="$(render_prompt test-audit)"
@@ -478,9 +462,9 @@ if [ "$GREEN" -ne 1 ]; then
   cp "$LOG/test-audit.log" "$DOCS/test-audit.md"
   [ "$(grep -E '^VERDICT: (VALID|INVALID)$' "$LOG/test-audit.log" | tail -1)" = "VERDICT: VALID" ] || reject "independent auditor did not return VERDICT: VALID"
   success_check || reject "checks still fail after an audited repair; see $FAIL_LOG"
-  git add -A -- "$DOCS"; add_tests
+  git add "$DOCS" "$TEST_DIR"
   git commit -q -m "test($SLUG): repair invalid tests (mechanically checked and audited)"
-  RED_SHA=$(git rev-parse HEAD); LOCK_SHA="$RED_SHA"
+  RED_SHA=$(git rev-parse HEAD)
   echo " test repair accepted; tests locked again at ${RED_SHA:0:7}"
 fi
 fi
@@ -488,7 +472,7 @@ fi
 # 5. REVIEW ---------------------------------------------------------------
 stage "5/6 Review"
 agent review review
-if [ -n "$(git diff --name-only "$LOCK_SHA" -- "${TEST_SPECS[@]}")" ]; then echo "GUARD FAILED: review modified tests"; exit 1; fi
+if [ -n "$(git diff --name-only "$RED_SHA" -- "$TEST_DIR")" ]; then echo "GUARD FAILED: review modified tests"; exit 1; fi
 success_check || { echo "Checks broke after review. See $FAIL_LOG"; exit 1; }
 
 # 6. SHIP -----------------------------------------------------------------

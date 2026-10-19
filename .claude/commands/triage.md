@@ -1,8 +1,96 @@
----
-description: Turn a bug report or feature request into backlog items (uses graft when it is available, else Grep and Glob)
-argument-hint: <report, pasted error, or a link/path to notes>
-allowed-tools: Bash(node scripts/sdlc-config.cjs skill:*)
----
 Report to triage (free text, pasted error, or a link/path to notes): $ARGUMENTS
 
-!`node scripts/sdlc-config.cjs skill triage`
+Turn this report into backlog items that `./scripts/sdlc.sh <slug>` can run with few or no question rounds. Do not write source code, do not commit, and do not start the pipeline.
+
+## 1. Understand and split
+- If the report holds several independent problems or features, make one item for each.
+- Classify each as `bug` (existing behaviour is wrong) or `feature` (new behaviour).
+- Never make a backlog item for a documentation-only change (README, CLAUDE.md, AGENTS.md, `server/API.md`, `schema.md`, comments, any `.md` file). The pipeline builds and tests code, and a docs-only item has nothing to test, so it ships docs with no feature. Tell the user which parts of the report are docs-only, create no brief and no index line for them, and say they are better edited directly. If the report mixes code and docs, keep the code part as the item and list the docs under `## Docs`.
+- Never paste secrets (passwords, tokens, full connection strings) into any file. Describe them by name only.
+
+## 2. Check for duplicates
+- Read `Docs/backlog/index.md` and `Engineering/bugs.md`, and list the folders under `Docs/backlog/`.
+- If an item already covers the report, tell the user which one and stop for that item. Do not create a second one.
+
+## 3. Ground it in the code
+- Use graft (`graft ask`, `graft grep`, `graft callers`) to find the real files, functions and endpoints involved. Do not read whole files you do not need.
+- For a bug, confirm the cause from the code and, when it is cheap and safe, reproduce it with `npm test` or a small read-only command. State what you verified and what you did not.
+- Never run anything that changes a database or sends data outside this machine.
+
+## 4. Decide what you can, ask only what you cannot
+The Spec stage stops and asks whenever the brief is ambiguous, so every unanswered point costs a full pipeline round. Settle these in the brief, using the project's existing conventions as the default:
+- Exact behaviour and the error status and body for every failure (the repo uses `{ "error": "<message>" }`).
+- Validation order (400 first, then 404, then 409), and what a failed request must not change.
+- Scope: which files and endpoints are in, and what is explicitly out.
+- Tests: where they live (`server/__tests__/`, mirroring the code layout) and the cases to cover. Every case must run the real code. Never plan a test that reads, greps or asserts on documentation (README.md, CLAUDE.md, AGENTS.md, any *.md); documentation goes under `## Docs` and is checked in the Review stage.
+- Docs: which of `server/API.md`, `schema.md`, `README.md` or `AGENTS.md` change.
+- Dependencies: name any new package, but never make "the developer installs it first" a precondition and never ask a stage before Implement to read `server/node_modules`. The Plan stage confirms the API from the published docs and pins the version; the pipeline installs it at the start of Implement.
+- Data and migrations: new migration number, backfill values, and how existing rows are treated.
+
+Use AskUserQuestion (at most 4 questions per round) only for choices that the code and conventions cannot settle: product decisions, breaking API changes, security trade-offs. Put the answers into the brief as decisions. Anything still unknown goes under "Open questions" in the brief, never guessed.
+
+## 5. Write the backlog item
+For each item, choose a unique kebab-case slug of at most 4 words that starts with a verb or names the fix (for example `fix-database-url`, `hide-internal-errors`, `add-jwt-login`).
+
+Create `Docs/backlog/<slug>/brief.md` in exactly this shape:
+
+```
+# <slug>
+
+Type: bug | feature
+Priority: P0 (security or data loss) | P1 (blocks use) | P2 (normal) | P3 (nice to have)
+Source: <where this came from: report, error text without secrets, Engineering/bugs.md entry, link>
+
+## Problem
+<current behaviour and why it is wrong, or the need for a feature>
+<for bugs: steps or request that reproduce it, and the verified cause with file:line>
+
+## Expected behaviour
+<what should happen instead, observable from outside>
+
+## Decisions
+- <concrete, testable decisions from step 4, one per line>
+
+## Scope
+- In: <files and endpoints>
+- Out of scope: <what must not change>
+
+## Tests
+- <file path and the cases to cover>
+- Every case runs the real code (they import or run the code under test). Never list a test that reads or asserts on documentation; put documentation under `## Docs`.
+
+## Docs
+- <files to update, or "none">
+
+## Open questions
+- <only if something is still unknown; otherwise "none">
+```
+
+Then add one line to `Docs/backlog/index.md`, in this exact format (the pipeline reads it with a regex):
+
+```
+- [ ] `<slug>` - <Bug|Feature>: <short title>
+```
+
+The pipeline works top-down, so put P0 and P1 items above P2 and P3, and keep items of equal priority in the order they were reported. Create the file if it does not exist, using the header that `Docs/backlog/index.md` already has on `main`.
+
+## 6. Report back
+Reply with a short table: slug, type, priority, one-line summary, and any open questions. Then give the command to run it: `./scripts/sdlc.sh <slug>`. Refer to SDLC stages by name (Spec, Plan, Red tests, Implement, Review, Ship), never by number.
+
+## 7. Publish the triaged items to `triage/<slug>` (MANDATORY offer, only with the user's confirmation)
+Triage writes files and never commits or pushes on its own. A brief that is not in git is easy to lose, and the pipeline starts from whatever branch and working tree happen to be checked out (a backlog line without its brief, or a brief on a dirty branch, breaks `./scripts/sdlc.sh`). So every triage run ends by asking the user to confirm publishing, and only publishes after an explicit yes.
+
+1. Work out exactly what would be published and show it first:
+   - The files: each new or changed `Docs/backlog/<slug>/brief.md` and `Docs/backlog/index.md`. Nothing else. Run `git status --short`, name every other uncommitted file, and say it will be left out (never `git add -A` or `git add .`).
+   - The branch, created from the latest `main`: `triage/<slug>`, where `<slug>` is the feature-or-bug slug. For several items in one run use `triage/<slug-of-the-first-item>-and-<n>-more`. If a local or remote branch with that name already exists, do not reuse, reset or overwrite it: tell the user and propose `triage/<slug>-2`.
+   - The exact commands:
+     ```bash
+     git fetch origin && git switch -c triage/<slug> origin/main
+     git add Docs/backlog/index.md Docs/backlog/<slug>/brief.md
+     git commit -m "docs(backlog): triage <slug>"
+     git push -u origin triage/<slug>
+     ```
+2. Ask for confirmation with AskUserQuestion, with these options: "Commit and push to triage/<slug> (Recommended)", "Commit locally only, do not push", "Do nothing". Do not run any git write command (switch, add, commit, push) before the answer. A reply that is not an explicit choice means "Do nothing".
+3. If the answer is to push: run the commands above, in that order, and stop at the first failure. Never use `--force`. Then report the branch name, the commit hash and the list of files committed, and offer to open the PR with `gh pr create` (do not open it unless the user says yes).
+4. If the working tree has unrelated uncommitted changes, check that `git switch -c` carries them without conflict, and tell the user they stay uncommitted on the new branch. If the switch would fail or overwrite something, stop and ask instead of stashing, resetting or discarding anything.
+5. After publishing, remind the user that `./scripts/sdlc.sh <slug>` will start from the branch that is checked out, and suggest `git switch main && git pull` (or merging the triage branch) first.
