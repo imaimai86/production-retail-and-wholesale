@@ -231,6 +231,26 @@ the backlog shelf, `Docs/backlog/index.md`.
 **SCREEN:** `[CAP]` `git show --stat a23b93f`: three `brief.md` files and `Docs/backlog/index.md`. Then
 `Docs/backlog/add-test-framework-registry/brief.md`, highlighting `Type:`, `Priority:`, `Source:` and `## Decisions`.
 
+> And here's one I recorded start to finish. I typed one line: "POST /sales currently trusts the price and GST sent by
+> the client". Triage read the backlog and the bug list, found the sales route with graft, and confirmed it: the route
+> checks the product, location, quantity and status, then stores whatever price, discount and GST the client sent. Then
+> it asked me four questions it couldn't answer from the code. Retail or wholesale price? What if a client still sends
+> a price? What about a product with no GST category? And discounts, with no user roles yet? On one of them I typed my
+> own answer: the app isn't live yet, so make it GST zero and change the schema directly. It turned my answers into a
+> table of decisions, wrote the brief as a P0 bug, put it at the top of the backlog, and only after I said yes, pushed it
+> to a `triage/` branch and opened a pull request.
+
+**SCREEN:** `[CAP]` `c29-triage-explores.mp4` (12 s, 4× speed): `/triage POST /sales currently trusts the price and gst
+sent by the client`, then "Reading backlog index, bugs list, and locating sales handler", the graft and shell commands,
+and "Confirmed: POST /sales only validates product_id, location, quantity, and status…" (`s44-triage-confirmed.png`).
+Then `c30-triage-questions.mp4` (26 s): the four question tabs, Price tier, Client price, No category, Discount, each
+with a recommended answer (`s45`, `s46`, `s47`); `c31-triage-own-answer.mp4` (18 s): typing "Make default zero, since
+the app is not yet live" (`s48-triage-q-type-own.png`) and the discount question (`s49`). Then
+`c32-triage-publish-pr.mp4` (36 s, 2× speed): Submit answers, the decisions table (`s51-triage-decisions.png`),
+"Published", and the pull request "docs(backlog): triage derive-sale-price-gst"
+([imaimai86/production-retail-and-wholesale#103](https://github.com/imaimai86/production-retail-and-wholesale/pull/103))
+with its two files (`s53-triage-pr.png`).
+
 ---
 
 ### 3. What is peculiar about this pipeline (8:30 to 12:00)
@@ -488,7 +508,8 @@ graft build
 
 **Step 1: describe the work.**
 
-**SCREEN:** `[CAP]` Claude Code, typing `/triage POST /users returns 500 when the name is missing`.
+**SCREEN:** `[CAP]` `s42-triage-command.png`: Claude Code with `/triage POST /sales currently trusts the price and gst
+sent by the client`. Then `s52-triage-published.png`: the brief committed and pushed to `triage/derive-sale-price-gst`.
 
 > Every job starts as a backlog item: a line in `Docs/backlog/index.md` and a short `brief.md`. You can write them by
 > hand, but the easy way is the intake dock we saw earlier: paste the bug report into `/triage`. It splits it, checks
@@ -755,11 +776,11 @@ repo: link in the description."
 - **CTA.**
 
 ### Short 11: "From bug report to backlog in one command" (55 s)
-- **Hook:** "I paste a raw server error. One command later, it's a ready-to-build backlog item."
-- **Beat 1:** `[R:Triage]` "The /triage command splits the report into one item per problem, bug or feature, and checks the backlog for duplicates first."
-- **Beat 2:** "It finds the real file and line with a code graph, confirms the cause, and settles everything the project's conventions already answer."
+- **Hook:** "I type one line about a bug. One command later, it's a ready-to-build backlog item."
+- **Beat 1:** `[R:Triage]`, then `c29-triage-explores.mp4`. "The /triage command splits the report into one item per problem, bug or feature, and checks the backlog for duplicates first."
+- **Beat 2:** `[CAP]` `c30-triage-questions.mp4`. "It finds the real file and line with a code graph, confirms the cause, asks only the four questions the code can't answer, and settles everything the project's conventions already answer."
 - **Beat 3:** "Out comes a brief with type, priority, scope, tests and decisions, plus one line in the backlog, P0 on top."
-- **Payoff:** "It never commits on its own. It shows you the files and asks."
+- **Payoff:** `[CAP]` `s53-triage-pr.png`. "It never commits on its own. It shows you the files and asks. Then it opens the pull request."
 - **CTA.**
 
 ---
@@ -899,6 +920,26 @@ frame, which matters in a video about safeguards. Clips are H.264, 30 fps, no au
 | `s41-board-after-discard.png` | 0:19.5 | The board, Done column empty | Main 5 step 5 |
 | `c27-confirm-discard.mp4` | 0:01.5–0:11 | **Confirm discard** to "Discarded" | Main 5 step 5 |
 | `c28-board-after-discard.mp4` | 0:13–0:21 | The card leaves the Done column | Main 5 step 5 |
+| **Recordings 15 to 17** `triage-1.mov` (2:23), `triage-1.2.mov` (1:09), both 3372 × 1550, and `triage-1.5.mov` (1:12, only 640 × 296); audio dropped | | | |
+| `s42-triage-command.png` | 1 at 0:03 | The `/triage` command | Main 5 step 1 |
+| `s43-triage-exploring.png` | 1 at 0:20 | "Listing server files, checking related briefs, skeleton sales route" | Main 2e |
+| `s44-triage-confirmed.png` | 1 at 0:52 | "Confirmed: POST /sales only validates…" | Main 2e |
+| `s45-triage-q-price-tier.png` | 1 at 1:02 | Question 1, Price tier, with three options | Main 2e |
+| `s46-triage-q-client-price.png` | 1 at 1:46 | Question 2, client sends price or GST | Main 2e |
+| `s47-triage-q-no-category.png` | 1 at 2:10 | Question 3, product with no GST category | Main 2e |
+| `s48-triage-q-type-own.png` | 2 at 0:20 | Typing an own answer to question 3 | Main 2e |
+| `s49-triage-q-discount.png` | 2 at 0:55 | Question 4, discount | Main 2e |
+| `s50-triage-submit.png` | 3 at 0:06 | Review your answers, Submit (low resolution) | Main 2e |
+| `s51-triage-decisions.png` | 3 at 0:35 | The decisions table (low resolution) | Main 2e |
+| `s52-triage-published.png` | 3 at 0:45 | Committed and pushed to `triage/derive-sale-price-gst` (low resolution) | Main 5 step 1 |
+| `s53-triage-pr.png` | 3 at 0:58 | Pull request #103 (low resolution; browser bookmarks bar cropped off) | Main 2e, Short 11 |
+| `c29-triage-explores.mp4` | 1 at 0:00–0:48.5, 4× | Command to "Confirmed" | Main 2e, Short 11 |
+| `c30-triage-questions.mp4` | 1, five cuts | Confirmed and questions 1 to 3 | Main 2e, Short 11 |
+| `c31-triage-own-answer.mp4` | 2, three cuts | Typing an own answer, question 4 | Main 2e |
+| `c32-triage-publish-pr.mp4` | 3, whole, 2× | Submit, decisions, published, the pull request | Main 2e |
+
+Recording 17 (`triage-1.5.mov`) is 640 × 296: its stills and `c32` are upscaled 3× and soft. Re-record that part at the
+size of the other two if it will be on screen for long.
 
 Left out on purpose: the end of recording 3, where the pane briefly says "Paused, but questions.md has no questions I
 can read" after **Allow all**, and the long stretches of scrolling with no clicks in recordings 2.1 and 2.2.
@@ -912,12 +953,11 @@ sdlc/add-json-logging 365573f…", a real example of the discard safeguard (Main
 3. `.claude/plugins/sdlc-guard/hooks/register.ts`: `refuse()` and `FAILED`.
 4. A real run: `bash scripts/sdlc-mod.sh run <slug>` and `watch <slug>` in a split terminal.
 5. The `sdlc-monitor` pane, the parts not recorded yet: **Submit answers and resume**, **Stop** (both presses), the per-stage manual input box with
-   **Resume at Implement** pressed and the run restarting, and the CONFIG pane
-   with **Test**.
+   **Resume at Implement** pressed and the run restarting, and the CONFIG pane with **Test**.
 6. `git log --oneline` of a finished `sdlc/<slug>` branch.
 7. `Docs/backlog/index.md` with the completed pipeline features.
-8. A live `/triage` run on a throwaway report: the questions it asks, the result table, and the publish confirmation
-   (choose "Do nothing" so no branch is created). Then `git show --stat a23b93f` for the real three-item run.
+8. `git show --stat a23b93f` for the earlier three-item triage run. (The live `/triage` run is recorded; part 3
+   could be re-recorded at full size.)
 
 Use a throwaway backlog item for the live recording so the demo branch can be discarded afterwards.
 

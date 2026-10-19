@@ -82,6 +82,12 @@ const capLabel = {
   'c25-test-repair-rejected.mp4': 'Test repair rejected · 6 s', 'c26-discard-keep-it.mp4': 'Discard, confirm, Keep it · 7 s',
   's39-discarding.png': 'Discarding…', 's40-discarded.png': 'Discarded', 's41-board-after-discard.png': 'Board after discard',
   'c27-confirm-discard.mp4': 'Confirm discard → Discarded · 10 s', 'c28-board-after-discard.mp4': 'Card leaves Done · 8 s',
+  's42-triage-command.png': '/triage command', 's43-triage-exploring.png': 'Triage exploring the code', 's44-triage-confirmed.png': 'Confirmed: POST /sales trusts the client',
+  's45-triage-q-price-tier.png': 'Q1: price tier', 's46-triage-q-client-price.png': 'Q2: client sends price', 's47-triage-q-no-category.png': 'Q3: no GST category',
+  's48-triage-q-type-own.png': 'Typing an own answer', 's49-triage-q-discount.png': 'Q4: discount', 's50-triage-submit.png': 'Submit answers (low res)',
+  's51-triage-decisions.png': 'Decisions table (low res)', 's52-triage-published.png': 'Published to triage/ (low res)', 's53-triage-pr.png': 'Pull request #103 (low res)',
+  'c29-triage-explores.mp4': 'Triage explores · 12 s at 4×', 'c30-triage-questions.mp4': 'Triage questions · 26 s',
+  'c31-triage-own-answer.mp4': 'Own answer, Q4 · 18 s', 'c32-triage-publish-pr.mp4': 'Submit to PR · 36 s at 2× (low res)',
 };
 const captures = capFiles.length ? `
 <section class="captures" id="captures" aria-labelledby="caps-h">
@@ -183,7 +189,7 @@ main ul::after { content: ""; display: block; clear: both; }
 </style>
 <div class="wrap">
   <header class="top">
-    <span class="eyebrow">Script review · draft 8</span>
+    <span class="eyebrow">Script review · draft 9</span>
     <h1>The Software Factory</h1>
     <p>Main YouTube video and eleven Shorts on the SDLC pipeline, the sdlc-monitor plugin and the /triage intake. Voice-over is set in serif, on-screen directions in tinted boxes. Green chips are Remotion scenes; amber chips are screen captures.</p>
     <div class="meta"><span>Main video ≈ 24 min · 16:9</span><span>11 Shorts · 45–60 s · 9:16</span><span>Source: Docs/video/sdlc-video-script.md</span></div>
