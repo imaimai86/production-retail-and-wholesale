@@ -7,6 +7,7 @@ Markers: [ ] pending, [x] completed, [!] blocked, [~] parked (skipped by `script
 - [x] `fix-stock-checks` - Block inventory transfers and sales when stock is insufficient
 - [x] `hide-internal-errors` - Return JSON instead of HTML stack traces for unhandled errors
 - [x] `fix-ship-commit-scope` - Bug: Ship stage commits only server/ and docs; commit every relevant file the cycle changed
+- [ ] `derive-sale-price-gst` - Bug: POST /sales trusts client price, gst and discount; set price from the product and price_tier, gst from the category, reject client values
 - [ ] `add-auth-token-table` - Feature: auth_tokens table (several tokens per user) and an admin user, so every request has a user id; POST /sales rejects requests without one (fixes the 500 from the raw token in sales.user_id)
 - [ ] `add-db-health-check` - Feature: GET /health that checks the database connection
 - [x] `add-db-integration-tests` - Feature: integration tests against real Postgres, plus GitLab CI
