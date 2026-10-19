@@ -64,6 +64,9 @@ const capLabel = {
   'c10-allow-all.mp4': 'Allow all refused actions · 13 s', 'c11-spec-allow-always.mp4': 'Spec: Allow always, restart · 17 s',
   'c12-plan-running.mp4': 'Plan running, card in Plan · 8 s', 'c13-plan-allow-always.mp4': 'Plan: Allow always on each · 18 s',
   'v02-spec-questions-vertical.mp4': 'Vertical questions, for Short 3 · 19 s',
+  's18-red-tests-running.png': 'Red tests running, 8 uncommitted', 's19-board-red-tests-column.png': 'Card in the Red tests column',
+  's20-red-gate-16-failing.png': 'Red gate: 16 failing, 0 uncommitted', 'c14-red-tests-running.mp4': 'Red tests running · 4 s',
+  'c15-board-red-tests.mp4': 'Card in Red tests · 5 s', 'c16-red-gate-failing.mp4': 'Red gate: 16 failing · 8 s',
 };
 const captures = capFiles.length ? `
 <section class="captures" id="captures" aria-labelledby="caps-h">
@@ -165,7 +168,7 @@ main ul::after { content: ""; display: block; clear: both; }
 </style>
 <div class="wrap">
   <header class="top">
-    <span class="eyebrow">Script review · draft 5</span>
+    <span class="eyebrow">Script review · draft 6</span>
     <h1>The Software Factory</h1>
     <p>Main YouTube video and eleven Shorts on the SDLC pipeline, the sdlc-monitor plugin and the /triage intake. Voice-over is set in serif, on-screen directions in tinted boxes. Green chips are Remotion scenes; amber chips are screen captures.</p>
     <div class="meta"><span>Main video ≈ 24 min · 16:9</span><span>11 Shorts · 45–60 s · 9:16</span><span>Source: Docs/video/sdlc-video-script.md</span></div>

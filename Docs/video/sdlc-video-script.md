@@ -152,6 +152,16 @@ Then the rows turn green one by one.
 > From that moment on, the tests are the contract. The Implement agent gets up to four attempts to make them green,
 > and after each attempt the script compares the test folder with that locked commit. One changed line and it's
 > "GUARD FAILED: tests were modified during implementation".
+>
+> Here's the red gate on a real run. The tests agent wrote a test matrix and four test files. The suite comes back:
+> 181 of 197 passing, 16 failing. Sixteen new tests fail because the feature doesn't exist yet. That's the point. And
+> notice the files line: a moment ago it said 8 uncommitted, now it says 0. The pipeline has just committed the tests.
+> They're locked.
+
+**SCREEN:** `[CAP]` `c16-red-gate-failing.mp4` (8 s): the Red tests stage with "Red tests (5)" listing
+`test-cases-1.md` and four test files, then "Tests 181/197 passing · 16 failing" in red and "8 changed since base ·
+0 uncommitted". Freeze on `s20-red-gate-16-failing.png`, and contrast it with `s18-red-tests-running.png`, where the
+same line still says "8 uncommitted".
 
 #### 2d. Ingredient four: separation of duties
 
@@ -485,8 +495,9 @@ claude --plugin-dir .claude/plugins/sdlc-monitor
 > output. As the run moves on, the card moves across the board, column by column.
 
 **SCREEN:** `[CAP]` `c12-plan-running.mp4` (8 s): later in the same run, Spec has a tick, the Plan chip is lit,
-"1/6 stages", the agent "plan opus · medium running 00:18"; back on the board the card now sits in the Plan column.
-Freeze on `s15-board-plan-column.png`.
+"1/6 stages", the agent "plan opus · medium running 00:10"; back on the board the card now sits in the Plan column.
+Freeze on `s15-board-plan-column.png`. Then `c15-board-red-tests.mp4` (5 s): one column further, the card in Red tests,
+"tests (sonnet · medium)".
 
 **Step 4: answer the questions.**
 
@@ -618,7 +629,7 @@ repo: link in the description."
 ### Short 2: "AI can't grade its own homework" (50 s)
 - **Hook:** "What stops an AI from just changing the test so it passes?"
 - **Beat 1:** `[R:RedGreen]` "In our pipeline, tests are written first, and they must fail. If they pass before any code exists, the run stops."
-- **Beat 2:** "Then they're committed. That commit hash is the lock."
+- **Beat 2:** `[CAP]` `c16-red-gate-failing.mp4`. "Here's a real run: 16 new tests failing, because the feature doesn't exist yet. Then they're committed. That commit hash is the lock."
 - **Beat 3:** "After every coding attempt, the script diffs the test folder against that lock. One changed line: GUARD FAILED."
 - **Payoff:** "Don't ask the AI to be honest. Make cheating detectable."
 - **CTA.**
@@ -783,6 +794,13 @@ frame, which matters in a video about safeguards. Clips are H.264, 30 fps, no au
 | `c13-plan-allow-always.mp4` | 0:00–0:18 | Plan agent refused 2 commands, **Allow always** on each, Plan restarts | Main 4 safeguard 6, Short 6 |
 | `s16-plan-refused.png` | 0:04.5 | "The plan agent was refused 2 action(s)" with both commands | Main 4 safeguard 6 |
 | `s17-one-more-to-decide.png` | 0:12 | Toast "Allowed: 1 more to decide" | Main 4 safeguard 6 |
+| **Recording 7** `red-tests.mov` (35 s, 3612 × 2058; cropped from x 565 so the side panel with another session's transcript stays out) | | | |
+| `s18-red-tests-running.png` | 0:01 | Spec and Plan ticked, Red tests running, 5 files under Red tests, agent tests 02:31, "8 uncommitted" | Main 2c |
+| `s19-board-red-tests-column.png` | 0:20 | The board, card in the Red tests column | Main 5 step 3 |
+| `s20-red-gate-16-failing.png` | 0:30 | "Tests 181/197 passing · 16 failing", "0 uncommitted", "3/6 Red tests (red gate)" in the output | Main 2c, Short 2 |
+| `c14-red-tests-running.mp4` | 0:00–0:04 | The Red tests stage running | Main 2c |
+| `c15-board-red-tests.mp4` | 0:18.5–0:23.6 | Card in the Red tests column | Main 5 step 3 |
+| `c16-red-gate-failing.mp4` | 0:23.8–0:31.5 | The 16 failing tests appear and the run scrolls to the red gate output | Main 2c, Short 2 |
 
 Left out on purpose: the end of recording 3, where the pane briefly says "Paused, but questions.md has no questions I
 can read" after **Allow all**, and the long stretches of scrolling with no clicks in recordings 2.1 and 2.2.
@@ -795,7 +813,7 @@ sdlc/add-json-logging 365573f…", a real example of the discard safeguard (Main
 2. `Docs/backlog/fix-user-validation-v2/decisions.md`: Q1 to Q6.
 3. `.claude/plugins/sdlc-guard/hooks/register.ts`: `refuse()` and `FAILED`.
 4. A real run: `bash scripts/sdlc-mod.sh run <slug>` and `watch <slug>` in a split terminal.
-5. The `sdlc-monitor` pane, the parts not recorded yet: **Submit answers and resume**, the run in Red tests and
+5. The `sdlc-monitor` pane, the parts not recorded yet: **Submit answers and resume**, the run in
    Implement (with an attempt number), Stop, Resume at a stage, the manual input box, Discard, and the CONFIG pane
    with **Test**.
 6. `git log --oneline` of a finished `sdlc/<slug>` branch.
