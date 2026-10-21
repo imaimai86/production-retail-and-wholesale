@@ -1,0 +1,65 @@
+[
+  {
+    "id": "hook-1",
+    "scene": "hook",
+    "text": "What stops an AI from just changing the test, so it passes?",
+    "file": "hook-1.wav",
+    "seconds": 3.733
+  },
+  {
+    "id": "b1-1",
+    "scene": "redgreen",
+    "text": "In our pipeline, tests are written first. And they must fail.",
+    "file": "b1-1.wav",
+    "seconds": 3.648
+  },
+  {
+    "id": "b1-2",
+    "scene": "redgreen",
+    "text": "If they pass before any code exists, the run stops.",
+    "file": "b1-2.wav",
+    "seconds": 3.307
+  },
+  {
+    "id": "b2-1",
+    "scene": "capture",
+    "text": "Here's a real run. Sixteen new tests, failing, because the feature doesn't exist yet.",
+    "file": "b2-1.wav",
+    "seconds": 5.355
+  },
+  {
+    "id": "b2-2",
+    "scene": "lock",
+    "text": "Then they're committed. That commit hash is the lock.",
+    "file": "b2-2.wav",
+    "seconds": 3.093
+  },
+  {
+    "id": "b3-1",
+    "scene": "guard",
+    "text": "After every coding attempt, the script diffs the test folder against that lock.",
+    "file": "b3-1.wav",
+    "seconds": 4.843
+  },
+  {
+    "id": "b3-2",
+    "scene": "guard",
+    "text": "One changed line? Guard failed. The run stops.",
+    "file": "b3-2.wav",
+    "seconds": 3.243
+  },
+  {
+    "id": "pay-1",
+    "scene": "payoff",
+    "text": "Don't ask the AI to be honest. Make cheating detectable.",
+    "file": "pay-1.wav",
+    "seconds": 3.861
+  },
+  {
+    "id": "cta-1",
+    "scene": "cta",
+    "text": "Full video and the open-source repo: link in the description.",
+    "file": "cta-1.wav",
+    "seconds": 3.776
+  }
+]
