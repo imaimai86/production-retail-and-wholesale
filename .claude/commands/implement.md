@@ -1,8 +1,8 @@
 ---
-description: Implement a backlog item until its tests pass, without changing the tests
+description: Implement a backlog item until its failing tests pass
 argument-hint: <slug>
-allowed-tools: Bash(node scripts/sdlc-config.cjs skill:*)
+allowed-tools: Bash(ai-sdlc-helper skill:*)
 ---
 Slug: $ARGUMENTS
 
-!`node scripts/sdlc-config.cjs skill implement`
+!`ai-sdlc-helper skill implement`

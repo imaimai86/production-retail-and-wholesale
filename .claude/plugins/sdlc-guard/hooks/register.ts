@@ -1,7 +1,7 @@
 import type { EngineInterface, Register } from 'claude-code'
 
 type Phase = { stage: string; slug: string }
-// Where tests, source and backlog live (scripts/sdlc-config.cjs layout); paths are from the project root.
+// Where tests, source and backlog live (`ai-sdlc-helper layout`); paths are from the project root.
 type Layout = { root: string; backlogDir: string; tests: RegExp[]; testFiles: string; sourceDirs: string[] }
 
 // This repository's layout, used when the project settings cannot be read.
@@ -13,7 +13,7 @@ const STATE_PHASE: Record<string, string> = { implement: 'Implement', review: 'R
 
 async function projectLayout($: EngineInterface): Promise<Layout> {
   try {
-    const r = await $.process.run(['node', 'scripts/sdlc-config.cjs', 'layout'])
+    const r = await $.process.run(['ai-sdlc-helper', 'layout'])
     const l = JSON.parse(r.stdout)
 
     if (r.exitCode !== 0 || !Array.isArray(l.testPatterns)) return FALLBACK
@@ -37,7 +37,7 @@ function fromRoot(l: Layout, path: string): string {
   return path.replace(/^\.\//, '')
 }
 
-// The running stage, as scripts/sdlc.sh reports it in status.json (a live pid
+// The running stage, as the pipeline reports it in status.json (a live pid
 // only), else the phase the /implement and /review commands set in sdlc-state.json.
 async function activePhase($: EngineInterface, backlogDir: string): Promise<Phase | null> {
   let best: (Phase & { updated: string }) | null = null

@@ -3,8 +3,8 @@
 //   node sdlc-guard.cjs set <phase> <slug> [red_sha]   (phase: implement | review)
 //   node sdlc-guard.cjs clear
 //   node sdlc-guard.cjs pre-tool   (PreToolUse hook: protect the test files)
-// The test files and test command come from the project settings (scripts/sdlc-config.cjs layout); when they cannot be
-// read, this repo's: server/__tests__ and npm test.
+// The test files and test command come from the project settings (`ai-sdlc-helper layout`); when they cannot be read
+// (ai-sdlc-helper missing, or settings it rejects), this repo's: server/__tests__ and npm test.
 //   node sdlc-guard.cjs stop       (Stop hook: green gate)
 const fs = require('fs');
 const path = require('path');
@@ -23,10 +23,10 @@ const active = s => s && GUARDED.includes(s.phase);
 // { testPatterns: [regexp source on paths from the root], testDirs, testFiles, testCmd } for this project.
 function layout() {
   try {
-    const config = require(path.join(ROOT, 'scripts', 'sdlc-config.cjs'));
-    const r = config.resolve(ROOT);
-    if (r.config) return config.layout(r.config);
-  } catch { /* no helper, or settings that cannot be resolved */ }
+    const r = spawnSync('ai-sdlc-helper', ['layout', ROOT], { cwd: ROOT, encoding: 'utf8' });
+    const l = r.status === 0 ? JSON.parse(r.stdout) : null;
+    if (l && Array.isArray(l.testPatterns) && Array.isArray(l.testDirs) && l.testCmd) return l;
+  } catch { /* ai-sdlc-helper missing, or output that is not the layout */ }
   return { testPatterns: ['^server/__tests__/'], testDirs: ['server/__tests__'], testFiles: 'server/__tests__/', testCmd: 'npm test' };
 }
 // A path (absolute, or from the root) as a path from the root.

@@ -32,6 +32,11 @@ type RunSpec = {
   changes?: { changed: number; uncommitted: number } | null
   // the base branch in the run record
   base?: string
+  // status.json note: why a running pipeline waits (usage limit)
+  note?: string
+  // text of test-issues.md (the Implement agent's claim) and of logs/run.out
+  claims?: string
+  runOut?: string
 }
 
 const QUESTIONS = [
@@ -110,7 +115,7 @@ function world(on: any, runs: RunSpec[] = [], model?: (argv: string[]) => ModelR
           value: JSON.stringify({
             slug: r.slug, state: r.state, stage: r.stage ?? '', agent: r.agent ?? '', model: 'opus', effort: 'medium',
             models: { implement: { model: 'sonnet', effort: 'medium' }, 'test-repair': { model: 'sonnet', effort: 'low' }, 'test-audit': { model: 'opus', effort: 'high' } }, attempt: r.attempt ?? '',
-            agent_started: '2026-10-06T10:00:00', run_started: '2026-10-06T09:50:00', updated: '2026-10-06T10:03:00', pid: pidOf(r),
+            agent_started: '2026-10-06T10:00:00', run_started: '2026-10-06T09:50:00', updated: '2026-10-06T10:03:00', pid: pidOf(r), note: r.note ?? '',
           }),
         }
       }
@@ -118,7 +123,8 @@ function world(on: any, runs: RunSpec[] = [], model?: (argv: string[]) => ModelR
       if (e.path.endsWith(`${r.slug}/logs/permissions.json`) && r.permissions) return { value: JSON.stringify({ pending: r.permissions, allow: [], bypass: [], denied: [] }) }
       if (e.path.endsWith(`${r.slug}/logs/plan.log`) && r.planLog) return { value: r.planLog }
       if (e.path.endsWith(`${r.slug}/logs/tests.log`) && r.testsLog) return { value: r.testsLog }
-      if (e.path.endsWith(`${r.slug}/logs/run.out`)) return { value: '== Implement\n   -> agent: impl-2\n' }
+      if (e.path.endsWith(`${r.slug}/logs/run.out`)) return { value: r.runOut ?? '== Implement\n   -> agent: impl-2\n' }
+      if (e.path.endsWith(`${r.slug}/test-issues.md`) && r.claims) return { value: r.claims }
       if (e.path.endsWith(`${r.slug}/questions.md`) && r.questions) return { value: r.questions }
     }
 
@@ -151,7 +157,7 @@ function world(on: any, runs: RunSpec[] = [], model?: (argv: string[]) => ModelR
       return out(e.argv[5] === 'all' ? '0' : String(Math.max(0, n - decided)))
     }
     if (e.argv[0] === 'git') return out(e.argv.includes('--git-common-dir') && repoTop.value ? `${repoTop.value}/.git\n` : '.git\n')
-    if (e.argv[0] === 'node') return out(JSON.stringify(PENDING))
+    if (e.argv[2] === 'backlog') return out(JSON.stringify(PENDING))
     if (e.argv[0] === 'kill') return out('', e.argv[2] === '100' ? 0 : 1)
     if (e.argv[1] === 'scripts/sdlc-mod.sh' && e.argv[2] === 'changes' && e.argv[3] === '--all') {
       await countGate.wait
@@ -343,6 +349,30 @@ test('a pipeline in Spec resumes from the start', async ($, on) => {
   await ui.unmount()
 })
 
+for (const [stage, from] of [['Plan', 'plan'], ['Red tests', 'red-tests']]) {
+  test(`a pipeline that failed at ${stage} resumes at that stage, not at Spec`, async ($, on) => {
+    const w = world(on, [{ slug: 'alpha', state: 'failed', stage }])
+    const ui = await open($)
+    await ui.press({ key: 'open-alpha' })
+    expect((await ui.find({ key: 'resume' }))?.props.label).toBe(`Resume from ${stage}`)
+    await ui.press({ key: 'resume' })
+    expect(w.envs[w.calls.findIndex(c => c[1] === '-c')].FROM).toBe(from)
+    await ui.unmount()
+  })
+}
+
+test('a paused pipeline with nothing left to answer or decide says so and offers Resume at its stage', async ($, on) => {
+  const w = world(on, [{ slug: 'alpha', state: 'paused', stage: 'Implement' }])
+  const ui = await open($)
+  await ui.press({ key: 'open-alpha' })
+  expect(await text(ui, /Paused at Implement with nothing left to answer or decide/)).toBeDefined()
+  expect(await text(ui, /questions\.md has no questions/)).toBeUndefined()
+  expect((await ui.find({ key: 'resume' }))?.props.label).toBe('Resume from Implement')
+  await ui.press({ key: 'resume' })
+  expect(w.envs[w.calls.findIndex(c => c[1] === '-c')].FROM).toBe('implement')
+  await ui.unmount()
+})
+
 test('a run whose process is gone reads as stopped, and the wrapper exit code decides failed', async ($, on) => {
   world(on, [
     { slug: 'gone', state: 'running', stage: 'Plan', alive: false },
@@ -483,6 +513,48 @@ test('the button above the prompt shows the live summary', async ($, on) => {
 
   expect((await ui.find({ key: 'sdlc-open' }))?.props.label).toBe('SDLC')
   expect(await text(ui, /1 running · 1 paused/)).toBeDefined()
+  await ui.unmount()
+})
+
+test('a paused pipeline puts an Action needed banner on top of the board, and Open goes to it', async ($, on) => {
+  world(on, [
+    { slug: 'alpha', state: 'running', stage: 'Plan', agent: 'plan' },
+    { slug: 'beta', state: 'paused', stage: 'Implement', permissions: ASKS },
+  ])
+  const ui = await open($)
+
+  // on the board, nothing opened
+  expect(await text(ui, /^⚠ Action needed:/)).toBeDefined()
+  expect(await text(ui, /^beta · Implement · needs a decision: 2 refused actions/)).toBeDefined()
+  expect(await ui.find({ key: 'attention-pane-open-alpha' })).toBeUndefined()
+
+  await ui.press({ key: 'attention-pane-open-beta' })
+  expect(await text(ui, /agent was refused 2 action/)).toBeDefined()
+  // still there while another pipeline is open
+  await ui.press({ key: 'back' })
+  await ui.press({ key: 'open-alpha' })
+  expect(await ui.find({ key: 'attention-pane-open-beta' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('no banner when no pipeline is paused', async ($, on) => {
+  world(on, [{ slug: 'alpha', state: 'running', stage: 'Plan', agent: 'plan' }, { slug: 'gone', state: 'failed', stage: 'Implement' }])
+  const ui = await open($)
+  expect(await text(ui, /Action needed/)).toBeUndefined()
+  await ui.unmount()
+})
+
+test('the band above the prompt shows the banner too, and Open opens the pane at that pipeline', async ($, on) => {
+  world(on, [{ slug: 'beta', state: 'paused', stage: 'Spec', questions: QUESTIONS }])
+  await $.command.run({ command: 'sdlc-monitor', args: '' })
+  const band = await $.ui.mount({ plugin: 'sdlc-monitor', surface: 'terminal', component: 'AbovePrompt', requestId: 'band', props: {} })
+  expect(await text(band, /^⚠ Action needed:/)).toBeDefined()
+  expect(await text(band, /^beta · Spec · needs answers: 2 questions/)).toBeDefined()
+  await band.press({ key: 'attention-band-open-beta' })
+  await band.unmount()
+
+  const ui = await $.ui.mount({ plugin: 'sdlc-monitor', surface: 'terminal', component: 'Pane', requestId: 'sdlc', props: {} })
+  expect(await text(ui, /^Q1: Error shape/)).toBeDefined()
   await ui.unmount()
 })
 
@@ -628,7 +700,7 @@ const REGISTRY: Reg = {
   other: { endpoint: 'http://localhost:4000', api_key_env: 'OTHER_KEY', models: ['one'], effort: false, key_set: false },
 }
 
-// A registry in memory that answers like scripts/sdlc-models.cjs; `fail` overrides one subcommand.
+// A registry in memory that answers like ai-sdlc-helper model; `fail` overrides one subcommand.
 function registry(start: Reg, fail: Record<string, ModelReply> = {}) {
   const reg: Reg = JSON.parse(JSON.stringify(start))
 
@@ -949,6 +1021,65 @@ const ASKS = [
   { stage: 'implement', tool: 'Edit', detail: '.claude/plugins/p/f.tsx', rule: 'Edit(./.claude/plugins/p/f.tsx)', protected: true },
 ]
 
+const CLAIM = 'server/__tests__/index.test.js :: global error handler › E-R1..4 :: spies on console.error, but plan-1.md step 4 replaces it with the logger\n'
+const REJECTED_RUN = '== 4b Test repair (only because the Implement agent claimed test defects)\nREJECT: claim gives no spec/decision/isolation justification: __tests__/index.test.js::global error handler E-R1..4\nTEST REPAIR REJECTED: claims fail pre-check (see above)\n'
+
+test('the Test repair box offers Show claim once Implement claims a test defect, and shows the claim and why it was rejected', async ($, on) => {
+  world(on, [{ slug: 'alpha', state: 'failed', stage: 'Test repair', claims: CLAIM, runOut: REJECTED_RUN }])
+  const ui = await open($)
+  await ui.press({ key: 'open-alpha' })
+
+  expect(await text(ui, /^Test repair claim/)).toBeUndefined()
+  expect((await ui.find({ key: 'show-claim' }))?.props.label).toBe('Show claim')
+  await ui.press({ key: 'show-claim' })
+  expect(await text(ui, /^Test repair claim/)).toBeDefined()
+  expect(await text(ui, /server\/__tests__\/index\.test\.js › global error handler › E-R1\.\.4/)).toBeDefined()
+  expect(await text(ui, /spies on console\.error, but plan-1\.md step 4 replaces it with the logger/)).toBeDefined()
+  expect(await text(ui, /^Rejected by the pipeline/)).toBeDefined()
+  expect(await text(ui, /REJECT: claim gives no spec\/decision\/isolation justification/)).toBeDefined()
+
+  expect((await ui.find({ key: 'show-claim' }))?.props.label).toBe('Hide claim')
+  await ui.press({ key: 'show-claim' })
+  expect(await text(ui, /^Test repair claim/)).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a claim written during Implement already shows the Test repair box with Show claim; no claim, no button', async ($, on) => {
+  world(on, [
+    { slug: 'claimed', state: 'running', stage: 'Implement', agent: 'impl-2', attempt: '2/4', claims: CLAIM },
+    { slug: 'plain', state: 'running', stage: 'Implement', agent: 'impl-1', attempt: '1/4' },
+  ])
+  const ui = await open($)
+  await ui.press({ key: 'open-claimed' })
+  expect(await ui.find({ key: 'show-claim' })).toBeDefined()
+  await ui.press({ key: 'show-claim' })
+  expect(await text(ui, /plan-1\.md step 4 replaces it/)).toBeDefined()
+  expect(await text(ui, /^Rejected by the pipeline/)).toBeUndefined()
+  await ui.press({ key: 'back' })
+  await ui.press({ key: 'open-plain' })
+  expect(await ui.find({ key: 'show-claim' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a pipeline waiting for the usage limit says so, with the reset time, in its state line', async ($, on) => {
+  world(on, [{ slug: 'alpha', state: 'running', stage: 'Implement', agent: 'impl-1', attempt: '1/4', note: 'usage limit, resets 1:10am (Asia/Dubai)' }])
+  const ui = await open($)
+  expect(await text(ui, /Implement · waiting: usage limit, resets 1:10am \(Asia\/Dubai\)/)).toBeDefined()
+  await ui.unmount()
+})
+
+test('a paused run is described by what it waits for: refused actions, or nothing', async ($, on) => {
+  world(on, [
+    { slug: 'asks', state: 'paused', stage: 'Implement', permissions: ASKS },
+    { slug: 'idle', state: 'paused', stage: 'Implement' },
+  ])
+  const ui = await open($)
+  expect(await text(ui, /needs a decision: 2 refused actions/)).toBeDefined()
+  expect(await text(ui, /paused at Implement/)).toBeDefined()
+  expect(await text(ui, /needs answers: 0 questions/)).toBeUndefined()
+  await ui.unmount()
+})
+
 test('a paused run lists what the agent was refused; Allow always is offered only for a path that a rule can open', async ($, on) => {
   world(on, [{ slug: 'alpha', state: 'paused', stage: 'Implement', permissions: ASKS }])
   const ui = await open($)
@@ -1130,7 +1261,7 @@ test('every repo path hangs on the main working tree, so a session inside a pipe
 
   expect(w.calls.some(c => c[0] === 'bash' && c[1] === '/repo/scripts/sdlc-mod.sh' && c[2] === 'permit')).toBe(true)
   expect(w.envs.some(env => env.SDLC_WRAPPER === '/repo/scripts/sdlc-mod.sh')).toBe(true)
-  expect(w.calls.some(c => c[0] === 'node' && c[1] === '/repo/scripts/backlog-list.cjs')).toBe(true)
+  expect(w.calls.some(c => c[0] === 'bash' && c[1] === '/repo/scripts/sdlc-mod.sh' && c[2] === 'backlog')).toBe(true)
   repoTop.value = ''
   await ui.unmount()
 })

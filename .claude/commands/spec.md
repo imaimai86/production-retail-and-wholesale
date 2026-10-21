@@ -1,8 +1,8 @@
 ---
-description: Write the specification for a backlog item
+description: Write the specification for a backlog item, asking only about real gaps
 argument-hint: <slug>
-allowed-tools: Bash(node scripts/sdlc-config.cjs skill:*)
+allowed-tools: Bash(ai-sdlc-helper skill:*)
 ---
 Slug: $ARGUMENTS
 
-!`node scripts/sdlc-config.cjs skill spec`
+!`ai-sdlc-helper skill spec`

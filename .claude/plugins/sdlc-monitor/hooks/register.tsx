@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AgentRow, ConfigForm, ConfigProvider, PendingItem, PermissionAsk, Question, Run, RunState, Snapshot } from '../types'
+import type { AgentRow, Claim, ConfigForm, ConfigProvider, PendingItem, PermissionAsk, Question, Run, RunState, Snapshot } from '../types'
 
 const PANE = 'sdlc'
 const CONFIG_PANE = 'config'
@@ -12,7 +12,7 @@ const CAP = 2
 const WRAPPER = 'scripts/sdlc-mod.sh'
 // How often the file counts of a running pipeline are recomputed when nothing else about it changed (see loadChanges).
 const CHANGES_EVERY_MS = 15000
-// The stage names status.json carries (scripts/sdlc.sh strips the numbering).
+// The stage names status.json carries (the ai-sdlc-helper pipeline strips the numbering).
 const STAGES = ['Spec', 'Plan', 'Red tests', 'Implement', 'Test repair', 'Review', 'Commit']
 // How long the Start button stays a "Starting…" note while the wrapper creates the worktree.
 const LAUNCH_GRACE_MS = 20000
@@ -27,6 +27,8 @@ const INPUT_STAGES = [
 // Files listed per stage in the run view before "+N more".
 const FILES_SHOWN = 8
 const RESUME_AT_IMPLEMENT = ['Implement', 'Test repair', 'Review', 'Commit']
+// Stages before Implement that a failed run resumes at, so a Plan failure does not run Spec (and its questions) again.
+const RESUME_AT_STAGE: Record<string, string> = { Plan: 'plan', 'Red tests': 'red-tests' }
 
 const EMPTY: Snapshot = { now: 0, runs: [], pending: [], discarded: {} }
 const snapshot = atom({ plugin: 'sdlc-monitor', key: 'snapshot' } as const, EMPTY)
@@ -36,6 +38,8 @@ const selected = atom({ plugin: 'sdlc-monitor', key: 'selected' } as const, {} a
 const queue = atom({ plugin: 'sdlc-monitor', key: 'queue' } as const, [] as string[])
 const confirmStop = atom({ plugin: 'sdlc-monitor', key: 'confirmStop' } as const, '')
 const confirmDiscard = atom({ plugin: 'sdlc-monitor', key: 'confirmDiscard' } as const, '')
+// Pipelines whose Test repair claim is shown (the Show claim button in the Test repair box).
+const showClaim = atom({ plugin: 'sdlc-monitor', key: 'showClaim' } as const, {} as Record<string, boolean>)
 const launching = atom({ plugin: 'sdlc-monitor', key: 'launching' } as const, {} as Record<string, number>)
 const draft = atom({ plugin: 'sdlc-monitor', key: 'draft' } as const, {} as Record<string, string>)
 const boardOffset = atom({ plugin: 'sdlc-monitor', key: 'boardOffset' } as const, 0)
@@ -240,7 +244,7 @@ const wrapperPath = ($: EngineInterface) => repoPath($, WRAPPER)
 let pendingAt = 0
 let pendingCache: PendingItem[] = []
 
-// Where sdlc-mod.sh keeps its run records: one folder shared by every worktree.
+// Where ai-sdlc-helper keeps its run records: one folder shared by every worktree.
 async function registryDir($: EngineInterface): Promise<string> {
   const { common } = await repoInfo($)
 
@@ -250,7 +254,7 @@ async function registryDir($: EngineInterface): Promise<string> {
 async function loadPending($: EngineInterface, now: number): Promise<PendingItem[]> {
   if (now - pendingAt < PENDING_EVERY_MS && pendingAt) return pendingCache
   try {
-    const r = await $.process.run(['node', await repoPath($, 'scripts/backlog-list.cjs'), 'pending', '--json'])
+    const r = await $.process.run(['bash', await wrapperPath($), 'backlog', 'pending', '--json'])
     const rows = JSON.parse(r.stdout) as { slug: string; type: string | null; priority: string | null; title: string }[]
     pendingCache = rows.map(x => ({ slug: x.slug, type: x.type ?? '-', priority: x.priority ?? '-', title: x.title }))
   } catch {
@@ -296,7 +300,7 @@ async function loadChanges($: EngineInterface, runs: Run[], now: number, force: 
   for (const run of runs) run.changes = run.managed ? (changesCache.get(run.slug)?.value ?? null) : null
 }
 
-// The files each stage changed, from logs/stage-files.json (written by scripts/sdlc.sh; an unreadable file reads as none).
+// The files each stage changed, from logs/stage-files.json (written by the pipeline; an unreadable file reads as none).
 function parseStageFiles(text: string | null): Record<string, string[]> {
   const stages = parse(text)?.stages
   if (!stages || typeof stages !== 'object') return {}
@@ -309,6 +313,23 @@ function parseStageFiles(text: string | null): Record<string, string[]> {
 }
 
 // The undecided asks in logs/permissions.json (an unreadable or malformed file reads as none).
+// test-issues.md: what the Implement agent claimed is wrong with a test, one "<file> :: <test name> :: <why>" line each.
+function parseClaims(text: string | null): Claim[] {
+  return (text ?? '').split('\n').map(l => l.trim()).filter(Boolean).map(line => {
+    const [file = '', test = '', ...why] = line.split(' :: ')
+
+    return why.length ? { file, test, why: why.join(' :: ') } : { file: '', test: '', why: line }
+  })
+}
+
+// Why the pipeline refused the claim: the REJECT lines of the latest Test repair section of run.out.
+function claimRejects(runOut: string): string[] {
+  const at = runOut.lastIndexOf('== 4b Test repair')
+  if (at < 0) return []
+
+  return runOut.slice(at).split('\n').filter(l => /^(REJECT|TEST REPAIR REJECTED)/.test(l)).map(l => l.trim())
+}
+
 function parsePermissions(text: string | null): PermissionAsk[] {
   const j = parse(text)
   const list = j && Array.isArray(j.pending) ? j.pending : []
@@ -390,12 +411,15 @@ async function loadRun($: EngineInterface, slug: string, worktree: string, reg: 
     agentStarted: String(status?.agent_started ?? ''),
     runStarted: String(status?.run_started ?? reg?.started ?? ''),
     updated: String(status?.updated ?? ''),
+    note: String(status?.note ?? ''),
     pid,
     files,
     tests: testCounts(await readText($, `${docs}/logs/tests.log`)),
     tail: runOut.split('\n').filter(l => l.trim()).slice(-8),
     stageFiles: parseStageFiles(await readText($, `${docs}/logs/stage-files.json`)),
     permissions: parsePermissions(await readText($, `${docs}/logs/permissions.json`)),
+    claims: parseClaims(await readText($, `${docs}/test-issues.md`)),
+    claimRejects: claimRejects(runOut),
     reason: state === 'failed' || state === 'stopped' ? await failureReason($, docs, stageName, runOut) : [],
     questions: questionsText ? parseQuestions(questionsText) : [],
     managed: reg !== null,
@@ -424,7 +448,7 @@ async function collect($: EngineInterface, force = false): Promise<Snapshot> {
     seen.add(reg.slug)
     runs.push(await loadRun($, reg.slug, String(reg.worktree ?? ''), reg))
   }
-  // A pipeline started by hand with scripts/sdlc.sh in this working tree has no record: find it by its status file.
+  // A pipeline started by hand (ai-sdlc-helper pipeline) in this working tree has no record: find it by its status file.
   for (const d of await names($, await repoPath($, 'Docs/backlog'))) {
     if (d.kind === 'dir' && !seen.has(d.name) && (await readText($, await repoPath($, `Docs/backlog/${d.name}/logs/status.json`)))) {
       runs.push(await loadRun($, d.name, '', null))
@@ -535,7 +559,7 @@ async function startNow($: EngineInterface, slug: string) {
   await launchWithNotice($, slug, '')
 }
 
-const resumeFrom = (run: Run) => (RESUME_AT_IMPLEMENT.includes(run.stage) ? 'implement' : '')
+const resumeFrom = (run: Run) => (RESUME_AT_IMPLEMENT.includes(run.stage) ? 'implement' : RESUME_AT_STAGE[run.stage] ?? '')
 
 // The refresh in progress, if any. A second caller does not start another one: it gets the running one's result, and a forced
 // refresh (the Refresh button) waits for it to end and then runs its own, so two refreshes never overlap.
@@ -749,7 +773,7 @@ async function removeProvider($: EngineInterface, provider: string) {
   })
 }
 
-// Pipeline stage (as the monitor names it) -> the sdlc.sh stages whose agents run in it.
+// Pipeline stage (as the monitor names it) -> the pipeline stages whose agents run in it.
 const STAGE_AGENTS: Record<string, string[]> = {
   Spec: ['spec'], Plan: ['plan'], 'Red tests': ['red-tests'], Implement: ['implement'], 'Test repair': ['test-repair', 'test-audit'], Review: ['review'],
 }
@@ -772,7 +796,7 @@ function stageStates(run: Run): { name: string; state: StageState }[] {
     if (run.state === 'paused') return { name, state: 'paused' }
 
     return { name, state: run.state === 'failed' || run.state === 'interrupted' || isGone ? 'failed' : 'active' }
-  }).filter(st => st.name !== 'Test repair' || st.state === 'active' || st.state === 'failed' || wasRepaired)
+  }).filter(st => st.name !== 'Test repair' || st.state === 'active' || st.state === 'failed' || wasRepaired || run.claims.length > 0)
 }
 
 const summary = (runs: Run[], queued: number) => {
@@ -784,7 +808,10 @@ const summary = (runs: Run[], queued: number) => {
 }
 
 const stateLine = (run: Run, now: number) => {
+  if (run.state === 'running' && run.note) return `${run.stage || 'Starting'} · waiting: ${run.note}`
   if (run.state === 'running') return `${run.stage || 'Starting'} · ${run.agent || '…'}${run.model ? ` (${run.model} · ${run.effort})` : ''} · ${clock(now - Date.parse(run.agentStarted))}${run.attempt ? ` · attempt ${run.attempt}` : ''}`
+  if (run.state === 'paused' && run.permissions.length) return `needs a decision: ${run.permissions.length} refused action${run.permissions.length === 1 ? '' : 's'}`
+  if (run.state === 'paused' && !run.questions.length) return `paused at ${run.stage || 'start'}`
   if (run.state === 'paused') return `needs answers: ${run.questions.length} question${run.questions.length === 1 ? '' : 's'}`
   if (run.state === 'done') return 'done'
   if (run.state === 'interrupted') return `interrupted at ${run.stage || 'start'}`
@@ -833,6 +860,34 @@ async function sweepAgents($: EngineInterface) {
 async function copyText($: EngineInterface, text: string, surface: unknown) {
   const r = await $.ui.copy({ text, surface } as never)
   $.ui.toast(r.isCopied ? 'Copied' : `Could not copy (${r.reason})`)
+}
+
+// Every paused pipeline, at the top of the pane (board or pipeline view) and above the prompt, so a pause is noticed
+// wherever the developer is. Open goes to that pipeline. Nothing when no pipeline is paused.
+function attentionBanner($: EngineInterface, els: { Box: any; Text: any; Button: any }, runs: Run[], where: 'pane' | 'band') {
+  const { Box, Text, Button } = els
+  const paused = runs.filter(r => r.state === 'paused')
+  if (!paused.length) return null
+
+  return (
+    <Box flexDirection="column" borderStyle={where === 'pane' ? 'round' : undefined} borderColor={P.wait} paddingX={where === 'pane' ? 1 : 0} backgroundColor={P.ground}>
+      {paused.map(r => (
+        <Box key={`attention-${where}-${r.slug}`} gap={1} flexWrap="wrap" backgroundColor={P.ground}>
+          <Text bold color={P.wait} backgroundColor={P.ground}>⚠ Action needed:</Text>
+          <Text color={P.text} backgroundColor={P.ground}>{r.slug} · {r.stage || 'start'} · {stateLine(r, 0)}</Text>
+          <Button
+            key={`attention-${where}-open-${r.slug}`}
+            label="Open"
+            variant="primary"
+            onPress={async () => {
+              await update($, view, () => r.slug)
+              if (where === 'band') await $.ui.open({ id: PANE, title: 'SDLC control' })
+            }}
+          />
+        </Box>
+      ))}
+    </Box>
+  )
 }
 
 // The loader line (while a button press is working) and the last notice with Copy and Dismiss; both stay until they are gone.
@@ -1072,7 +1127,7 @@ async function tick($: EngineInterface) {
   for (const r of s.runs) {
     now[r.slug] = r.state
     if (!isFirst && previous[r.slug] && previous[r.slug] !== r.state) {
-      if (r.state === 'paused') await notify($, `${r.slug} is paused: ${r.questions.length} question(s) need answers`)
+      if (r.state === 'paused') await notify($, `${r.slug} is paused: ${stateLine(r, 0)}`)
       else if (r.state === 'failed' || r.state === 'stopped') await notify($, `${r.slug} failed at ${r.stage || 'start'}`)
       else if (r.state === 'done') await notify($, `${r.slug} is done`)
     }
@@ -1168,6 +1223,7 @@ export const register: Register = on => {
           <Button key="config-open" label={labelOf(await read($, working), spinGlyph(await read($, frame)), 'config-open', 'CONFIG', 'Opening...')} onPress={() => openConfig($)} />
           <Text dimColor>{live.length || q.length ? summary(s.runs, q.length) : `${s.pending.length} pending`}</Text>
         </Box>
+        {attentionBanner($, { Box, Text, Button }, s.runs, 'band')}
         {await feedback($, { Box, Text, Button })}
       </Box>
     )
@@ -1235,6 +1291,7 @@ export const register: Register = on => {
     const stopping = (await read($, confirmStop)) === run.slug
     const discarding = (await read($, confirmDiscard)) === run.slug
     const stages = stageStates(run)
+    const claimShown = !!(await read($, showClaim))[run.slug]
     const done = stages.filter(x => x.state === 'done').length
     const since = run.agentStarted ? s.now - Date.parse(run.agentStarted) : 0
     const [tryNo, tryMax] = run.attempt.split('/').map(Number)
@@ -1242,7 +1299,9 @@ export const register: Register = on => {
     const answered = run.questions.filter(q => drafts[`${run.slug}:${q.n}`]).length
     const canStop = run.managed && (run.state === 'running' || run.state === 'starting')
     const canDiscard = run.managed
-    const canResume = run.managed && (run.state === 'failed' || run.state === 'interrupted' || run.state === 'stopped')
+    // A paused run with nothing left to answer or decide (asks decided outside the pane) can only go on by resuming.
+    const pausedIdle = run.state === 'paused' && run.questions.length === 0 && run.permissions.length === 0
+    const canResume = run.managed && (run.state === 'failed' || run.state === 'interrupted' || run.state === 'stopped' || pausedIdle)
 
     detail = (
       <Box flexDirection="column" paddingX={1} gap={1} minHeight={tall} backgroundColor={P.ground}>
@@ -1272,7 +1331,7 @@ export const register: Register = on => {
           {canResume && (
             <Button
               key="resume"
-              label={lbl('resume', resumeFrom(run) ? 'Resume from Implement' : 'Resume', 'Resuming...')}
+              label={lbl('resume', resumeFrom(run) ? `Resume from ${resumeFrom(run) === 'implement' ? 'Implement' : run.stage}` : 'Resume', 'Resuming...')}
               variant="primary"
               onPress={() => act($, 'resume', `Resuming ${run.slug}`, () => launchWithNotice($, run.slug, resumeFrom(run)))}
             />
@@ -1307,7 +1366,7 @@ export const register: Register = on => {
           </Text>
         )}
         {!run.managed && (
-          <Text color={P.wait} backgroundColor={P.ground}>Started outside the wrapper, so Stop and Resume are not available here. Resume it in the main working tree with ./scripts/sdlc.sh {run.slug}.</Text>
+          <Text color={P.wait} backgroundColor={P.ground}>Started outside the wrapper, so Stop and Resume are not available here. Resume it in the main working tree with ai-sdlc-helper pipeline {run.slug}.</Text>
         )}
         {run.message && <Text color={P.fail} backgroundColor={P.ground}>{run.message}</Text>}
         {await feedback($, { Box, Text, Button })}
@@ -1329,9 +1388,35 @@ export const register: Register = on => {
                 {st.state === 'active' ? spinGlyph(frameNo) : STAGE_GLYPH[st.state]} {st.name}
               </Text>
               {stageModel(run, st.name) && <Text color={P.muted} backgroundColor={P.ground}>{stageModel(run, st.name)}</Text>}
+              {st.name === 'Test repair' && (run.claims.length > 0 || run.claimRejects.length > 0) && (
+                <Button
+                  key="show-claim"
+                  label={claimShown ? 'Hide claim' : 'Show claim'}
+                  onPress={() => update($, showClaim, m => ({ ...m, [run.slug]: !m[run.slug] }))}
+                />
+              )}
             </Box>
           ))}
         </Box>
+
+        {claimShown && (
+          <Box flexDirection="column" borderStyle="single" borderColor={P.line} paddingX={1} backgroundColor={P.ground}>
+            <Text bold color={P.text} backgroundColor={P.ground}>
+              Test repair claim <Text color={P.muted} backgroundColor={P.ground}>(Docs/backlog/{run.slug}/test-issues.md, written by the Implement agent)</Text>
+            </Text>
+            {run.claims.length === 0 && <Text color={P.muted} backgroundColor={P.ground}>test-issues.md is gone (Implement deletes it when it runs again).</Text>}
+            {run.claims.map((c, i) => (
+              <Box key={`claim-${i}`} flexDirection="column" backgroundColor={P.ground}>
+                {c.file && <Text color={P.text} backgroundColor={P.ground}>{c.file} › {c.test}</Text>}
+                <Text color={P.muted} backgroundColor={P.ground}>{'  '}{c.why}</Text>
+              </Box>
+            ))}
+            {run.claimRejects.length > 0 && <Text bold color={P.fail} backgroundColor={P.ground}>Rejected by the pipeline</Text>}
+            {run.claimRejects.map((l, i) => (
+              <Text key={`reject-${i}`} color={P.fail} backgroundColor={P.ground}>{'  '}{l}</Text>
+            ))}
+          </Box>
+        )}
 
         {Object.keys(run.stageFiles).length > 0 && (
           <Box flexDirection="column" borderStyle="single" borderColor={P.line} paddingX={1} backgroundColor={P.ground}>
@@ -1469,7 +1554,7 @@ export const register: Register = on => {
             )}
           </Box>
         )}
-        {run.state === 'paused' && run.questions.length === 0 && run.permissions.length === 0 && <Text color={P.wait} backgroundColor={P.ground}>Paused, but questions.md has no questions I can read: open Docs/backlog/{run.slug}/questions.md.</Text>}
+        {pausedIdle && <Text color={P.wait} backgroundColor={P.ground}>Paused at {run.stage || 'start'} with nothing left to answer or decide: press Resume to continue (or check Docs/backlog/{run.slug}/questions.md).</Text>}
 
         <Box flexDirection="column" borderStyle="single" borderColor={P.line} paddingX={1} backgroundColor={P.ground}>
           <Text bold color={P.text} backgroundColor={P.ground}>Recent output</Text>
@@ -1489,14 +1574,19 @@ export const register: Register = on => {
     const boardW = isOpen ? Math.floor(wide * (1 - DETAIL_SHARE)) : wide
     const board = await boardView($, { Box, Text, Button }, s, { width: boardW, current, narrow: isOpen })
 
+    const banner = attentionBanner($, { Box, Text, Button }, s.runs, 'pane')
+
     return (
-      <Box flexDirection="row" minHeight={tall} backgroundColor={P.ground}>
-        {board}
-        {isOpen && (
-          <Box flexDirection="column" width={wide - boardW} borderStyle="single" borderColor={P.line} backgroundColor={P.ground}>
-            {detail}
-          </Box>
-        )}
+      <Box flexDirection="column" minHeight={tall} backgroundColor={P.ground}>
+        {banner}
+        <Box flexDirection="row" flexGrow={1} backgroundColor={P.ground}>
+          {board}
+          {isOpen && (
+            <Box flexDirection="column" width={wide - boardW} borderStyle="single" borderColor={P.line} backgroundColor={P.ground}>
+              {detail}
+            </Box>
+          )}
+        </Box>
       </Box>
     )
   })

@@ -1,1 +1,0 @@
-Tools: read files with the Read tool and search with Grep and Glob. Run only the shell commands you were given (the test command, ls, git status/diff/log and the code indexer's). Do not use cat, head, tail, sed, awk, grep, find or cd in the shell to read or search: they are refused, and a refused command stops the pipeline.

@@ -37,9 +37,21 @@ To view the Swagger UI locally:
 4.  **Access the UI:**
     Open your browser and navigate to `http://localhost:3001/docs`.
 
+## Logging
+
+The server logs with pino. Requires Node 22 or later.
+
+- **JSON output (Kubernetes/GKE):** one JSON object per line on stdout with `severity` (pino `trace`/`debug` → `DEBUG`, `info` → `INFO`, `warn` → `WARNING`, `error` → `ERROR`, `fatal` → `CRITICAL`), `message`, an ISO `timestamp`, `serviceContext` and `httpRequest` for requests. The GKE logging agent reads it as `jsonPayload` with `severity`. Query problems with `severity>=WARNING`.
+- **Pretty output locally:** human-readable lines. `LOG_FORMAT=json|pretty` forces a format; otherwise JSON is used when `KUBERNETES_SERVICE_HOST` is set or `NODE_ENV=production`, else pretty.
+- **`LOG_LEVEL`:** `trace`, `debug`, `info` (default) or `warn`. The level never goes below `warn`: `error`, `fatal`, `silent` and unknown values fall back to `warn`.
+- **`X-Request-Id`:** every response carries it. A valid incoming value is reused, otherwise a UUID is generated. Error entries carry the same id.
+- **Trace correlation:** set `GOOGLE_CLOUD_PROJECT` in the Deployment so `X-Cloud-Trace-Context` is linked to the entry.
+- **Tests:** logs are discarded under Jest unless `LOG_IN_TESTS=1`.
+- Request bodies, headers, cookies and query strings are never logged.
+
 ## Graft setup (required for the SDLC workflow)
 
-The Plan stage of `scripts/sdlc.sh` and the `/plan` and `/triage` commands use a code indexer to find the files a change touches: [graft](https://www.npmjs.com/package/@nanonets/graft) (set up below), [graphify](https://github.com/safishamsi/graphify), or one declared in `sdlc.config.json`. One is recommended, none is required: without one they search with Grep and Glob, the pipeline prints a note, and the graft hooks do nothing. `node scripts/sdlc-config.cjs code-search --list` shows what is available and `--use <graft|graphify|auto|none>` chooses. Each developer who wants graft installs and builds it once.
+The Plan stage of the SDLC pipeline and the `/plan` and `/triage` commands use a code indexer to find the files a change touches: [graft](https://www.npmjs.com/package/@nanonets/graft) (set up below), [graphify](https://github.com/safishamsi/graphify), or one declared in `sdlc.config.json`. One is recommended, none is required: without one they search with Grep and Glob, the pipeline prints a note, and the graft hooks do nothing. `ai-sdlc-helper code-search --list` shows what is available and `--use <graft|graphify|auto|none>` chooses. Each developer who wants graft installs and builds it once.
 
 1. **Install** (needs Node.js and npm):
    ```bash
@@ -70,9 +82,68 @@ DATABASE_URL=postgres://app:app@localhost:5432/app npm run test:integration
 
 The suite creates and drops its own `prw_test_*` database, so it never touches the data in `DATABASE_URL`'s database. Without `DATABASE_URL` it fails with `DATABASE_URL is required for integration tests`.
 
+## SDLC pipeline
+
+The SDLC pipeline (Spec, Plan, Red tests, Implement, Test repair, Review, Ship, each checked before the next starts) comes from the [ai-sdlc-helper](https://github.com/imaimai86/ai-sdlc-helper) package. This repository only holds its settings (`sdlc.config.json`), the backlog (`Docs/backlog/`), the integration command (`scripts/sdlc-integration.sh`), the slash commands, and the control pane and guard plugins in `.claude/plugins/`. The package's README lists every command and setting; `ai-sdlc-helper help` prints them.
+
+**Install** (Node 18 or newer, git, and Claude Code's `claude` on PATH). Until the package is on npm, pack it from GitHub and install the tarball, or install the tarball attached to a GitHub release:
+
+```bash
+npm pack github:imaimai86/ai-sdlc-helper && npm i -g ./ai-sdlc-helper-*.tgz
+npm i -g <tarball URL from a GitHub release>
+```
+
+Once it is published: `npm i -g ai-sdlc-helper`. (`npm i -g github:imaimai86/ai-sdlc-helper` does not work; see the package README.) Then check the project from the repo root:
+
+```bash
+ai-sdlc-helper doctor     # Node, git, claude, the settings, the code indexer, the backlog
+ai-sdlc-helper show       # what sdlc.config.json resolves to
+```
+
+**Settings** (`sdlc.config.json`, committed; a run's worktree only sees what is committed): the `server` Jest suite (`npm test`, tests in `server/__tests__/`), the integration command `bash scripts/sdlc-integration.sh` (skipped in CI, below), lint `npm run lint --prefix server`, the commands the stage agents may also run (`npm run generate-spec`, `npm run lint`), the worktree folder `../<repo>-sdlc` with links to `server/node_modules`, `node_modules`, `graft` and `.env`, the backlog `Docs/backlog`, branches `sdlc/<slug>` (`-10001`, `-10002`... on a conflict) and times in `Asia/Dubai`.
+
+**Run a backlog item** in its own git worktree and branch (at most 2 at once, `SDLC_MAX_PARALLEL`; exit 3 when full):
+
+```bash
+ai-sdlc-helper start <slug>            # start or resume; worktree at ../<repo>-sdlc/<slug>, branch sdlc/<slug>; --from <stage> resumes at a stage
+ai-sdlc-helper watch <slug>            # its status.json line, run state, uncommitted files and the end of run.out (--follow keeps refreshing)
+ai-sdlc-helper stop <slug>             # interrupt the pipeline and everything it started
+ai-sdlc-helper status                  # one line per run
+ai-sdlc-helper changes <slug> [--json] # files changed in the pipeline's worktree: "<changed> <uncommitted>"
+ai-sdlc-helper discard <slug> [--yes] [--stop]   # delete its worktree, branch and run record (without --yes: show what would go, exit 6)
+ai-sdlc-helper restart <slug> [--yes]  # stop it if running, discard it, start again from Spec
+ai-sdlc-helper permit <slug> allow|always|deny [n|all]   # decide the actions a stage agent was refused, then start it again to resume
+ai-sdlc-helper pipeline <slug>         # run the pipeline in the current checkout instead of a worktree
+ai-sdlc-helper triage --report "<text>"   # turn a report into backlog items (brief.md and the index line)
+```
+
+`discard` and `restart` throw away the item's worktree, its local branch `sdlc/<slug>` (including unpushed commits and uncommitted files) and its run record, but first save the branch tip in `.git/sdlc-runs/<slug>.discarded`; the command it prints, `git branch sdlc/<slug> <sha>`, brings the work back. Run records live in `.git/sdlc-runs/`.
+
+When the Spec stage has questions, the run pauses (exit 2): answer them on the `**Answer:**` lines of `Docs/backlog/<slug>/questions.md` in the run's worktree and start it again. A stage agent runs headless, so an action outside its allowed tools is refused; the run pauses and `watch` and the pane list the refusals (`always` saves the rule in `.claude/sdlc-permissions.json` of the main working tree).
+
+**Models and providers.** Each stage has a default model and effort; `MODEL_<STAGE>` and `EFFORT_<STAGE>` (`SPEC`, `PLAN`, `RED_TESTS`, `IMPLEMENT`, `TEST_REPAIR`, `TEST_AUDIT`, `REVIEW`), or `SDLC_MODEL` and `SDLC_EFFORT` for every stage, override them, for example `MODEL_IMPLEMENT=opus EFFORT_IMPLEMENT=high ai-sdlc-helper start <slug>`. A non-Anthropic model goes through a provider (an Anthropic-compatible endpoint such as a LiteLLM or OpenRouter gateway), selected as `<provider>/<model>`. Providers live in a user-level registry that holds the NAME of the variable carrying the key, never the key (export that variable in your shell profile):
+
+```bash
+ai-sdlc-helper model list [--json]   # the providers, their models and whether each key variable is set
+ai-sdlc-helper model add <provider> --endpoint <url> --key-env <VAR> --models a,b [--effort]
+ai-sdlc-helper model add-model|remove-model <provider> <model>
+ai-sdlc-helper model remove <provider>
+ai-sdlc-helper model test <provider>/<model>   # one request: "ok", or the failure line
+```
+
+For CI and headless runs, the `SDLC_PROVIDERS` and `SDLC_PROVIDER_<NAME>_*` keys in the repo-root `.env` are still read as a fallback (see `.env.example`).
+
+**New dependencies:** the Plan stage confirms a package's API from its published docs (WebFetch, WebSearch, `ai-sdlc-helper fetch <https-url>`, or context7) and lists exact versions under `## Dependencies` in `plan-1.md`; the pipeline installs them at the start of Implement, in the run's own `server/node_modules`.
+
+**Flaky tests:** before the Test repair pre-check, every failing test that `test-issues.md` does not claim is run once more; one that passes is reported (`WARNING: flaky test passed on re-run, not rejected: <key>`) and listed in `Docs/backlog/<slug>/logs/flaky-tests.md` instead of being rejected.
+
+**What Ship commits:** only the files the cycle created, changed or deleted since the snapshot in `Docs/backlog/<slug>/logs/baseline.json`, in one `feat(<slug>)` commit, then the backlog tick in a second commit. Skipped files (pre-existing local changes, `.env` and other secrets, `.vscode/`, `.idea/`, `.claude/`, `node_modules/`, files over 1 MiB) are listed in `Docs/backlog/<slug>/logs/ship-skipped.md`. Keys added to `.env` during the run are copied to `.env.example` with the value `change-me`. Everything under `Docs/backlog/<slug>/logs/` is git-ignored.
+
+**Slash commands** (`.claude/commands/`): `/spec`, `/interview`, `/plan`, `/red-tests`, `/implement`, `/review`, `/ship`, `/tdd-loop`, `/sdlc` and `/triage` each print the package's skill for this project (`ai-sdlc-helper skill <name>`); `/backlog-list` runs `ai-sdlc-helper backlog`.
+
 ## SDLC pipeline: integration tests
 
-Integration tests (`npm run test:integration`) are a required part of the pipeline locally. `scripts/sdlc.sh` runs them through `scripts/sdlc-integration.sh` after the unit tests, at the Implement, Test repair and Review checks. The database is chosen in this order, first match wins:
+Integration tests (`npm run test:integration`) are a required part of the pipeline locally. The pipeline runs them through `scripts/sdlc-integration.sh` (`integration.cmd` in `sdlc.config.json`) after the unit tests, at the Implement, Test repair and Review checks. The database is chosen in this order, first match wins:
 
 1. `DATABASE_URL` set in your shell.
 2. `DATABASE_URL` in the repo-root `.env` (the file the server reads), if its host is this machine and it answers. This is the fast path: no container to start.
@@ -80,81 +151,24 @@ Integration tests (`npm run test:integration`) are a required part of the pipeli
 
 `SDLC_DB=docker` skips 1 and 2. A non-local host in `.env` is ignored with a warning unless `SDLC_ALLOW_REMOTE_DB=1`. The suite creates and drops its own `prw_test_*` databases, so several runs can share one server (the database user needs `CREATEDB`). `server/.env` is not read by anything; use the repo-root `.env`.
 
-CI skips them temporarily, with a visible warning. To enable them in CI, set the CI/CD variable `SDLC_INTEGRATION_CI=run` and provide `DATABASE_URL` (for example from a `postgres:16` service). No code change is needed.
+CI skips them temporarily, with a visible warning (`integration.ci` is `"skip"`). To enable them in CI, set the CI/CD variable `SDLC_INTEGRATION_CI=run` and provide `DATABASE_URL` (for example from a `postgres:16` service). No code change is needed.
 
-## SDLC pipeline: flaky tests in Test repair
+## Interactive SDLC: control pane and guard
 
-Before the Test repair pre-check, `scripts/sdlc.sh` re-runs once every failing test that `test-issues.md` does not claim (only those tests, one jest run per test file). A test that passes on the re-run is treated as flaky and not rejected. The pipeline prints:
-
-```
-WARNING: flaky test passed on re-run, not rejected: <key>
-```
-
-and appends one line per flaky test to `Docs/backlog/<slug>/logs/flaky-tests.md`:
-
-```
-<key> :: first run: failed :: re-run: passed
-```
-
-That file is under `logs/`, so it is git-ignored and never committed. A test that fails again, or is missing from the re-run, stays failing and is rejected as before.
-
-## SDLC pipeline: what the Ship stage commits
-
-**Prompts, models and effort per stage.** Each agent's prompt lives in `scripts/prompts/prompt-<stage>.md` (`spec`, `plan`, `red-tests`, `implement`, `test-repair`, `test-audit`, `review`) and is read by `scripts/sdlc.sh` at run time, so you can edit a prompt without touching the script. Placeholders: `{{DOCS}}`, `{{LOG}}`, `{{TEST_DIR}}`, `{{TEST_CMD}}`, `{{RED_SHA}}`, `{{SLUG}}`. Manual inputs are still appended after the prompt. Each stage has its own default model and effort (`stage_defaults()` in the script: Spec opus/medium, Plan opus/medium, Red tests sonnet/medium, Implement sonnet/medium, Test repair sonnet/medium, Test audit opus/medium, Review opus/medium). Override per stage with `MODEL_<STAGE>` and `EFFORT_<STAGE>` (`SPEC`, `PLAN`, `RED_TESTS`, `IMPLEMENT`, `TEST_REPAIR`, `TEST_AUDIT`, `REVIEW`), or for every stage without its own value with `SDLC_MODEL` and `SDLC_EFFORT`. Effort is `low`, `medium`, `high`, `xhigh` or `max`; an invalid value exits 1 before the agent runs. Example: `MODEL_IMPLEMENT=opus EFFORT_IMPLEMENT=high bash scripts/sdlc-mod.sh run <slug>`. **Custom models and providers.** Stages run through Claude Code, so a non-Anthropic model goes through a provider: an Anthropic-compatible endpoint such as a LiteLLM or OpenRouter gateway. Providers live first in a user-level registry file, `models.json`, managed with `bash scripts/sdlc-mod.sh model …` (below) or the CONFIG pane of the control pane. Its path is the first match of: `SDLC_MODELS_FILE` (used as given); `$XDG_CONFIG_HOME/sdlc/models.json` (not on Windows); `%APPDATA%\sdlc\models.json` (Windows); `~/.config/sdlc/models.json` otherwise. WSL and the Windows host share one file only when both set `SDLC_MODELS_FILE` to the same file. The registry holds the NAME of the environment variable that carries a provider's key, never the key: export that variable in your shell profile, because a key written only in `.env` is not used for a registry provider. The endpoint must be `https`, or `http` to `localhost`, `127.0.0.1` or `[::1]` only, so a key never travels in clear text to another host. The file is read each time an agent starts, so a change needs no restart; a broken file stops the run with its path. A provider in the registry wins as a whole over the same name in `SDLC_PROVIDER*`. The `SDLC_PROVIDER*` variables are the fallback, for CI and headless runs: these providers live in the repo-root `.env` (git-ignored; copy the commented block from `.env.example`): `SDLC_PROVIDERS=name1,name2` and, per provider, `SDLC_PROVIDER_<NAME>_ENDPOINT`, `_API_KEY`, `_MODELS` (comma list of the model names you allow) and optionally `_EFFORT=yes` (pass `--effort`; off by default because many models reject it). Select a model as `<provider>/<model>`, split at the first `/`, for example `MODEL_IMPLEMENT=openrouter/openai/gpt-5` or `SDLC_MODEL=local/llama3:8b`; a name without `/` is an Anthropic model. Startup fails (exit 1, before any agent runs) for an unlisted provider, a missing endpoint or key, or a model not in `_MODELS`. Only the `SDLC_PROVIDER*` keys are read from `.env` and shell values win. The key is exported only into the subshell that starts `claude` (never on a command line or in a log), `ANTHROPIC_API_KEY` is emptied for that call so an Anthropic key is never sent to a third party, and the pane and `status.json` show `<provider>/<model>`. Every provider model gets the same tools, permissions and turn limit as a Claude one; whether it edits files and calls tools well depends on the model and the gateway.
-
-The resolved model and effort of every stage, and of the running agent, are written to `status.json` (`models`, `model`, `effort`); the `/sdlc-monitor` pipeline view shows them under each stage box and next to the running agent, and `watch` prints them in the status line.
-
-At the start of a run (`FROM=spec`) `scripts/sdlc.sh` records every file that is already modified, staged or untracked in `Docs/backlog/<slug>/logs/baseline.json`. The Ship stage (`scripts/sdlc-ship.sh`) then commits exactly the files the cycle created, changed or deleted since that snapshot, anywhere in the repo, in one `feat(<slug>)` commit, and ticks the item in `Docs/backlog/index.md` in a second commit. Anything else the developer had staged is left staged.
-
-Skipped files are never committed; they are listed with the reason in `Docs/backlog/<slug>/logs/ship-skipped.md` and in the DONE message:
-
-| Reason | Files |
-|---|---|
-| `pre-existing local changes` | files that were already modified before the run and changed again |
-| `sensitive file` | `.env`, `.env.*` (not `.env.example`), `*.pem`, `*.key`, `*.p12`, `id_rsa*`, `*.keystore` |
-| `local or agent configuration` | `.vscode/`, `.idea/`, `.claude/` |
-| `generated` | `node_modules/`, `.DS_Store` |
-| `too large` | files over 1 MiB |
-
-Keys added to a git-ignored `.env` during the run are copied, with the placeholder value `change-me` (never the real value), into the sibling `.env.example`, which is committed. If nothing changed, Ship prints `WARNING: nothing to commit` and the run still succeeds. Resuming with any `FROM` other than `spec` reuses the existing baseline, or creates one with a warning (files changed before the resume then count as pre-existing).
-
-## Interactive SDLC: control pane and parallel pipelines
-
-`scripts/sdlc-mod.sh` runs the normal pipeline (`scripts/sdlc.sh`, unchanged) for one backlog item in its **own git worktree**, so several items can run at once. Two Claude Code plugins in `.claude/plugins/` add the interface and the guard rails.
-
-```bash
-bash scripts/sdlc-mod.sh run <slug>     # start or resume; worktree at ../<repo>-sdlc/<slug>, branch sdlc/<slug>
-bash scripts/sdlc-mod.sh stop <slug>    # interrupt the pipeline and everything it started
-bash scripts/sdlc-mod.sh status         # one line per run
-bash scripts/sdlc-mod.sh watch <slug>    # live view of one pipeline, read from its worktree (--once prints one frame; WATCH_INTERVAL seconds, default 3)
-bash scripts/sdlc-mod.sh changes <slug> [--json]   # files changed in the pipeline's worktree: "<changed> <uncommitted>"
-bash scripts/sdlc-mod.sh discard <slug> [--yes] [--stop]   # delete its worktree, branch and run record (without --yes: show what would go, exit 6)
-bash scripts/sdlc-mod.sh restart <slug> [--yes]   # stop it if running, discard it, start again from Spec
-bash scripts/sdlc-mod.sh model list [--json]   # the registry providers, their models and whether each key variable is set
-bash scripts/sdlc-mod.sh model add <provider> --endpoint <url> --key-env <VAR> --models a,b [--effort]   # create a provider, or replace every field of an existing one
-bash scripts/sdlc-mod.sh model add-model <provider> <model>      # add one model to a provider
-bash scripts/sdlc-mod.sh model remove-model <provider> <model>   # remove one model (not the last: use remove)
-bash scripts/sdlc-mod.sh model remove <provider>                 # remove a provider with all its models
-bash scripts/sdlc-mod.sh model test <provider>/<model>           # one request to <endpoint>/v1/messages: "ok", or the failure line
-```
-
-`discard` and `restart` throw away the item's worktree, its local branch `sdlc/<slug>` (including unpushed commits and uncommitted files) and its run record, but first save the branch tip in `.git/sdlc-runs/<slug>.discarded`; the command it prints, `git branch sdlc/<slug> <sha>`, brings the work back. `discard` refuses a running pipeline unless `--stop` is given, which stops it first (after `--yes`); `restart` stops it itself. `restart` refuses an item already merged into the base branch (exit 5).
-
-At most 2 pipelines run at once (`SDLC_MAX_PARALLEL`, exit code 3 when full). Run records live in `.git/sdlc-runs/`. The wrapper links `server/node_modules`, `graft` and `.env` into each worktree.
+Two Claude Code plugins in `.claude/plugins/` add the interface and the guard rails. They stay in this repository until the package ships them as a plugin. The pane runs its actions through `scripts/sdlc-mod.sh`, a thin compatibility wrapper that maps each subcommand to `ai-sdlc-helper` (`run` is `start`, `FROM=<stage>` becomes `--from <stage>`, `watch` follows unless `--once`; `stop`, `restart`, `discard`, `status`, `changes`, `permit`, `model` and `backlog` keep their names). Without `ai-sdlc-helper` on PATH it says how to install it.
 
 **Control pane (`sdlc-monitor` plugin).** Start Claude with `claude --plugin-dir .claude/plugins/sdlc-monitor`, then press the **SDLC** or **CONFIG** button above the prompt, or type `/sdlc-monitor` or `/sdlc-config`.
 
-- **Overview:** the pending backlog items with checkboxes, a **Run selected** button (extra items wait in a queue until a slot frees), and one row per pipeline with its state: running, paused, done, failed, interrupted. Each row ends with how many files the pipeline has changed (`N files changed (M uncommitted)`, or `no changes yet` while running); the pipeline view shows the same in a `Files` line. Counts refresh with the pane, and every 10 s for finished pipelines.
-- **Open a pipeline:** stage chips, progress bar, the current agent with elapsed time and attempt, test progress, artifacts and recent output.
+- **Overview:** the pending backlog items with checkboxes, a **Run selected** button (extra items wait in a queue until a slot frees), and one row per pipeline with its state: running, paused, done, failed, interrupted. Each row ends with how many files the pipeline has changed (`N files changed (M uncommitted)`, or `no changes yet` while running); the pipeline view shows the same in a `Files` line.
+- **Open a pipeline:** stage chips, progress bar, the current agent with its model, elapsed time and attempt, test progress, artifacts, the files changed per stage and recent output.
 - **Paused for answers:** a toast appears, the row shows **Answer**, and the pipeline view lists each Spec question with its suggested answer. Press **Use suggested** or type your own, then **Submit answers and resume**.
 - **Interrupt:** **Stop** (press twice to confirm). A failed or interrupted pipeline offers **Resume** (from Implement if it got past Red tests).
-- **Manual input per stage:** a failed, interrupted or stopped pipeline shows one text box per agent stage (Spec, Plan, Red tests, Implement, Review) and a **Resume at <stage>** button. Press Enter to save the text; it goes into `Docs/backlog/<slug>/manual-inputs.md` under `## <stage>` and the pipeline hands it to that stage's agent as binding instructions (it cannot override the rule that the tests are locked). Resume points: `FROM=spec|plan|red-tests|implement|test-repair|review ./scripts/sdlc.sh <slug>`; any other value exits 1 before anything is changed; `plan` and `red-tests` refuse once the red-tests commit exists (restart the run to redo them); `review` resumes from the latest locked tests commit. `FROM=test-repair` resumes at Test repair after a run stopped there for a non-verdict reason (the repair agent or auditor failed to run, or the claims failed the pre-check; the run prints the exact `FROM=test-repair` command when it can resume). It skips Implement and keeps `test-issues.md`, and first checks, reporting every failure together and calling no agent: the red-tests commit exists, the claim file has at least one valid claim, `server/__tests__` is unchanged since the red-tests commit (otherwise the restore command `git checkout <sha> -- server/__tests__ && git clean -fd server/__tests__` is printed, never run), the implementation changed outside `server/__tests__/` and `Docs/`, the repair was not already accepted (then use `FROM=review`), and the claims pass the pre-check. `FROM=implement` deletes `test-issues.md` and prints a warning first. The same file can be edited by hand.
-- **Discard and start over:** **Discard** (press twice to confirm) stops the pipeline if it is running and deletes its worktree and branch. The pane stays on the item and shows **Start** (and the command that brings the old branch back). **Start** runs it again from Spec, and the running pipeline shows **Stop** and **Discard** again. Discard is offered for any pipeline the wrapper started.
-- **Files changed per stage**: `scripts/sdlc.sh` marks the working tree at the start of every stage and at exit (`node scripts/sdlc-changes.cjs mark`), crediting the stage that ends with the files that changed while it ran, including files it committed (Red tests). Later commits that only collect earlier work (Commit) are not credited with it, and `.env`, `.claude/`, `node_modules` and other skipped files are never listed. The result is `Docs/backlog/<slug>/logs/stage-files.json`; the run view of the pane shows a "Files changed per stage" list (first 8 per stage, then "+N more").
-- **Refused actions** (a stage agent runs headless, so an action outside its allowed tools is refused): the agent runs with `--output-format json` and the refusals are read from its result. The run pauses (exit 2), and the pane lists each one with **Allow this run**, **Allow always** (saved in `.claude/sdlc-permissions.json` in the main working tree) and **Deny**; when none is left the run resumes at that stage (a restart of the stage, not a continuation). A path under `.claude/` cannot be opened by an allow rule, so allowing it runs that stage with permission checks off (`--permission-mode bypassPermissions`), and the pane says so; it is never saved as an always rule. From a terminal: `bash scripts/sdlc-mod.sh permit <slug> allow|always|deny [n|all]`, then resume the run. State: `Docs/backlog/<slug>/logs/permissions.json`.
-- **CONFIG pane** (**CONFIG** button or `/sdlc-config`): a provider list and a form. The list shows each model registry provider with its endpoint, key variable and `key set` / `key NOT set`, an **Edit** button per provider, **Test** per model (the result is a toast), and **Remove** per model and per provider (press twice to confirm). **Add provider** opens the form: provider name, endpoint, `API key variable NAME (not the key)`, models (comma list) and an effort-flag toggle. **Save** stores the provider and returns to the list; **Save and add another** keeps an empty form open; **Cancel** returns without saving. **Edit** opens the same form filled with the stored values (the name is fixed) and **Save** replaces them, so removing a model from the comma list removes it. A new provider whose name already exists is refused; use **Edit**. A rejected save shows its line as a toast and keeps what you typed. The key-variable field takes a variable name, never a key.
+- **Manual input per stage:** a failed, interrupted or stopped pipeline shows one text box per agent stage (Spec, Plan, Red tests, Implement, Review) and a **Resume at <stage>** button. The text goes into `Docs/backlog/<slug>/manual-inputs.md` under `## <stage>` and the pipeline hands it to that stage's agent as binding instructions (it cannot override the rule that the tests are locked). From a terminal: `ai-sdlc-helper start <slug> --from spec|plan|red-tests|implement|test-repair|review`.
+- **Discard and start over:** **Discard** (press twice to confirm) stops the pipeline if it is running and deletes its worktree and branch; the pane then shows **Start** and the command that brings the old branch back.
+- **Refused actions:** the pane lists each one with **Allow this run**, **Allow always** and **Deny**; when none is left the run resumes at that stage. A path under `.claude/` cannot be opened by an allow rule, so allowing it runs that stage with permission checks off, and the pane says so.
+- **CONFIG pane** (**CONFIG** button or `/sdlc-config`): the model registry providers with their endpoint, key variable and `key set` / `key NOT set`, **Edit**, **Test** per model, **Remove**, and a form to add or edit a provider (the key-variable field takes a variable name, never a key).
 
-**Guard (`sdlc-guard` plugin).** Loaded into every pipeline agent by the wrapper. It reads the current stage from `status.json` and refuses writes the stage does not allow: Spec and Plan write only that item's docs, Red tests write no source, Implement and Review never touch `server/__tests__`. It also refuses a doc written before the one it builds on.
+**Guard (`sdlc-guard` plugin, and `.claude/helpers/sdlc-guard.cjs`).** The plugin is loaded into every pipeline agent. It reads the current stage from `status.json` and refuses writes the stage does not allow: Spec and Plan write only that item's docs, Red tests write no source, Implement and Review never touch `server/__tests__`. It also refuses a doc written before the one it builds on. The helper, run by the hooks in `.claude/settings.json`, protects the tests during `/implement` and `/review` and keeps the session going while `npm test` fails. Both read the test layout from `ai-sdlc-helper layout`, and fall back to `server/__tests__` and `npm test` without it.
 
 ## Backlog
 
@@ -166,8 +180,8 @@ npm run backlog -- pending,in-progress
 npm run backlog -- blocked --json
 ```
 
-In Claude Code: `/backlog-list blocked`.
+In Claude Code: `/backlog-list blocked`. Both run `ai-sdlc-helper backlog` (the package must be installed, see "SDLC pipeline").
 
-Markers in `index.md`: `[ ]` pending, `[x]` completed, `[!]` blocked, `[~]` parked (kept for later; `scripts/sdlc.sh` skips it, and a trailing `(parked: reason)` shows in the NOTE column). A `[ ]` item whose `sdlc/<slug>` branch exists (local or `origin`) is shown as in-progress. Statuses are `pending`, `in-progress`, `blocked`, `parked`, `completed` (aliases `open` and `done`, or `all`). The command only reads, it never changes files.
+Markers in `index.md`: `[ ]` pending, `[x]` completed, `[!]` blocked, `[~]` parked (kept for later; the pipeline skips it, and a trailing `(parked: reason)` shows in the NOTE column). A `[ ]` item whose `sdlc/<slug>` branch exists (local or `origin`) is shown as in-progress. Statuses are `pending`, `in-progress`, `blocked`, `parked`, `completed` (aliases `open` and `done`, or `all`). The command only reads, it never changes files.
 
 To stop the inline context injected by the hooks, remove the graft entries under `hooks` in `.claude/settings.json` on your machine (do not commit that change). The MCP server stays available through `.mcp.json`. To turn graft off completely, also remove `graft` from `.mcp.json` locally.

@@ -1,1 +1,0 @@
-Find the affected code with graft, the prebuilt code graph: `graft ask "<what you need>" --source` to locate it, `graft grep "<literal>"` for every occurrence, and `graft callers <symbol>` for who calls it (or the graft MCP tools). Read only the files it points to; do not read whole files you do not need.

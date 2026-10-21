@@ -11,10 +11,10 @@
     }
   ],
   "integration": { "cmd": "bash scripts/sdlc-integration.sh", "ci": "skip" },
-  "lint": "npm run lint",
+  "lint": "npm run lint --prefix server",
   "worktree": { "base": "../{repo}-sdlc", "link": ["server/node_modules", "node_modules", "graft", ".env"] },
   "git": { "branchPrefix": "sdlc/", "conflictSuffixStart": 10001 },
-  "agent": { "allowCommands": ["npm run generate-spec"], "codeSearch": "auto" },
+  "agent": { "allowCommands": ["npm run generate-spec", "npm run lint"], "codeSearch": "auto" },
   "ship": { "envExample": true, "maxFileBytes": 1048576 },
   "ui": { "timezone": "Asia/Dubai" }
 }
