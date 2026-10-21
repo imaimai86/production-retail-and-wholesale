@@ -584,7 +584,7 @@ Freeze on `s10-accept-suggested.png`.
 > **Submit answers and resume**. Your answers are saved in `decisions.md`, so the agent never asks them again. If you
 > work from the terminal, you fill the `**Answer:**` lines in `questions.md` and run the same command again.
 
-**Step 5: steer, stop, resume.**
+**Step 5: resume, or start over.**
 
 > When a run fails, the pane tells you why and offers to resume it, for example **Resume from Implement**, so it picks up
 > from the last good stage instead of starting over. From the terminal it's `FROM=implement` before the command. And
