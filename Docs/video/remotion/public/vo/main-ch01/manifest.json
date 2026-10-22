@@ -1,0 +1,234 @@
+[
+  {
+    "id": "p-1",
+    "scene": "pitch",
+    "text": "You paste an error from your server logs. Or you just write one line: \"POST /users crashes when the name is missing.\"",
+    "voice": "bm_george",
+    "file": "p-1.wav",
+    "seconds": 6.721
+  },
+  {
+    "id": "p-2",
+    "scene": "pitch",
+    "text": "You get a coffee, and when you come back there's a git branch waiting. In it: a written specification, a technical plan, a set of tests that failed before the fix and pass after it, the fix itself, a code review, and a clean commit history.",
+    "voice": "bm_george",
+    "file": "p-2.wav",
+    "seconds": 14.947
+  },
+  {
+    "id": "n-1",
+    "scene": "claims",
+    "text": "Nobody typed any of that code. AI agents did.",
+    "voice": "bm_george",
+    "file": "n-1.wav",
+    "seconds": 3.426
+  },
+  {
+    "id": "n-2",
+    "scene": "claims",
+    "text": "But here is the part that matters: at no point were those agents allowed to grade their own homework.",
+    "voice": "bm_george",
+    "file": "n-2.wav",
+    "seconds": 5.967
+  },
+  {
+    "id": "n-3",
+    "scene": "claims",
+    "text": "They could not edit the tests to make them pass. They could not guess what you meant. They could not commit your secrets.",
+    "voice": "bm_george",
+    "file": "n-3.wav",
+    "seconds": 6.192
+  },
+  {
+    "id": "n-4",
+    "scene": "claims",
+    "text": "And when one of them claimed \"this test is wrong\", a second agent, a set of mechanical checks, and a third, independent auditor all had to agree before a single test line could change.",
+    "voice": "bm_george",
+    "file": "n-4.wav",
+    "seconds": 11.363
+  },
+  {
+    "id": "r-1",
+    "scene": "proof",
+    "text": "That's not just a claim. This is a real pull request, from my own repository.",
+    "voice": "bm_george",
+    "file": "r-1.wav",
+    "seconds": 5.189
+  },
+  {
+    "id": "r-2",
+    "scene": "proof",
+    "text": "Twenty-seven files, four commits. Every stage left its paper trail in the diff: the answers, the plan, the audited test repair, the review.",
+    "voice": "bm_george",
+    "file": "r-2.wav",
+    "seconds": 8.939
+  },
+  {
+    "id": "f-1",
+    "scene": "promise",
+    "text": "This is a software factory. It's open source, and it runs inside Claude Code.",
+    "voice": "bm_george",
+    "file": "f-1.wav",
+    "seconds": 5.069
+  },
+  {
+    "id": "f-2",
+    "scene": "promise",
+    "text": "By the end of this video you will know what a software factory is, the pattern behind this one, the safeguards that keep AI honest, how to run it on your own machine, and how you can help us turn it into a tool for every project.",
+    "voice": "bm_george",
+    "file": "f-2.wav",
+    "seconds": 13.269
+  },
+  {
+    "id": "t-1",
+    "scene": "title",
+    "text": "Let's open the factory doors.",
+    "voice": "bm_george",
+    "file": "t-1.wav",
+    "seconds": 1.826
+  },
+  {
+    "id": "a-1",
+    "scene": "car",
+    "text": "Let's start with the word \"factory\". A car factory isn't one genius building a car. It's a line of stations.",
+    "voice": "bm_george",
+    "file": "a-1.wav",
+    "seconds": 6.907
+  },
+  {
+    "id": "a-2",
+    "scene": "car",
+    "text": "Each station does one job, hands its work to the next, and between the stations there are inspections.",
+    "voice": "bm_george",
+    "file": "a-2.wav",
+    "seconds": 6.154
+  },
+  {
+    "id": "a-3",
+    "scene": "car",
+    "text": "A door that doesn't fit is rejected before it reaches the paint shop, not after the car is sold.",
+    "voice": "bm_george",
+    "file": "a-3.wav",
+    "seconds": 5.96
+  },
+  {
+    "id": "b-1",
+    "scene": "sdlc",
+    "text": "Software has its own version of this line. It's called the SDLC: the Software Development Life Cycle. If you're new, here are the stations, in plain words.",
+    "voice": "bm_george",
+    "file": "b-1.wav",
+    "seconds": 10.064
+  },
+  {
+    "id": "b-2",
+    "scene": "sdlc",
+    "text": "Requirements: what exactly should the software do? What happens with bad input?",
+    "voice": "bm_george",
+    "file": "b-2.wav",
+    "seconds": 4.705
+  },
+  {
+    "id": "b-3",
+    "scene": "sdlc",
+    "text": "Design: which files and functions change, and in what order?",
+    "voice": "bm_george",
+    "file": "b-3.wav",
+    "seconds": 3.754
+  },
+  {
+    "id": "b-4",
+    "scene": "sdlc",
+    "text": "Tests: how will we prove it works?",
+    "voice": "bm_george",
+    "file": "b-4.wav",
+    "seconds": 1.795
+  },
+  {
+    "id": "b-5",
+    "scene": "sdlc",
+    "text": "Implementation: write the code.",
+    "voice": "bm_george",
+    "file": "b-5.wav",
+    "seconds": 2.223
+  },
+  {
+    "id": "b-6",
+    "scene": "sdlc",
+    "text": "Review: a second pair of eyes looks for bugs and security holes.",
+    "voice": "bm_george",
+    "file": "b-6.wav",
+    "seconds": 4.027
+  },
+  {
+    "id": "b-7",
+    "scene": "sdlc",
+    "text": "Release: commit it, merge it, ship it.",
+    "voice": "bm_george",
+    "file": "b-7.wav",
+    "seconds": 2.167
+  },
+  {
+    "id": "c-1",
+    "scene": "idea",
+    "text": "In most teams, people do every station. A software factory automates the line. In our case the workers at each station are AI agents. And this is the first big idea of the video:",
+    "voice": "bm_george",
+    "file": "c-1.wav",
+    "seconds": 12.043
+  },
+  {
+    "id": "c-2",
+    "scene": "idea",
+    "text": "The factory is not the workers. The factory is the line, the stations, and the inspections.",
+    "voice": "bm_george",
+    "file": "c-2.wav",
+    "seconds": 5.709
+  },
+  {
+    "id": "c-3",
+    "scene": "idea",
+    "text": "An AI model that writes code is a very fast, very confident worker. Fast and confident is great on an assembly line, as long as the inspections are strict. A factory without inspections just produces broken cars faster.",
+    "voice": "bm_george",
+    "file": "c-3.wav",
+    "seconds": 15.159
+  },
+  {
+    "id": "d-1",
+    "scene": "split",
+    "text": "You might be using AI today like this: you open a chat, you describe a feature, the model writes code, you read it, you ask for fixes, and you hope you caught everything. That works for small things. It does not scale, and it relies on you being the only inspector.",
+    "voice": "bm_george",
+    "file": "d-1.wav",
+    "seconds": 15.502
+  },
+  {
+    "id": "d-2",
+    "scene": "split",
+    "text": "A software factory flips that. Each AI worker gets one narrow job, a limited set of tools, and a written hand-off from the previous station.",
+    "voice": "bm_george",
+    "file": "d-2.wav",
+    "seconds": 8.793
+  },
+  {
+    "id": "d-3",
+    "scene": "split",
+    "text": "And after every station, a script, not a model, checks the result. Pass, and the work moves on. Fail, and it's rejected with a reason.",
+    "voice": "bm_george",
+    "file": "d-3.wav",
+    "seconds": 8.381
+  },
+  {
+    "id": "e-1",
+    "scene": "real",
+    "text": "The factory runs on a real project: an open-source Node.js and PostgreSQL backend I started for a company that produces goods, sells them in its own shop and sells to dealers from the warehouse. Products, stock, invoices, GST.",
+    "voice": "bm_george",
+    "file": "e-1.wav",
+    "seconds": 15.534
+  },
+  {
+    "id": "e-2",
+    "scene": "real",
+    "text": "Ordinary business software. Which is exactly why it's a good test bed: the factory has to work on boring, real code, not on a demo.",
+    "voice": "bm_george",
+    "file": "e-2.wav",
+    "seconds": 8.349
+  }
+]

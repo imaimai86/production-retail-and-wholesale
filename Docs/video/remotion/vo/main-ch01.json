@@ -1,0 +1,151 @@
+{
+  "voice": "bm_george",
+  "speed": 1.05,
+  "lines": [
+    {
+      "id": "p-1",
+      "scene": "pitch",
+      "text": "You paste an error from your server logs. Or you just write one line: \"POST /users crashes when the name is missing.\""
+    },
+    {
+      "id": "p-2",
+      "scene": "pitch",
+      "text": "You get a coffee, and when you come back there's a git branch waiting. In it: a written specification, a technical plan, a set of tests that failed before the fix and pass after it, the fix itself, a code review, and a clean commit history."
+    },
+    {
+      "id": "n-1",
+      "scene": "claims",
+      "text": "Nobody typed any of that code. AI agents did."
+    },
+    {
+      "id": "n-2",
+      "scene": "claims",
+      "text": "But here is the part that matters: at no point were those agents allowed to grade their own homework."
+    },
+    {
+      "id": "n-3",
+      "scene": "claims",
+      "text": "They could not edit the tests to make them pass. They could not guess what you meant. They could not commit your secrets."
+    },
+    {
+      "id": "n-4",
+      "scene": "claims",
+      "text": "And when one of them claimed \"this test is wrong\", a second agent, a set of mechanical checks, and a third, independent auditor all had to agree before a single test line could change."
+    },
+    {
+      "id": "r-1",
+      "scene": "proof",
+      "text": "That's not just a claim. This is a real pull request, from my own repository."
+    },
+    {
+      "id": "r-2",
+      "scene": "proof",
+      "text": "Twenty-seven files, four commits. Every stage left its paper trail in the diff: the answers, the plan, the audited test repair, the review."
+    },
+    {
+      "id": "f-1",
+      "scene": "promise",
+      "text": "This is a software factory. It's open source, and it runs inside Claude Code."
+    },
+    {
+      "id": "f-2",
+      "scene": "promise",
+      "text": "By the end of this video you will know what a software factory is, the pattern behind this one, the safeguards that keep AI honest, how to run it on your own machine, and how you can help us turn it into a tool for every project."
+    },
+    {
+      "id": "t-1",
+      "scene": "title",
+      "text": "Let's open the factory doors."
+    },
+    {
+      "id": "a-1",
+      "scene": "car",
+      "text": "Let's start with the word \"factory\". A car factory isn't one genius building a car. It's a line of stations."
+    },
+    {
+      "id": "a-2",
+      "scene": "car",
+      "text": "Each station does one job, hands its work to the next, and between the stations there are inspections."
+    },
+    {
+      "id": "a-3",
+      "scene": "car",
+      "text": "A door that doesn't fit is rejected before it reaches the paint shop, not after the car is sold."
+    },
+    {
+      "id": "b-1",
+      "scene": "sdlc",
+      "text": "Software has its own version of this line. It's called the SDLC: the Software Development Life Cycle. If you're new, here are the stations, in plain words."
+    },
+    {
+      "id": "b-2",
+      "scene": "sdlc",
+      "text": "Requirements: what exactly should the software do? What happens with bad input?"
+    },
+    {
+      "id": "b-3",
+      "scene": "sdlc",
+      "text": "Design: which files and functions change, and in what order?"
+    },
+    {
+      "id": "b-4",
+      "scene": "sdlc",
+      "text": "Tests: how will we prove it works?"
+    },
+    {
+      "id": "b-5",
+      "scene": "sdlc",
+      "text": "Implementation: write the code."
+    },
+    {
+      "id": "b-6",
+      "scene": "sdlc",
+      "text": "Review: a second pair of eyes looks for bugs and security holes."
+    },
+    {
+      "id": "b-7",
+      "scene": "sdlc",
+      "text": "Release: commit it, merge it, ship it."
+    },
+    {
+      "id": "c-1",
+      "scene": "idea",
+      "text": "In most teams, people do every station. A software factory automates the line. In our case the workers at each station are AI agents. And this is the first big idea of the video:"
+    },
+    {
+      "id": "c-2",
+      "scene": "idea",
+      "text": "The factory is not the workers. The factory is the line, the stations, and the inspections."
+    },
+    {
+      "id": "c-3",
+      "scene": "idea",
+      "text": "An AI model that writes code is a very fast, very confident worker. Fast and confident is great on an assembly line, as long as the inspections are strict. A factory without inspections just produces broken cars faster."
+    },
+    {
+      "id": "d-1",
+      "scene": "split",
+      "text": "You might be using AI today like this: you open a chat, you describe a feature, the model writes code, you read it, you ask for fixes, and you hope you caught everything. That works for small things. It does not scale, and it relies on you being the only inspector."
+    },
+    {
+      "id": "d-2",
+      "scene": "split",
+      "text": "A software factory flips that. Each AI worker gets one narrow job, a limited set of tools, and a written hand-off from the previous station."
+    },
+    {
+      "id": "d-3",
+      "scene": "split",
+      "text": "And after every station, a script, not a model, checks the result. Pass, and the work moves on. Fail, and it's rejected with a reason."
+    },
+    {
+      "id": "e-1",
+      "scene": "real",
+      "text": "The factory runs on a real project: an open-source Node.js and PostgreSQL backend I started for a company that produces goods, sells them in its own shop and sells to dealers from the warehouse. Products, stock, invoices, GST."
+    },
+    {
+      "id": "e-2",
+      "scene": "real",
+      "text": "Ordinary business software. Which is exactly why it's a good test bed: the factory has to work on boring, real code, not on a demo."
+    }
+  ]
+}
