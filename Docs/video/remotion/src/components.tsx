@@ -13,7 +13,9 @@ export const useEnter = (delay = 0, damping = 200) => {
 
 // Burned-in caption for the line being spoken. Word timing is estimated from character
 // counts, which is close enough for Kokoro's even pace.
-export const Captions: React.FC<{ lines: TimedLine[]; top?: number }> = ({ lines, top = 1480 }) => {
+export const Captions: React.FC<{ lines: TimedLine[]; top?: number; bottom?: number; fontSize?: number; side?: number }> = ({
+  lines, top = 1480, bottom, fontSize = 64, side = 70,
+}) => {
   const frame = useCurrentFrame();
   const line = lines.find((l) => frame >= l.from && frame < l.from + l.frames + 8);
   if (!line) return null;
@@ -25,8 +27,8 @@ export const Captions: React.FC<{ lines: TimedLine[]; top?: number }> = ({ lines
   return (
     <div
       style={{
-        position: "absolute", left: 70, right: 70, top, textAlign: "center",
-        fontFamily: SANS, fontWeight: 800, fontSize: 64, lineHeight: 1.18,
+        position: "absolute", left: side, right: side, ...(bottom === undefined ? { top } : { bottom }), textAlign: "center",
+        fontFamily: SANS, fontWeight: 800, fontSize, lineHeight: 1.18,
         opacity: enter, translate: `0 ${(1 - enter) * 20}px`,
         textShadow: "0 4px 18px rgba(0,0,0,.8)",
       }}
@@ -45,10 +47,10 @@ export const Captions: React.FC<{ lines: TimedLine[]; top?: number }> = ({ lines
   );
 };
 
-export const TopBar: React.FC<{ label: string }> = ({ label }) => (
+export const TopBar: React.FC<{ label: string; top?: number; side?: number }> = ({ label, top = 90, side = 70 }) => !label ? null : (
   <div
     style={{
-      position: "absolute", top: 90, left: 70, right: 70, display: "flex", alignItems: "center", gap: 18,
+      position: "absolute", top, left: side, right: side, display: "flex", alignItems: "center", gap: 18,
       fontFamily: MONO, fontSize: 30, color: C.dim, letterSpacing: 2,
     }}
   >

@@ -12,11 +12,13 @@ export const ShortShell: React.FC<{
   timeline: ReturnType<typeof buildTimeline>;
   scenes: Record<string, SceneComp>;
   vo: string;
-  label: string;
-}> = ({ timeline, scenes, vo, label }) => {
+  label: string | ((scene: string) => string);
+  wide?: boolean;
+}> = ({ timeline, scenes, vo, label, wide }) => {
   const { fps } = useVideoConfig();
   const frame = useCurrentFrame();
   const lines = timeline.scenes.flatMap((s) => s.lines);
+  const current = timeline.scenes.find((s) => frame >= s.from && frame < s.from + s.frames) ?? timeline.scenes[0];
   return (
     <AbsoluteFill style={{ background: C.bg }}>
       <Backdrop />
@@ -36,8 +38,8 @@ export const ShortShell: React.FC<{
           <Audio src={staticFile(`vo/${vo}/${l.file}`)} />
         </Sequence>
       ))}
-      <TopBar label={label} />
-      <Captions lines={lines} />
+      <TopBar label={typeof label === "string" ? label : label(current.name)} top={wide ? 44 : 90} side={wide ? 90 : 70} />
+      <Captions lines={lines} {...(wide ? { bottom: 44, fontSize: 40, side: 160 } : {})} />
       <div style={{ position: "absolute", left: 0, bottom: 0, height: 10, background: C.green,
         width: `${interpolate(frame, [0, timeline.total], [0, 100], { ...clamp, easing: ease })}%` }} />
     </AbsoluteFill>
