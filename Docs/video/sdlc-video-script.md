@@ -806,6 +806,7 @@ repo: link in the description."
 > 16:30 How to use it today · 21:30 Roadmap and ai-sdlc-helper · 23:15 Join us
 >
 > Repo: https://github.com/imaimai86/production-retail-and-wholesale
+> The real pull request shown in the video: https://github.com/imaimai86/production-retail-and-wholesale/pull/26
 
 ### Remotion scenes
 The Remotion skills are installed in `.claude/skills/remotion-*` (from `remotion-dev/skills`, locked in
