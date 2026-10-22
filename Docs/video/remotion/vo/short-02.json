@@ -1,5 +1,5 @@
 {
-  "voice": "am_michael",
+  "voice": "bm_george",
   "speed": 1.05,
   "lines": [
     {"id": "hook-1", "scene": "hook", "text": "What stops an AI from just changing the test, so it passes?"},

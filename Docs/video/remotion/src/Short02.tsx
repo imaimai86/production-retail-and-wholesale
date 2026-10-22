@@ -13,12 +13,13 @@ export const timeline = buildTimeline(manifest, FPS);
 const local = (scene: Scene, lineIndex: number) => scene.lines[lineIndex].from - scene.from;
 
 // "What stops an AI from just changing the test, so it passes?"
-const Hook: React.FC<{ scene: Scene }> = () => {
+const Hook: React.FC<{ scene: Scene }> = ({ scene }) => {
   const frame = useCurrentFrame();
   const a = useEnter(0);
   const b = useEnter(14);
   // The AI "edits" the expected value until the test goes green.
-  const edited = frame > 62;
+  // Flip just as the question ends, so the edit lands on its own beat.
+  const edited = frame > scene.lines[0].frames - 8;
   return (
     <AbsoluteFill style={{ alignItems: "center", paddingTop: 300 }}>
       <div style={{ fontFamily: SANS, fontWeight: 900, fontSize: 118, lineHeight: 1, color: C.text, textAlign: "center",
@@ -119,10 +120,10 @@ const Lock: React.FC<{ scene: Scene }> = () => {
   const b = useEnter(22);
   return (
     <AbsoluteFill style={{ alignItems: "center", paddingTop: 250 }}>
-      <div style={{ width: 1000, height: 330, overflow: "hidden", borderRadius: 28, border: `3px solid ${C.line}`,
+      <div style={{ width: 1000, height: 230, overflow: "hidden", borderRadius: 28, border: `3px solid ${C.line}`,
         position: "relative", opacity: a }}>
         <Img src={staticFile("captures/s20-red-gate-16-failing.png")}
-          style={{ position: "absolute", width: 2930 * 0.87, left: -700 * 0.87, top: -880 * 0.87 }} />
+          style={{ position: "absolute", width: 2930 * 0.95, left: -735 * 0.95, top: -831 }} />
       </div>
       <Panel style={{ marginTop: 50, width: 1000, opacity: b, translate: `0 ${(1 - b) * 60}px`, borderColor: C.green }}>
         <div style={{ fontFamily: MONO, fontSize: 32, color: C.dim }}>git commit</div>
@@ -151,8 +152,8 @@ const Guard: React.FC<{ scene: Scene }> = ({ scene }) => {
   const failAt = local(scene, 1) + 14;
   return (
     <AbsoluteFill style={{ alignItems: "center", paddingTop: 250 }}>
-      <div style={{ fontFamily: SANS, fontWeight: 900, fontSize: 80, color: C.text, opacity: e, textAlign: "center" }}>
-        AFTER <span style={{ color: C.amber }}>EVERY</span> ATTEMPT
+      <div style={{ fontFamily: SANS, fontWeight: 900, fontSize: 96, lineHeight: 1, color: C.text, opacity: e, textAlign: "center" }}>
+        AFTER <span style={{ color: C.amber }}>EVERY</span><br />ATTEMPT
       </div>
       <CodeCard
         style={{ marginTop: 50, width: 1000, opacity: e }}
