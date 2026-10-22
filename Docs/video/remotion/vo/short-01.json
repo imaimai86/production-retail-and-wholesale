@@ -1,0 +1,15 @@
+{
+  "voice": "bm_george",
+  "speed": 1.05,
+  "lines": [
+    {"id": "hook-1", "scene": "hook", "text": "AI writes code fast. So why does most AI code still break?"},
+    {"id": "b1-1", "scene": "inspect", "text": "Because speed isn't the problem. Inspection is."},
+    {"id": "b1-2", "scene": "inspect", "text": "A car factory doesn't trust its welders. It inspects every door."},
+    {"id": "b2-1", "scene": "stations", "text": "A software factory is the same line for code: requirements, design, tests, code, review, release."},
+    {"id": "b2-2", "scene": "stations", "text": "AI agents work the stations."},
+    {"id": "b3-1", "scene": "gates", "text": "Between every station, plain code checks the work."},
+    {"id": "b3-2", "scene": "gates", "text": "Not another AI. Code."},
+    {"id": "pay-1", "scene": "payoff", "text": "The factory isn't the workers. It's the line, and the inspections."},
+    {"id": "cta-1", "scene": "cta", "text": "Full video and the open-source repo: link in the description."}
+  ]
+}

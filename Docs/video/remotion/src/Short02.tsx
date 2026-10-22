@@ -1,9 +1,10 @@
 import React from "react";
 import {
-  AbsoluteFill, Audio, Img, interpolate, OffthreadVideo, Sequence, staticFile, useCurrentFrame, useVideoConfig,
+  AbsoluteFill, Img, interpolate, OffthreadVideo, Sequence, staticFile, useCurrentFrame, useVideoConfig,
 } from "remotion";
 import manifest from "../public/vo/short-02/manifest.json";
-import { Backdrop, Captions, clamp, CodeCard, ease, Panel, Stamp, TopBar, useEnter } from "./components";
+import { clamp, CodeCard, Panel, Stamp, useEnter } from "./components";
+import { Cta, SceneComp, ShortShell } from "./ShortShell";
 import { C, MONO, SANS } from "./theme";
 import { buildTimeline, Scene } from "./timeline";
 
@@ -195,54 +196,10 @@ const Payoff: React.FC<{ scene: Scene }> = ({ scene }) => {
   );
 };
 
-const Cta: React.FC<{ scene: Scene }> = () => {
-  const a = useEnter(0);
-  return (
-    <AbsoluteFill style={{ alignItems: "center", justifyContent: "center", paddingBottom: 380 }}>
-      <Panel style={{ width: 940, textAlign: "center", opacity: a, scale: String(0.9 + 0.1 * a) }}>
-        <div style={{ fontFamily: SANS, fontWeight: 900, fontSize: 70, color: C.text, lineHeight: 1.05 }}>
-          THE SOFTWARE<br /><span style={{ color: C.green }}>FACTORY</span>
-        </div>
-        <div style={{ fontFamily: MONO, fontSize: 32, color: C.dim, marginTop: 30 }}>
-          full video + open-source repo
-        </div>
-        <div style={{ fontFamily: MONO, fontSize: 34, color: C.blue, marginTop: 14 }}>↓ link in the description</div>
-      </Panel>
-    </AbsoluteFill>
-  );
-};
-
-const SCENES: Record<string, React.FC<{ scene: Scene }>> = {
+const SCENES: Record<string, SceneComp> = {
   hook: Hook, redgreen: RedGreen, capture: Capture, lock: Lock, guard: Guard, payoff: Payoff, cta: Cta,
 };
 
-export const Short02: React.FC = () => {
-  const { fps } = useVideoConfig();
-  const frame = useCurrentFrame();
-  const lines = timeline.scenes.flatMap((s) => s.lines);
-  return (
-    <AbsoluteFill style={{ background: C.bg }}>
-      <Backdrop />
-      {timeline.scenes.map((scene) => {
-        const Comp = SCENES[scene.name];
-        const out = interpolate(frame, [scene.from + scene.frames - 6, scene.from + scene.frames], [1, 0], clamp);
-        return (
-          <Sequence key={scene.name} name={scene.name} from={scene.from} durationInFrames={scene.frames} premountFor={fps}>
-            <AbsoluteFill style={{ opacity: scene.name === "cta" ? 1 : out }}>
-              <Comp scene={scene} />
-            </AbsoluteFill>
-          </Sequence>
-        );
-      })}
-      {lines.map((l) => (
-        <Sequence key={l.id} name={`vo ${l.id}`} from={l.from} durationInFrames={l.frames + 4} premountFor={fps}>
-          <Audio src={staticFile(`vo/short-02/${l.file}`)} />
-        </Sequence>
-      ))}
-      <TopBar label="SOFTWARE FACTORY · SAFEGUARD #1" />
-      <Captions lines={lines} />
-      <div style={{ position: "absolute", left: 0, bottom: 0, height: 10, background: C.green,
-        width: `${interpolate(frame, [0, timeline.total], [0, 100], { ...clamp, easing: ease })}%` }} />
-    </AbsoluteFill>
-  );
-};
+export const Short02: React.FC = () => (
+  <ShortShell timeline={timeline} scenes={SCENES} vo="short-02" label="SOFTWARE FACTORY · SAFEGUARD #1" />
+);

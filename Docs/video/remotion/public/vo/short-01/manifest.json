@@ -1,0 +1,74 @@
+[
+  {
+    "id": "hook-1",
+    "scene": "hook",
+    "text": "AI writes code fast. So why does most AI code still break?",
+    "voice": "bm_george",
+    "file": "hook-1.wav",
+    "seconds": 3.946
+  },
+  {
+    "id": "b1-1",
+    "scene": "inspect",
+    "text": "Because speed isn't the problem. Inspection is.",
+    "voice": "bm_george",
+    "file": "b1-1.wav",
+    "seconds": 3.016
+  },
+  {
+    "id": "b1-2",
+    "scene": "inspect",
+    "text": "A car factory doesn't trust its welders. It inspects every door.",
+    "voice": "bm_george",
+    "file": "b1-2.wav",
+    "seconds": 4.321
+  },
+  {
+    "id": "b2-1",
+    "scene": "stations",
+    "text": "A software factory is the same line for code: requirements, design, tests, code, review, release.",
+    "voice": "bm_george",
+    "file": "b2-1.wav",
+    "seconds": 6.36
+  },
+  {
+    "id": "b2-2",
+    "scene": "stations",
+    "text": "AI agents work the stations.",
+    "voice": "bm_george",
+    "file": "b2-2.wav",
+    "seconds": 2.092
+  },
+  {
+    "id": "b3-1",
+    "scene": "gates",
+    "text": "Between every station, plain code checks the work.",
+    "voice": "bm_george",
+    "file": "b3-1.wav",
+    "seconds": 2.986
+  },
+  {
+    "id": "b3-2",
+    "scene": "gates",
+    "text": "Not another AI. Code.",
+    "voice": "bm_george",
+    "file": "b3-2.wav",
+    "seconds": 1.816
+  },
+  {
+    "id": "pay-1",
+    "scene": "payoff",
+    "text": "The factory isn't the workers. It's the line, and the inspections.",
+    "voice": "bm_george",
+    "file": "pay-1.wav",
+    "seconds": 4.139
+  },
+  {
+    "id": "cta-1",
+    "scene": "cta",
+    "text": "Full video and the open-source repo: link in the description.",
+    "voice": "bm_george",
+    "file": "cta-1.wav",
+    "seconds": 4.122
+  }
+]
