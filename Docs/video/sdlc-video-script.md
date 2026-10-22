@@ -25,7 +25,7 @@ Conventions in this script:
 > You paste an error from your server logs. Or you just write one line: "POST /users crashes when the name is missing."
 >
 > You get a coffee, and when you come back there's a git branch waiting. In it: a written specification, a technical plan, a set of tests
-> that failed before the fix and pass after it, the fix itself, a code review, and one clean commit.
+> that failed before the fix and pass after it, the fix itself, a code review, and a clean commit history.
 >
 > Nobody typed any of that code. AI agents did. But here is the part that matters: at no point were those agents
 > allowed to grade their own homework. They could not edit the tests to make them pass. They could not guess what you

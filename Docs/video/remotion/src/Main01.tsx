@@ -1,5 +1,5 @@
 import React from "react";
-import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
+import { AbsoluteFill, interpolate, OffthreadVideo, spring, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
 import manifest from "../public/vo/main-ch01/manifest.json";
 import { clamp, Panel, Stamp } from "./components";
 import { SceneComp, ShortShell, wordAt } from "./ShortShell";
@@ -63,7 +63,7 @@ const Pitch: SceneComp = ({ scene }) => {
   return (
     <AbsoluteFill>
       {/* the brief, typed, then dropped onto the belt */}
-      <div style={{ position: "absolute", left: cx - w / 2, top: interpolate(drop, [0, 1], [380, 672]), width: w }}>
+      <div style={{ position: "absolute", left: cx - w / 2, top: interpolate(drop, [0, 1], [380, 632]), width: w }}>
         <Panel style={{ padding: drop > 0.5 ? "12px 18px" : 44, borderRadius: 18, borderColor: drop > 0.5 ? C.amber : C.line }}>
           <div style={{ fontFamily: MONO, fontSize: interpolate(drop, [0, 1], [38, 22]), color: C.text, whiteSpace: "nowrap",
             overflow: "hidden", textAlign: "center" }}>
@@ -72,12 +72,12 @@ const Pitch: SceneComp = ({ scene }) => {
         </Panel>
       </div>
       <AbsoluteFill style={{ opacity: drop }}>
-        <div style={{ position: "absolute", left: 40, right: 40, top: 650, height: 16, borderRadius: 8, background: C.line }} />
+        <div style={{ position: "absolute", left: 40, right: 40, top: 610, height: 16, borderRadius: 8, background: C.line }} />
         {STATIONS.map((s, i) => {
           const lit = interpolate(frame, [t[i], t[i] + 8], [0, 1], clamp);
           const col = lit > 0.5 ? C.green : C.red;
           return (
-            <div key={s} style={{ position: "absolute", left: SX(i) - 110, top: 450, width: 220, height: 190 }}>
+            <div key={s} style={{ position: "absolute", left: SX(i) - 110, top: 410, width: 220, height: 190 }}>
               <div style={{ height: 150, borderRadius: 22, background: C.panel, border: `3px solid ${lit > 0.5 ? C.green : C.line}`,
                 display: "flex", alignItems: "center", justifyContent: "center",
                 fontFamily: SANS, fontWeight: 800, fontSize: 34, color: C.text, textAlign: "center",
@@ -89,17 +89,18 @@ const Pitch: SceneComp = ({ scene }) => {
         {docs.map((d) => {
           const e = pop(t[d.i] + 4);
           return (
-            <div key={d.name} style={{ position: "absolute", left: SX(d.i) - 105, top: 340 - 50 * e, opacity: e, width: 210 }}>
+            <div key={d.name} style={{ position: "absolute", left: SX(d.i) - 105, top: 300 - 50 * e, opacity: e, width: 210 }}>
               <div style={{ fontFamily: MONO, fontSize: 21, color: C.blue, background: C.panel, border: `2px solid ${C.blue}`,
                 borderRadius: 12, padding: "10px 6px", textAlign: "center" }}>{d.name}</div>
             </div>
           );
         })}
-        <div style={{ position: "absolute", left: 1230, top: 740, width: 640, opacity: branch, translate: `${(1 - branch) * 140}px 0` }}>
-          <Panel style={{ padding: "18px 26px", borderColor: C.green }}>
+        <div style={{ position: "absolute", left: 1230, top: 690, width: 640, opacity: branch, translate: `${(1 - branch) * 140}px 0` }}>
+          <Panel style={{ padding: "14px 26px", borderColor: C.green }}>
             <div style={{ fontFamily: MONO, fontSize: 26, color: C.green }}>⎇ sdlc/fix-user-validation</div>
-            <div style={{ fontFamily: MONO, fontSize: 20, color: C.dim, marginTop: 8 }}>● test(fix-user-validation): add failing tests</div>
-            <div style={{ fontFamily: MONO, fontSize: 20, color: C.dim }}>● fix(fix-user-validation): reject a missing name</div>
+            {["test: failing tests + spec/plan docs", "test: repair (checked + audited)", "feat: implement per specs-1.md", "chore: mark done"].map((c) => (
+              <div key={c} style={{ fontFamily: MONO, fontSize: 19, lineHeight: "27px", color: C.dim }}>● {c}</div>
+            ))}
           </Panel>
         </div>
       </AbsoluteFill>
@@ -171,6 +172,31 @@ const Claims: SceneComp = ({ scene }) => {
           </div>
         </div>
       )}
+    </AbsoluteFill>
+  );
+};
+
+const Proof: SceneComp = ({ scene }) => {
+  const pop = usePop();
+  const e = pop(0);
+  const second = start(scene, 1);
+  const badges = [["4 commits", C.blue, "four commits"], ["27 files", C.blue, "Twenty-seven files"], ["+1,483 −72", C.green, "paper trail"]] as const;
+  return (
+    <AbsoluteFill style={{ alignItems: "center" }}>
+      <div style={{ position: "absolute", top: 92, display: "flex", gap: 22, alignItems: "center" }}>
+        <Tag color={C.amber} style={{ fontSize: 30 }}>REAL RUN · PR #26</Tag>
+        {badges.map(([t, c], i) => (
+          <Tag key={t} color={c} style={{ fontSize: 30, opacity: pop(second + i * 14) }}>{t}</Tag>
+        ))}
+      </div>
+      <div style={{ position: "absolute", top: 150, width: 1440, height: 693, borderRadius: 18, overflow: "hidden",
+        border: `3px solid ${C.line}`, opacity: e, scale: String(0.96 + 0.04 * e) }}>
+        <OffthreadVideo src={staticFile("captures/c35-real-pr-26.mp4")} muted style={{ width: 1440, height: 693 }} />
+      </div>
+      <div style={{ position: "absolute", top: 860, fontFamily: MONO, fontSize: 29, color: C.blue, opacity: pop(10),
+        textDecoration: "underline", textUnderlineOffset: 6 }}>
+        github.com/imaimai86/production-retail-and-wholesale/pull/26
+      </div>
     </AbsoluteFill>
   );
 };
@@ -456,11 +482,11 @@ const Real: SceneComp = ({ scene }) => {
 };
 
 const SCENES: Record<string, SceneComp> = {
-  pitch: Pitch, claims: Claims, promise: Promise_, title: TitleCard, car: Car, sdlc: Sdlc, idea: Idea, split: Split, real: Real,
+  pitch: Pitch, claims: Claims, proof: Proof, promise: Promise_, title: TitleCard, car: Car, sdlc: Sdlc, idea: Idea, split: Split, real: Real,
 };
 
 const LABELS: Record<string, string> = {
-  pitch: "0 · THE PITCH", claims: "0 · THE PITCH", promise: "0 · THE PITCH", title: "",
+  pitch: "0 · THE PITCH", claims: "0 · THE PITCH", proof: "0 · THE PITCH", promise: "0 · THE PITCH", title: "",
   car: "1 · WHAT IS A SOFTWARE FACTORY?", sdlc: "1 · WHAT IS A SOFTWARE FACTORY?", idea: "1 · WHAT IS A SOFTWARE FACTORY?",
   split: "1 · WHAT IS A SOFTWARE FACTORY?", real: "1 · WHAT IS A SOFTWARE FACTORY?",
 };

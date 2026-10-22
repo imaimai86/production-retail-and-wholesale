@@ -10,10 +10,10 @@
   {
     "id": "p-2",
     "scene": "pitch",
-    "text": "You get a coffee, and when you come back there's a git branch waiting. In it: a written specification, a technical plan, a set of tests that failed before the fix and pass after it, the fix itself, a code review, and one clean commit.",
+    "text": "You get a coffee, and when you come back there's a git branch waiting. In it: a written specification, a technical plan, a set of tests that failed before the fix and pass after it, the fix itself, a code review, and a clean commit history.",
     "voice": "bm_george",
     "file": "p-2.wav",
-    "seconds": 14.642
+    "seconds": 14.947
   },
   {
     "id": "n-1",
@@ -46,6 +46,22 @@
     "voice": "bm_george",
     "file": "n-4.wav",
     "seconds": 11.363
+  },
+  {
+    "id": "r-1",
+    "scene": "proof",
+    "text": "That's not just a claim. This is a real pull request, from my own repository.",
+    "voice": "bm_george",
+    "file": "r-1.wav",
+    "seconds": 5.189
+  },
+  {
+    "id": "r-2",
+    "scene": "proof",
+    "text": "Twenty-seven files, four commits. Every stage left its paper trail in the diff: the answers, the plan, the audited test repair, the review.",
+    "voice": "bm_george",
+    "file": "r-2.wav",
+    "seconds": 8.939
   },
   {
     "id": "f-1",
